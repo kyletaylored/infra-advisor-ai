@@ -31,6 +31,12 @@ rules:
     verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources:
+      - nodes/proxy
+      - nodes/metrics
+      - nodes/stats
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources:
       - configmaps
     resourceNames:
       - datadogtoken
