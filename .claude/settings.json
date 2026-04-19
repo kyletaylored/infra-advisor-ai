@@ -1,0 +1,46 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run *)",
+      "Bash(kubectl apply *)",
+      "Bash(kubectl get *)",
+      "Bash(kubectl logs *)",
+      "Bash(kubectl describe *)",
+      "Bash(kubectl create secret *)",
+      "Bash(az bicep build *)",
+      "Bash(az aks *)",
+      "Bash(helm *)",
+      "Bash(git *)",
+      "Bash(make *)",
+      "Bash(docker build *)",
+      "Bash(docker push *)"
+    ],
+    "deny": [
+      "Bash(kubectl delete *)",
+      "Bash(az group delete *)",
+      "Bash(rm -rf *)",
+      "Read(.env)",
+      "Read(.env.*)",
+      "Write(infra/bicep/parameters/production*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [{
+          "type": "command",
+          "command": "if [[ '$TOOL_INPUT_path' == *.py ]]; then uv run ruff check --fix '$TOOL_INPUT_path' 2>/dev/null || true; fi"
+        }]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [{
+          "type": "prompt",
+          "prompt": "Review claude-progress.txt. Has the agent completed all tasks for the current phase and verified all acceptance criteria? Answer only: YES or NO followed by one sentence."
+        }]
+      }
+    ]
+  }
+}

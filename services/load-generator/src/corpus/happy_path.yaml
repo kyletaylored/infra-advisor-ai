@@ -1,0 +1,70 @@
+queries:
+  - id: "tx-bridges-001"
+    query: "Pull all structurally deficient bridges in Texas with ADT over 10,000 and last inspection before 2022."
+    domain: "transportation"
+    expected_tools: ["get_bridge_condition"]
+
+  - id: "gulf-fema-001"
+    query: "What FEMA flood disaster declarations affected Louisiana and Mississippi water infrastructure since 2015?"
+    domain: "water"
+    expected_tools: ["get_disaster_history", "search_project_knowledge"]
+
+  - id: "twdb-corpus-christi-001"
+    query: "What water supply projects are recommended for the Corpus Christi region in the TWDB 2026 State Water Plan?"
+    domain: "water"
+    expected_tools: ["get_water_infrastructure", "search_project_knowledge"]
+
+  - id: "sdwis-violations-001"
+    query: "Which Texas community water systems serving more than 10,000 people have open Safe Drinking Water Act violations?"
+    domain: "water"
+    expected_tools: ["get_water_infrastructure"]
+
+  - id: "desalination-sow-001"
+    query: "Draft a scope of work for a desalination feasibility study for a coastal Texas municipality facing water supply shortages."
+    domain: "water"
+    expected_tools: ["search_project_knowledge", "draft_document"]
+
+  - id: "swift-funding-001"
+    query: "What are the TWDB SWIFT loan program requirements and how should we position a water reuse project application?"
+    domain: "water"
+    expected_tools: ["search_project_knowledge"]
+
+  - id: "eia-grid-001"
+    query: "Compare grid resilience investment patterns across southeastern states since 2018."
+    domain: "energy"
+    expected_tools: ["get_energy_infrastructure"]
+
+  - id: "bridge-rehab-001"
+    query: "Draft a scope of work for a bridge inspection and preliminary rehabilitation assessment for structure 1100200000B0042."
+    domain: "transportation"
+    expected_tools: ["search_project_knowledge", "draft_document"]
+
+  - id: "scour-risk-001"
+    query: "What does our knowledge base say about scour risk mitigation on concrete bridges built before 1970?"
+    domain: "transportation"
+    expected_tools: ["search_project_knowledge"]
+
+  - id: "fema-repeat-001"
+    query: "What FEMA disaster declarations in the Gulf Coast region involved flooding infrastructure in the last 10 years? Flag any repeat events."
+    domain: "water"
+    expected_tools: ["get_disaster_history"]
+
+  - id: "tx-bridge-top5-001"
+    query: "List the top 5 structurally deficient bridges in Texas by lowest sufficiency rating with ADT over 5,000."
+    domain: "transportation"
+    expected_tools: ["get_bridge_condition"]
+
+  - id: "sdwis-bexar-001"
+    query: "Which water systems in Bexar County Texas serve more than 50,000 people and what are their compliance records?"
+    domain: "water"
+    expected_tools: ["get_water_infrastructure"]
+
+  - id: "swift-eligibility-001"
+    query: "Does our Nueces County desalination project qualify for TWDB SWIFT funding? What criteria do we need to meet?"
+    domain: "water"
+    expected_tools: ["search_project_knowledge"]
+
+  - id: "eia-solar-001"
+    query: "What is the solar energy generation trend in Texas over the last 5 years?"
+    domain: "energy"
+    expected_tools: ["get_energy_infrastructure"]

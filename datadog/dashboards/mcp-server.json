@@ -1,0 +1,101 @@
+{
+  "title": "InfraAdvisor — MCP Server",
+  "description": "Tool call rate by tool, tool latency heatmap, external API latency by source, error rate by source",
+  "layout_type": "ordered",
+  "tags": ["team:infra-advisor", "env:dev", "service:infratools-mcp"],
+  "widgets": [
+    {
+      "definition": {
+        "type": "group",
+        "title": "Tool Call Volume",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Tool Calls / min by Tool",
+              "requests": [
+                {
+                  "q": "sum:mcp.tool.calls{service:infratools-mcp} by {tool}.as_rate()",
+                  "display_type": "bars"
+                }
+              ]
+            }
+          },
+          {
+            "definition": {
+              "type": "toplist",
+              "title": "Top Tools by Call Count",
+              "requests": [
+                {
+                  "q": "sum:mcp.tool.calls{service:infratools-mcp} by {tool}",
+                  "style": {"palette": "dog_classic"}
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "type": "group",
+        "title": "Tool Latency",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Tool Latency P50/P95 (ms)",
+              "requests": [
+                {
+                  "q": "p50:mcp.tool.latency_ms{service:infratools-mcp} by {tool}",
+                  "display_type": "line"
+                },
+                {
+                  "q": "p95:mcp.tool.latency_ms{service:infratools-mcp} by {tool}",
+                  "display_type": "line",
+                  "style": {"line_type": "dashed"}
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "type": "group",
+        "title": "External API Health",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "External API Latency by Source (ms)",
+              "requests": [
+                {
+                  "q": "avg:mcp.external_api.latency_ms{service:infratools-mcp} by {source}",
+                  "display_type": "line"
+                }
+              ]
+            }
+          },
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "External API Error Rate by Source",
+              "requests": [
+                {
+                  "q": "sum:mcp.external_api.errors{service:infratools-mcp} by {source}.as_rate()",
+                  "display_type": "bars",
+                  "style": {"palette": "warm"}
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

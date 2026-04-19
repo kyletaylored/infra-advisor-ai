@@ -1,11 +1,63 @@
+# Secrets — never commit real credentials
 .env
 .env.local
+.env.*.local
+
+# Claude Code local settings (project settings.json is committed)
 .claude/settings.local.json
+
+# Local MCP server config (may contain token references)
+.mcp.json
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+
+# Bits AI local settings
+.bits/
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
 .pytest_cache/
-node_modules/
-dist/
 *.egg-info/
 .venv/
+.ruff_cache/
+
+# Node / frontend
+node_modules/
+dist/
+.next/
+
+# Data files
 *.parquet
+*.csv
+*.xlsx
+
+# Build artifacts
+*.tar.gz
+*.zip
+
+# macOS
+.DS_Store
+
+# Claude Code development artifacts
+claude-progress.txt
+
+# Terraform / Bicep state
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Kubernetes generated files
+kubeconfig
+**/kubeconfig*
+
+# Certificates and keys
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx

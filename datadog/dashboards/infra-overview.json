@@ -1,0 +1,119 @@
+{
+  "title": "InfraAdvisor — Infrastructure Overview",
+  "description": "AKS node health, pod counts by namespace, Kafka broker metrics, Redis ops/sec, container restarts",
+  "layout_type": "ordered",
+  "tags": ["team:infra-advisor", "env:dev"],
+  "widgets": [
+    {
+      "definition": {
+        "type": "group",
+        "title": "AKS Cluster Health",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "definition": {
+              "type": "query_value",
+              "title": "Ready Nodes",
+              "requests": [
+                {
+                  "q": "sum:kubernetes.nodes.by_condition{condition:ready,status:true,kube_cluster_name:*}",
+                  "aggregator": "last"
+                }
+              ]
+            }
+          },
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Pod Count by Namespace",
+              "requests": [
+                {
+                  "q": "sum:kubernetes.pods.running{*} by {kube_namespace}",
+                  "display_type": "line"
+                }
+              ]
+            }
+          },
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Container Restarts",
+              "requests": [
+                {
+                  "q": "sum:kubernetes.containers.restarts{kube_cluster_name:*} by {kube_namespace,kube_deployment}",
+                  "display_type": "bars"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "type": "group",
+        "title": "Kafka Broker Metrics",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Messages In/Sec by Topic",
+              "requests": [
+                {
+                  "q": "sum:kafka.net.bytes_in.rate{*} by {topic}",
+                  "display_type": "line"
+                }
+              ]
+            }
+          },
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Consumer Lag by Topic",
+              "requests": [
+                {
+                  "q": "max:kafka.consumer_lag{*} by {topic}",
+                  "display_type": "line"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "type": "group",
+        "title": "Redis",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Redis Ops/sec",
+              "requests": [
+                {
+                  "q": "sum:redis.net.commands{*}",
+                  "display_type": "line"
+                }
+              ]
+            }
+          },
+          {
+            "definition": {
+              "type": "query_value",
+              "title": "Redis Memory Used (MB)",
+              "requests": [
+                {
+                  "q": "avg:redis.mem.used{*} / 1048576",
+                  "aggregator": "last"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

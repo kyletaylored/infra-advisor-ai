@@ -1,0 +1,156 @@
+# Helm values for apache-airflow/airflow chart
+# Deploy to namespace: airflow
+# helm upgrade --install airflow apache-airflow/airflow \
+#   --namespace airflow --values k8s/airflow/values.yaml --timeout 10m --wait
+
+# Executor: LocalExecutor — runs tasks inside scheduler process.
+# Eliminates separate worker pods; appropriate for lab scale with 5 DAGs.
+# At 3× Standard_D2s_v3 (24 GB total cluster RAM), this avoids OOM pressure.
+executor: LocalExecutor
+
+# Explicitly enable DB migration Job (correct key for airflow-1.x chart)
+migrateDatabaseJob:
+  enabled: true
+
+# Increase wait timeout — default 60s too short when PostgreSQL cold-starts
+images:
+  migrationsWaitTimeout: 300
+
+# Metadata DB — built-in Postgres sidecar via Helm
+postgresql:
+  enabled: true
+
+# DAG persistence via PVC (git-sync or PVC; using PVC for simplicity)
+dags:
+  persistence:
+    enabled: true
+    storageClassName: azurefile-csi
+    accessMode: ReadWriteMany
+    size: 1Gi
+  gitSync:
+    enabled: false
+
+# Extra pip packages for all Airflow pods (scheduler + webserver)
+# With LocalExecutor, tasks run in scheduler — packages needed there.
+_pip_additional_requirements: >-
+  apache-airflow-providers-openlineage
+  apache-airflow-providers-http
+  azure-storage-blob
+  azure-search-documents
+  azure-identity
+  tiktoken
+  openpyxl
+  pandas
+  openai
+  ddtrace
+
+# Scheduler env vars
+scheduler:
+  env:
+    # Datadog Data Jobs Monitoring — required for DJM
+    - name: DD_DATA_JOBS_ENABLED
+      value: "true"
+    # OpenLineage transport → Datadog Agent OpenLineage endpoint
+    - name: OPENLINEAGE_URL
+      value: "http://datadog-agent.datadog.svc.cluster.local:8126/api/v2/openlineage"
+    # Datadog APM
+    - name: DD_ENV
+      value: "dev"
+    - name: DD_SERVICE
+      value: "airflow-scheduler"
+    - name: DD_VERSION
+      value: "latest"
+    - name: DD_AGENT_HOST
+      value: "datadog-agent.datadog.svc.cluster.local"
+    - name: DD_TRACE_AGENT_PORT
+      value: "8126"
+    - name: DD_LOGS_INJECTION
+      value: "true"
+    - name: DD_TRACE_SAMPLE_RATE
+      value: "1.0"
+    # Azure credentials (populated from K8s Secret in production)
+    - name: AZURE_OPENAI_ENDPOINT
+      valueFrom:
+        secretKeyRef:
+          name: airflow-azure-secret
+          key: AZURE_OPENAI_ENDPOINT
+    - name: AZURE_OPENAI_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: airflow-azure-secret
+          key: AZURE_OPENAI_API_KEY
+    - name: AZURE_SEARCH_ENDPOINT
+      valueFrom:
+        secretKeyRef:
+          name: airflow-azure-secret
+          key: AZURE_SEARCH_ENDPOINT
+    - name: AZURE_SEARCH_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: airflow-azure-secret
+          key: AZURE_SEARCH_API_KEY
+    - name: AZURE_SEARCH_INDEX_NAME
+      value: "infra-advisor-knowledge"
+    - name: AZURE_STORAGE_CONNECTION_STRING
+      valueFrom:
+        secretKeyRef:
+          name: airflow-azure-secret
+          key: AZURE_STORAGE_CONNECTION_STRING
+    - name: EIA_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: airflow-azure-secret
+          key: EIA_API_KEY
+    - name: TWDB_WATER_PLAN_WORKBOOK_URL
+      value: "https://www.twdb.texas.gov/waterplanning/data/rwp-database/index.asp"
+    - name: EPA_SDWIS_BASE_URL
+      value: "https://enviro.epa.gov/enviro/efservice"
+
+# Triggerer env vars (same DD config)
+triggerer:
+  env:
+    - name: DD_DATA_JOBS_ENABLED
+      value: "true"
+    - name: DD_ENV
+      value: "dev"
+    - name: DD_SERVICE
+      value: "airflow-triggerer"
+    - name: DD_AGENT_HOST
+      value: "datadog-agent.datadog.svc.cluster.local"
+
+# Webserver
+webserver:
+  defaultUser:
+    enabled: true
+    role: Admin
+    username: admin
+    email: admin@infra-advisor.local
+    firstName: Admin
+    lastName: User
+    password: admin  # Change in production
+
+# Resource limits — conservative for Standard_D2s_v3 lab cluster
+resources:
+  requests:
+    memory: "512Mi"
+    cpu: "250m"
+  limits:
+    memory: "1Gi"
+    cpu: "500m"
+
+# Logs — use PVC for local log storage
+logs:
+  persistence:
+    enabled: true
+    storageClassName: azurefile-csi
+    size: 2Gi
+
+# Service type for webserver (ClusterIP; port-forward for local access)
+webserverServiceType: ClusterIP
+
+# Labels for Datadog log collection autodiscovery
+labels:
+  app: airflow
+  tags.datadoghq.com/env: dev
+  tags.datadoghq.com/service: airflow
+  tags.datadoghq.com/version: "2.9"

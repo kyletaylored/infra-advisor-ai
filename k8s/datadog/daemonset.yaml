@@ -1,0 +1,168 @@
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: datadog-agent
+  namespace: datadog
+  labels:
+    app.kubernetes.io/name: datadog-agent
+    app.kubernetes.io/part-of: infra-advisor-ai
+spec:
+  selector:
+    matchLabels:
+      app: datadog-agent
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: datadog-agent
+        app.kubernetes.io/name: datadog-agent
+    spec:
+      serviceAccountName: datadog-agent
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
+        - operator: Exists
+          effect: NoExecute
+        - operator: Exists
+          effect: PreferNoSchedule
+      containers:
+        - name: datadog-agent
+          image: gcr.io/datadoghq/agent:latest
+          imagePullPolicy: Always
+          ports:
+            - name: apm
+              containerPort: 8126
+              hostPort: 8126
+              protocol: TCP
+            - name: dogstatsd
+              containerPort: 8125
+              hostPort: 8125
+              protocol: UDP
+          env:
+            # Core credentials from secret
+            - name: DD_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: datadog-secret
+                  key: api-key
+            - name: DD_APP_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: datadog-secret
+                  key: app-key
+            - name: DD_SITE
+              valueFrom:
+                secretKeyRef:
+                  name: datadog-secret
+                  key: site
+            # APM
+            - name: DD_APM_ENABLED
+              value: "true"
+            - name: DD_APM_NON_LOCAL_TRAFFIC
+              value: "true"
+            # Logs
+            - name: DD_LOGS_ENABLED
+              value: "true"
+            - name: DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL
+              value: "true"
+            # DogStatsD
+            - name: DD_DOGSTATSD_NON_LOCAL_TRAFFIC
+              value: "true"
+            # Data Streams Monitoring (DSM)
+            - name: DD_DATA_STREAMS_ENABLED
+              value: "true"
+            # Data Jobs Monitoring (DJM)
+            - name: DD_DATA_JOBS_ENABLED
+              value: "true"
+            # Kubernetes metadata collection
+            - name: DD_KUBERNETES_KUBELET_HOST
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: KUBERNETES
+              value: "true"
+            - name: DD_COLLECT_KUBERNETES_EVENTS
+              value: "true"
+            - name: DD_LEADER_ELECTION
+              value: "true"
+            # Container runtime socket
+            - name: DD_CRI_SOCKET_PATH
+              value: /var/run/docker.sock
+            # Cluster name for infrastructure map grouping
+            - name: DD_CLUSTER_NAME
+              value: aks-infra-advisor
+            # Environment tagging
+            - name: DD_ENV
+              value: dev
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 200m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: 5555
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 5555
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: dockersocket
+              mountPath: /var/run/docker.sock
+            - name: procdir
+              mountPath: /host/proc
+              readOnly: true
+            - name: cgroups
+              mountPath: /host/sys/fs/cgroup
+              readOnly: true
+            - name: passwd
+              mountPath: /etc/passwd
+              readOnly: true
+            - name: pointerdir
+              mountPath: /opt/datadog-agent/run
+            - name: logpodpath
+              mountPath: /var/log/pods
+              readOnly: true
+            - name: logcontainerpath
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+      volumes:
+        - name: dockersocket
+          hostPath:
+            path: /var/run/docker.sock
+        - name: procdir
+          hostPath:
+            path: /proc
+        - name: cgroups
+          hostPath:
+            path: /sys/fs/cgroup
+        - name: passwd
+          hostPath:
+            path: /etc/passwd
+        - name: pointerdir
+          hostPath:
+            path: /opt/datadog-agent/run
+        - name: logpodpath
+          hostPath:
+            path: /var/log/pods
+        - name: logcontainerpath
+          hostPath:
+            path: /var/lib/docker/containers

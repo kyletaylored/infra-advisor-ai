@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui
+  namespace: infra-advisor
+  labels:
+    app: ui
+    tags.datadoghq.com/env: dev
+    tags.datadoghq.com/service: infra-advisor-ui
+    tags.datadoghq.com/version: latest
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ui
+  template:
+    metadata:
+      labels:
+        app: ui
+        tags.datadoghq.com/env: dev
+        tags.datadoghq.com/service: infra-advisor-ui
+        tags.datadoghq.com/version: latest
+      annotations:
+        ad.datadoghq.com/ui.logs: '[{"source":"nginx","service":"infra-advisor-ui"}]'
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: ui
+          image: ghcr.io/kyletaylored/infra-advisor-ai/ui:latest
+          ports:
+            - containerPort: 80
+              name: http
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            timeoutSeconds: 5
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "128Mi"
+              cpu: "100m"

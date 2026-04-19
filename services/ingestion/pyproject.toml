@@ -1,0 +1,31 @@
+[project]
+name = "infra-advisor-ingestion"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "apache-airflow>=2.9.0",
+    "apache-airflow-providers-http",
+    "azure-storage-blob",
+    "azure-search-documents",
+    "azure-identity",
+    "tiktoken",
+    "openpyxl",
+    "pandas",
+    "openai",
+    "ddtrace",
+    "httpx",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "respx>=0.21",
+    "ruff>=0.4",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"

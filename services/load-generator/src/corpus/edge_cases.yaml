@@ -1,0 +1,47 @@
+queries:
+  - id: "bridge-no-data-001"
+    query: "Pull inspection data for bridge structure 9999999999XXXXX in El Paso County."
+    domain: "transportation"
+    expected_tools: ["get_bridge_condition"]
+    expected_behavior: "agent returns 'no records found' without hallucinating bridge details"
+
+  - id: "water-multi-region-001"
+    query: "Compare water supply deficits between TWDB planning regions C and G through 2050."
+    domain: "water"
+    expected_tools: ["get_water_infrastructure", "search_project_knowledge"]
+    expected_behavior: "agent calls water tool twice with different region filters and synthesizes comparison"
+
+  - id: "cross-domain-001"
+    query: "Are there any bridges in coastal Texas counties that have also experienced FEMA flood declarations? Flag any that are both structurally deficient and in repeat flood zones."
+    domain: "transportation"
+    expected_tools: ["get_bridge_condition", "get_disaster_history"]
+    expected_behavior: "agent performs multi-tool reasoning to correlate bridge location with FEMA county declarations"
+
+  - id: "conflicting-context-001"
+    query: "What did we bid on the Nueces County water reclamation project?"
+    domain: "water"
+    expected_tools: ["search_project_knowledge"]
+    expected_behavior: "agent searches knowledge base; if not found, explicitly states 'no matching project found in firm records' rather than speculating"
+
+  - id: "ambiguous-domain-001"
+    query: "What infrastructure risks should we flag for a client in Corpus Christi?"
+    domain: "general"
+    expected_tools: ["get_water_infrastructure", "get_disaster_history", "search_project_knowledge"]
+    expected_behavior: "agent interprets broad scope, calls multiple tools across water and disaster domains, synthesizes multi-domain risk summary"
+
+  - id: "state-not-supported-001"
+    query: "Pull bridge inspection data for all structurally deficient bridges in Hawaii with ADT over 20,000."
+    domain: "transportation"
+    expected_tools: ["get_bridge_condition"]
+    expected_behavior: "agent returns available NBI data or 'no matching records' without fabricating bridge details"
+
+  - id: "future-date-001"
+    query: "What FEMA declarations will occur in Texas in 2030?"
+    domain: "general"
+    expected_behavior: "agent clearly states that future disaster declarations are not predictable from available data"
+
+  - id: "empty-result-001"
+    query: "Which water systems in Wyoming serve more than 500,000 people and have open SDWA violations?"
+    domain: "water"
+    expected_tools: ["get_water_infrastructure"]
+    expected_behavior: "agent returns 'no records found' for implausible population threshold in low-population state"

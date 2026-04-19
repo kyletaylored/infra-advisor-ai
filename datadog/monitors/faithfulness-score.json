@@ -1,0 +1,18 @@
+{
+  "name": "[InfraAdvisor] Low Faithfulness Score — Index Staleness or Prompt Drift",
+  "type": "metric alert",
+  "query": "avg(last_15m):avg:eval.faithfulness_score{ml_app:infra-advisor-ai} < 0.75",
+  "message": "## InfraAdvisor Faithfulness Score Alert\n\nThe average faithfulness score has dropped below 0.75 over the last 15 minutes.\n\n**Current value:** {{value}}\n**Threshold:** 0.75\n\n**Possible causes:**\n- Azure AI Search index is stale (run `knowledge_base_init` DAG)\n- System prompt has drifted from expected behavior\n- GPT-4o model update changed response style\n- MCP tool returning malformed or empty results\n\n**Remediation:**\n1. Check Airflow DAG runs: `kubectl exec -n airflow deploy/airflow -- airflow dags trigger knowledge_base_init`\n2. Review recent LLM Observability traces for low-quality responses\n3. Check MCP server error rates on the MCP Server dashboard\n\n@slack-infra-advisor-alerts",
+  "tags": ["team:infra-advisor", "env:dev", "service:infraadvisor-agent-api"],
+  "options": {
+    "thresholds": {
+      "critical": 0.75,
+      "warning": 0.85
+    },
+    "notify_no_data": false,
+    "evaluation_delay": 60,
+    "renotify_interval": 60,
+    "notify_audit": false,
+    "require_full_window": false
+  }
+}

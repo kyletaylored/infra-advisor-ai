@@ -1,0 +1,25 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [mcp-server, agent-api, load-generator]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - name: Run tests
+        working-directory: services/${{ matrix.service }}
+        run: uv run pytest -x tests/
+        env:
+          AZURE_OPENAI_ENDPOINT: https://mock.openai.azure.com
+          AZURE_SEARCH_ENDPOINT: https://mock.search.windows.net
+          AZURE_SEARCH_API_KEY: mock-key
+          AZURE_OPENAI_API_KEY: mock-key
+          DD_AGENT_HOST: localhost
+          EIA_API_KEY: mock-key

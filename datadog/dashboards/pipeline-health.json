@@ -1,0 +1,109 @@
+{
+  "title": "InfraAdvisor — Pipeline Health",
+  "description": "Kafka consumer lag on both topics, DSM topology, Airflow DAG success rate, Azure AI Search index document count",
+  "layout_type": "ordered",
+  "tags": ["team:infra-advisor", "env:dev"],
+  "widgets": [
+    {
+      "definition": {
+        "type": "group",
+        "title": "Kafka Consumer Lag",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Consumer Lag — infra.query.events",
+              "requests": [
+                {
+                  "q": "max:kafka.consumer_lag{topic:infra.query.events,group_id:infra-advisor-agent-api}",
+                  "display_type": "line",
+                  "style": {"palette": "warm"}
+                }
+              ]
+            }
+          },
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Consumer Lag — infra.eval.results",
+              "requests": [
+                {
+                  "q": "max:kafka.consumer_lag{topic:infra.eval.results}",
+                  "display_type": "line"
+                }
+              ]
+            }
+          },
+          {
+            "definition": {
+              "type": "query_value",
+              "title": "Query Events Throughput (msg/min)",
+              "requests": [
+                {
+                  "q": "sum:kafka.net.bytes_in.rate{topic:infra.query.events}",
+                  "aggregator": "avg"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "type": "group",
+        "title": "Airflow DAG Health",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "DAG Successful Runs",
+              "requests": [
+                {
+                  "q": "sum:airflow.dag_run.success{*} by {dag_id}",
+                  "display_type": "bars"
+                }
+              ]
+            }
+          },
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "DAG Failed Runs",
+              "requests": [
+                {
+                  "q": "sum:airflow.dag_run.failed{*} by {dag_id}",
+                  "display_type": "bars",
+                  "style": {"palette": "warm"}
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "type": "group",
+        "title": "Azure AI Search Index",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "definition": {
+              "type": "query_value",
+              "title": "Index Document Count",
+              "requests": [
+                {
+                  "q": "avg:azure.search.document_count{index_name:infra-advisor-knowledge}",
+                  "aggregator": "last"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,154 @@
+# Risk Summary
+## {{ project_name | default("Infrastructure Risk Assessment") }}
+
+**Prepared for:** {{ client_name | default("[Client Name]") }}
+**Date:** {{ generated_date | default("[Date]") }}
+**Assessment Type:** Infrastructure Risk Register
+
+---
+
+## Executive Summary
+
+{% if context.get("bridges") %}
+This risk summary covers **{{ context.bridges | length }}** bridge structure(s) assessed from FHWA National Bridge Inventory data. Structures are ranked by risk priority combining sufficiency rating, condition codes, traffic exposure, and scour vulnerability.
+{% elif context.get("water_systems") %}
+This risk summary covers **{{ context.water_systems | length }}** public water system(s) with open Safe Drinking Water Act violations or infrastructure deficiencies.
+{% elif context.get("disaster_declarations") %}
+This risk summary covers infrastructure risk based on **{{ context.disaster_declarations | length }}** FEMA disaster declaration(s) affecting the study area.
+{% else %}
+[Insert executive summary of key risks identified for this project.]
+{% endif %}
+
+{% if notes %}
+**Analyst Notes:** {{ notes }}
+{% endif %}
+
+---
+
+## Risk Register
+
+### Likelihood Scale
+| Score | Label | Description |
+|---|---|---|
+| 5 | Almost Certain | Expected to occur within 1 year |
+| 4 | Likely | Expected to occur within 2–5 years |
+| 3 | Possible | May occur within 5–10 years |
+| 2 | Unlikely | Not expected but possible within 10 years |
+| 1 | Rare | May occur only in exceptional circumstances |
+
+### Consequence Scale
+| Score | Label | Description |
+|---|---|---|
+| 5 | Catastrophic | Fatalities, loss of critical service, >$10M cost |
+| 4 | Major | Serious injury, extended service disruption, $1M–$10M |
+| 3 | Moderate | Medical treatment, short service disruption, $100K–$1M |
+| 2 | Minor | First aid, minor disruption, $10K–$100K |
+| 1 | Negligible | Minimal impact, <$10K cost |
+
+### Risk Matrix
+*Risk Score = Likelihood × Consequence*
+
+|  | **5 Catastrophic** | **4 Major** | **3 Moderate** | **2 Minor** | **1 Negligible** |
+|---|---|---|---|---|---|
+| **5 Almost Certain** | 25 🔴 | 20 🔴 | 15 🟠 | 10 🟡 | 5 🟢 |
+| **4 Likely** | 20 🔴 | 16 🔴 | 12 🟠 | 8 🟡 | 4 🟢 |
+| **3 Possible** | 15 🟠 | 12 🟠 | 9 🟡 | 6 🟡 | 3 🟢 |
+| **2 Unlikely** | 10 🟡 | 8 🟡 | 6 🟡 | 4 🟢 | 2 🟢 |
+| **1 Rare** | 5 🟢 | 4 🟢 | 3 🟢 | 2 🟢 | 1 🟢 |
+
+*🔴 High (≥15) | 🟠 Medium-High (9–14) | 🟡 Medium (4–8) | 🟢 Low (1–3)*
+
+---
+
+## Identified Risks
+
+{% if context.get("bridges") %}
+{% for bridge in context.bridges %}
+### Risk {{ loop.index }}: Structure {{ bridge.get("STRUCTURE_NUMBER_008", "[#]") }}
+
+| Field | Value |
+|---|---|
+| Structure Number | {{ bridge.get("STRUCTURE_NUMBER_008", "N/A") }} |
+| Location | {{ bridge.get("FACILITY_CARRIED_007", "N/A") }} — {{ bridge.get("LOCATION_009", "N/A") }} |
+| Sufficiency Rating | {{ bridge.get("SUFFICIENCY_RATING", "N/A") }} / 100 |
+| Deck Condition | {{ bridge.get("deck_condition_label", bridge.get("DECK_COND_058", "N/A")) }} |
+| Superstructure | {{ bridge.get("superstructure_condition_label", bridge.get("SUPERSTRUCTURE_COND_059", "N/A")) }} |
+| Substructure | {{ bridge.get("substructure_condition_label", bridge.get("SUBSTRUCTURE_COND_060", "N/A")) }} |
+| ADT | {{ bridge.get("ADT_029", "N/A") | int if bridge.get("ADT_029") else "N/A" }} vehicles/day |
+| Year Built | {{ bridge.get("YEAR_BUILT_027", "N/A") }} |
+| Last Inspection | {{ bridge.get("INSPECT_DATE_090", "N/A") }} |
+| Structurally Deficient | {{ "YES ⚠️" if bridge.get("STRUCTURALLY_DEFICIENT") == "1" else "No" }} |
+
+**Risk Factors:**
+{% if bridge.get("STRUCTURALLY_DEFICIENT") == "1" %}- Structurally deficient designation triggers federal replacement funding eligibility
+{% endif %}
+{% if bridge.get("SUFFICIENCY_RATING") and bridge.get("SUFFICIENCY_RATING") | float < 50 %}- Sufficiency rating below 50 — candidate for Highway Bridge Program replacement funding
+{% endif %}
+{% if bridge.get("YEAR_BUILT_027") and bridge.get("YEAR_BUILT_027") | int < 1970 %}- Structure built before 1970 — may predate modern scour, seismic, and load design standards
+{% endif %}
+
+| Risk Category | Likelihood | Consequence | Risk Score | Priority |
+|---|---|---|---|---|
+| Structural failure under loading | [L] | [C] | [L×C] | [H/M/L] |
+| Scour/undermining at flood | [L] | [C] | [L×C] | [H/M/L] |
+| Deck deterioration/spalling | [L] | [C] | [L×C] | [H/M/L] |
+| Loss of load-carrying capacity | [L] | [C] | [L×C] | [H/M/L] |
+
+**Recommended Actions:**
+1. [Action 1 — immediate term]
+2. [Action 2 — short term]
+3. [Action 3 — long term]
+
+---
+{% endfor %}
+{% elif context.get("water_systems") %}
+{% for system in context.water_systems %}
+### Risk {{ loop.index }}: {{ system.get("PWS_NAME", system.get("system_name", "[System Name]")) }}
+
+| Field | Value |
+|---|---|
+| PWSID | {{ system.get("PWSID", system.get("pwsid", "N/A")) }} |
+| City | {{ system.get("CITY_NAME", system.get("city", "N/A")) }} |
+| Population Served | {{ system.get("POPULATION_SERVED_COUNT", system.get("population_served", "N/A")) }} |
+| Primary Source | {{ system.get("PRIMARY_SOURCE_CODE", "N/A") }} |
+| Open Violations | {{ system.get("open_violation_count", "N/A") }} |
+| _Source | {{ system.get("_source", "EPA_SDWIS") }} |
+
+| Risk Category | Likelihood | Consequence | Risk Score | Priority |
+|---|---|---|---|---|
+| SDWA violation enforcement action | [L] | [C] | [L×C] | [H/M/L] |
+| Treatment failure | [L] | [C] | [L×C] | [H/M/L] |
+| Source water contamination | [L] | [C] | [L×C] | [H/M/L] |
+| Infrastructure failure | [L] | [C] | [L×C] | [H/M/L] |
+
+---
+{% endfor %}
+{% else %}
+| Risk ID | Risk Description | Category | Likelihood (1–5) | Consequence (1–5) | Risk Score | Priority | Mitigation Strategy | Owner |
+|---|---|---|---|---|---|---|---|---|
+| R-001 | [Risk description] | [Category] | [1–5] | [1–5] | [Score] | [H/M/L] | [Strategy] | [Owner] |
+| R-002 | [Risk description] | [Category] | [1–5] | [1–5] | [Score] | [H/M/L] | [Strategy] | [Owner] |
+| R-003 | [Risk description] | [Category] | [1–5] | [1–5] | [Score] | [H/M/L] | [Strategy] | [Owner] |
+{% endif %}
+
+---
+
+## Risk Response Plan
+
+| Priority | Risk | Response Strategy | Timeline | Responsible Party |
+|---|---|---|---|---|
+| High | [Risk] | Mitigate / Avoid / Transfer | [Timeline] | [Party] |
+| Medium | [Risk] | Mitigate / Monitor | [Timeline] | [Party] |
+| Low | [Risk] | Accept / Monitor | [Timeline] | [Party] |
+
+---
+
+## Monitoring and Review
+
+- **Review Frequency:** Quarterly for High risks; Annually for Medium/Low
+- **Trigger for Immediate Review:** Any new inspection, flood event, FEMA declaration, or regulatory action affecting listed assets
+- **Next Scheduled Review:** [Date]
+
+---
+
+*Generated by InfraAdvisor AI | Data sources: {% if context.get("bridges") %}FHWA NBI{% endif %}{% if context.get("water_systems") %} EPA SDWIS{% endif %}{% if context.get("disaster_declarations") %} OpenFEMA{% endif %} | {{ generated_date | default("[Date]") }}*

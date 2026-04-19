@@ -1,0 +1,45 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: load-generator
+  namespace: infra-advisor
+  labels:
+    app: load-generator
+    tags.datadoghq.com/env: dev
+    tags.datadoghq.com/service: infra-advisor-load-generator
+    tags.datadoghq.com/version: latest
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: load-generator
+            tags.datadoghq.com/env: dev
+            tags.datadoghq.com/service: infra-advisor-load-generator
+            tags.datadoghq.com/version: latest
+          annotations:
+            ad.datadoghq.com/load-generator.logs: '[{"source":"python","service":"infra-advisor-load-generator"}]'
+        spec:
+          imagePullSecrets:
+            - name: ghcr-pull-secret
+          restartPolicy: OnFailure
+          containers:
+            - name: load-generator
+              image: ghcr.io/kyletaylored/infra-advisor-ai/load-generator:latest
+              envFrom:
+                - configMapRef:
+                    name: load-generator-config
+                - secretRef:
+                    name: load-generator-secret
+              resources:
+                requests:
+                  memory: "128Mi"
+                  cpu: "100m"
+                limits:
+                  memory: "256Mi"
+                  cpu: "250m"

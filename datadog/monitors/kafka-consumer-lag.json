@@ -1,0 +1,18 @@
+{
+  "name": "[InfraAdvisor] Kafka Consumer Lag — infra.query.events",
+  "type": "metric alert",
+  "query": "max(last_10m):max:kafka.consumer_lag{topic:infra.query.events,group_id:infra-advisor-agent-api} > 100",
+  "message": "## Kafka Consumer Lag Alert\n\n**Topic:** infra.query.events\n**Consumer group:** infra-advisor-agent-api\n**Current lag:** {{value}} messages (threshold: 100)\n\nThe agent-api Kafka consumer is falling behind on processing query events. This may indicate:\n- Agent-api pods are overloaded or crashing (check HPA)\n- Azure OpenAI is slow or throttling (check LLM Observability)\n- MCP server is unavailable (check MCP health endpoint)\n- Consumer thread crashed (check pod logs)\n\n**Remediation:**\n1. Check pod status: `kubectl get pods -n infra-advisor -l app=agent-api`\n2. Check HPA: `kubectl get hpa agent-api -n infra-advisor`\n3. Check consumer logs: `kubectl logs -n infra-advisor deploy/agent-api | grep kafka`\n4. If load-generator is misfiring: `kubectl delete cronjob load-generator -n infra-advisor`\n\n@slack-infra-advisor-alerts",
+  "tags": ["team:infra-advisor", "env:dev"],
+  "options": {
+    "thresholds": {
+      "critical": 100,
+      "warning": 50
+    },
+    "notify_no_data": false,
+    "evaluation_delay": 120,
+    "renotify_interval": 30,
+    "notify_audit": false,
+    "require_full_window": true
+  }
+}

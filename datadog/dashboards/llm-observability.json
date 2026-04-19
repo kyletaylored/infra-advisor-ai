@@ -1,0 +1,125 @@
+{
+  "title": "InfraAdvisor — LLM Observability",
+  "description": "Query volume, token usage, cost/day, faithfulness score trend, AI Guard violations, latency P50/P95/P99",
+  "layout_type": "ordered",
+  "tags": ["team:infra-advisor", "env:dev", "service:infraadvisor-agent-api"],
+  "widgets": [
+    {
+      "definition": {
+        "type": "group",
+        "title": "Query Throughput",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Query Volume (requests/min)",
+              "requests": [
+                {
+                  "q": "sum:trace.fastapi.request.hits{service:infraadvisor-agent-api,resource_name:post_/query}.as_rate()",
+                  "display_type": "bars"
+                }
+              ]
+            }
+          },
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Query Latency P50/P95/P99",
+              "requests": [
+                {
+                  "q": "p50:trace.fastapi.request.duration{service:infraadvisor-agent-api,resource_name:post_/query}",
+                  "display_type": "line",
+                  "style": {"palette": "green"}
+                },
+                {
+                  "q": "p95:trace.fastapi.request.duration{service:infraadvisor-agent-api,resource_name:post_/query}",
+                  "display_type": "line",
+                  "style": {"palette": "yellow"}
+                },
+                {
+                  "q": "p99:trace.fastapi.request.duration{service:infraadvisor-agent-api,resource_name:post_/query}",
+                  "display_type": "line",
+                  "style": {"palette": "red"}
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "type": "group",
+        "title": "LLM Token Usage & Cost",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Token Usage (prompt + completion)",
+              "requests": [
+                {
+                  "q": "sum:llm.tokens.prompt{ml_app:infra-advisor-ai}.as_rate()",
+                  "display_type": "bars",
+                  "style": {"palette": "blue"}
+                },
+                {
+                  "q": "sum:llm.tokens.completion{ml_app:infra-advisor-ai}.as_rate()",
+                  "display_type": "bars",
+                  "style": {"palette": "purple"}
+                }
+              ]
+            }
+          },
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Estimated Cost (USD/day)",
+              "requests": [
+                {
+                  "q": "sum:llm.cost_usd{ml_app:infra-advisor-ai}.rollup(sum, 86400)",
+                  "display_type": "bars"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "definition": {
+        "type": "group",
+        "title": "Quality & Safety",
+        "layout_type": "ordered",
+        "widgets": [
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "Faithfulness Score Trend (avg)",
+              "requests": [
+                {
+                  "q": "avg:eval.faithfulness_score{ml_app:infra-advisor-ai} by {query.domain}",
+                  "display_type": "line"
+                }
+              ]
+            }
+          },
+          {
+            "definition": {
+              "type": "timeseries",
+              "title": "AI Guard Violations",
+              "requests": [
+                {
+                  "q": "sum:datadog.llm.guardrails.violations{service:infraadvisor-agent-api}.as_rate()",
+                  "display_type": "bars",
+                  "style": {"palette": "warm"}
+                }
+              ]
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

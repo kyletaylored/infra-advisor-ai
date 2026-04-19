@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-server-config
+  namespace: infra-advisor
+  labels:
+    app: mcp-server
+data:
+  DD_ENV: "dev"
+  DD_SERVICE: "infratools-mcp"
+  DD_VERSION: "latest"
+  DD_AGENT_HOST: "datadog-agent.datadog.svc.cluster.local"
+  DD_TRACE_AGENT_PORT: "8126"
+  DD_DOGSTATSD_PORT: "8125"
+  DD_LOGS_INJECTION: "true"
+  DD_TRACE_SAMPLE_RATE: "1.0"
+  DD_RUNTIME_METRICS_ENABLED: "true"
+  AZURE_SEARCH_INDEX_NAME: "infra-advisor-knowledge"
+  AZURE_OPENAI_DEPLOYMENT_NAME: "gpt-4o"
+  AZURE_OPENAI_EMBEDDING_DEPLOYMENT: "text-embedding-ada-002"
+  EPA_SDWIS_BASE_URL: "https://enviro.epa.gov/enviro/efservice"
+  LOG_LEVEL: "INFO"

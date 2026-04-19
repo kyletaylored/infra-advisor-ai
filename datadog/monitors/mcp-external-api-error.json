@@ -1,0 +1,19 @@
+{
+  "name": "[InfraAdvisor] MCP External API Error Rate Elevated",
+  "type": "metric alert",
+  "query": "sum(last_5m):sum:mcp.external_api.errors{service:infratools-mcp} by {source} > 5",
+  "message": "## MCP External API Error Alert\n\n**Source:** {{source.name}}\n**Error count in last 5 min:** {{value}} (threshold: 5)\n\nThe InfraTools MCP server is experiencing elevated error rates calling external APIs.\n\n**Affected source:** {{source.name}}\n- `epa_sdwis` — EPA Envirofacts SDWIS endpoint is unavailable or rate-limiting\n- `twdb` — Azure AI Search is unavailable or returning errors\n- `fhwa_nbi` — ArcGIS NBI FeatureServer is unavailable\n- `openfema` — OpenFEMA API is unavailable\n- `eia` — EIA API key expired or endpoint unavailable\n\n**Remediation:**\n1. Check MCP Server dashboard for error trend\n2. Verify external API health:\n   - EPA: https://enviro.epa.gov/enviro/efservice\n   - FEMA: https://www.fema.gov/api/open\n   - EIA: Check `EIA_API_KEY` secret in K8s\n3. Check pod logs: `kubectl logs -n infra-advisor deploy/mcp-server`\n\n@slack-infra-advisor-alerts",
+  "tags": ["team:infra-advisor", "env:dev", "service:infratools-mcp"],
+  "options": {
+    "thresholds": {
+      "critical": 5,
+      "warning": 3
+    },
+    "notify_no_data": false,
+    "evaluation_delay": 60,
+    "renotify_interval": 30,
+    "notify_audit": false,
+    "require_full_window": false,
+    "group_retention_duration": "7d"
+  }
+}

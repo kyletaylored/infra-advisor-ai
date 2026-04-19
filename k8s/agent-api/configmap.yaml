@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-api-config
+  namespace: infra-advisor
+  labels:
+    app: agent-api
+data:
+  DD_ENV: "dev"
+  DD_SERVICE: "infraadvisor-agent-api"
+  DD_VERSION: "latest"
+  DD_AGENT_HOST: "datadog-agent.datadog.svc.cluster.local"
+  DD_TRACE_AGENT_PORT: "8126"
+  DD_DOGSTATSD_PORT: "8125"
+  DD_LOGS_INJECTION: "true"
+  DD_TRACE_SAMPLE_RATE: "1.0"
+  DD_RUNTIME_METRICS_ENABLED: "true"
+  DD_LLMOBS_ENABLED: "true"
+  DD_LLMOBS_ML_APP: "infra-advisor-ai"
+  DD_LLMOBS_AGENTLESS_ENABLED: "false"
+  AZURE_OPENAI_DEPLOYMENT: "gpt-4o"
+  MCP_SERVER_URL: "http://mcp-server.infra-advisor.svc.cluster.local:8000/mcp"
+  REDIS_HOST: "redis.infra-advisor.svc.cluster.local"
+  REDIS_PORT: "6379"
+  LOG_LEVEL: "INFO"
