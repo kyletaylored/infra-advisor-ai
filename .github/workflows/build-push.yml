@@ -55,5 +55,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
           sbom: false
-          cache-from: type=gha,scope=${{ matrix.service }}
+          # cache-from intentionally omitted: GHA-cached (but never pushed) layers
+          # trigger GHCR 403 on blob HEAD. Once packages are established in GHCR
+          # cache-from can be re-enabled — the layers will already exist (200 not 403).
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
