@@ -1,4 +1,5 @@
 name: CI
+
 on:
   push:
     branches: [main]
@@ -8,14 +9,20 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        service: [mcp-server, agent-api, load-generator]
+        service: [mcp-server, agent-api]
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
+      - uses: actions/checkout@v6
+
+      - uses: astral-sh/setup-uv@v8
+        with:
+          enable-cache: true
+          cache-dependency-glob: services/${{ matrix.service }}/uv.lock
+
       - name: Run tests
         working-directory: services/${{ matrix.service }}
-        run: uv run pytest -x tests/
+        run: uv run --all-extras pytest -x tests/
         env:
           AZURE_OPENAI_ENDPOINT: https://mock.openai.azure.com
           AZURE_SEARCH_ENDPOINT: https://mock.search.windows.net
