@@ -18,10 +18,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 NBI_ARCGIS_URL = (
     "https://services.arcgis.com/xOi1kZaI0eWDREZv/arcgis/rest/services"
-    "/National_Bridge_Inventory/FeatureServer/0/query"
+    "/NTAD_National_Bridge_Inventory/FeatureServer/0/query"
 )
 
 # Fields to request from the feature server (exact NBI field names per PRD §3)
+# Note: SUFFICIENCY_RATING removed from NTAD service; replaced by LOWEST_RATING (0-9).
+# STRUCTURALLY_DEFICIENT removed; replaced by BRIDGE_CONDITION ('G'/'F'/'P').
+# INSPECT_DATE_090 renamed to DATE_OF_INSPECT_090 (MMYY string, e.g. "0422" = Apr 2022).
 NBI_OUTFIELDS = ",".join(
     [
         "STRUCTURE_NUMBER_008",
@@ -34,9 +37,10 @@ NBI_OUTFIELDS = ",".join(
         "DECK_COND_058",
         "SUPERSTRUCTURE_COND_059",
         "SUBSTRUCTURE_COND_060",
-        "STRUCTURALLY_DEFICIENT",
-        "SUFFICIENCY_RATING",
-        "INSPECT_DATE_090",
+        "BRIDGE_CONDITION",
+        "LOWEST_RATING",
+        "SCOUR_CRITICAL_113",
+        "DATE_OF_INSPECT_090",
         "YEAR_BUILT_027",
         "LAT_016",
         "LONG_017",
@@ -77,19 +81,20 @@ class BridgeConditionInput(BaseModel):
     min_adt: Optional[int] = Field(
         default=None, description="Minimum average daily traffic"
     )
-    max_sufficiency_rating: Optional[float] = Field(
-        default=None, description="Upper bound on FHWA sufficiency rating (0–100)"
+    max_lowest_rating: Optional[int] = Field(
+        default=None,
+        description="Upper bound on NBI lowest condition rating (0–9, where 0=failed, 9=excellent). Filters to bridges at or below this rating.",
     )
     structurally_deficient_only: bool = Field(
         default=False,
-        description="When True, restricts results to structurally deficient bridges",
+        description="When True, restricts results to structurally deficient bridges (BRIDGE_CONDITION='P')",
     )
     last_inspection_before: Optional[str] = Field(
         default=None,
-        description="ISO date string — return bridges last inspected before this date",
+        description="ISO date string — informational only, not applied as a server-side filter (DATE_OF_INSPECT_090 is MMYY string format)",
     )
     order_by: str = Field(
-        default="SUFFICIENCY_RATING ASC",
+        default="LOWEST_RATING ASC",
         description="ORDER BY clause for the ArcGIS query",
     )
     limit: int = Field(
@@ -119,17 +124,15 @@ def _build_where_clause(inp: BridgeConditionInput) -> str:
     if inp.min_adt is not None:
         clauses.append(f"ADT_029>={inp.min_adt}")
 
-    if inp.max_sufficiency_rating is not None:
-        clauses.append(f"SUFFICIENCY_RATING<={inp.max_sufficiency_rating}")
+    if inp.max_lowest_rating is not None:
+        clauses.append(f"LOWEST_RATING<={inp.max_lowest_rating}")
 
     if inp.structurally_deficient_only:
-        clauses.append("STRUCTURALLY_DEFICIENT='1'")
+        clauses.append("BRIDGE_CONDITION='P'")
 
-    if inp.last_inspection_before:
-        # ArcGIS expects dates as epoch milliseconds in WHERE clauses when the
-        # field is a Date type; for string comparisons use ISO format directly.
-        # The NBI INSPECT_DATE_090 field is stored as a Date — use TIMESTAMP keyword.
-        clauses.append(f"INSPECT_DATE_090 < TIMESTAMP '{inp.last_inspection_before} 00:00:00'")
+    # last_inspection_before: DATE_OF_INSPECT_090 is stored as MMYY string (e.g. "0422"),
+    # which does not sort lexicographically by date. Skipping server-side filter; caller
+    # should filter returned records by last_inspection_date if needed.
 
     return " AND ".join(clauses) if clauses else "1=1"
 
@@ -142,8 +145,16 @@ def _decode_condition(raw: Any) -> str | None:
     return CONDITION_LABELS.get(key)
 
 
+_BRIDGE_CONDITION_LABELS: dict[str, str] = {
+    "G": "Good",
+    "F": "Fair",
+    "P": "Poor",
+}
+
+
 def _normalise_feature(attrs: dict[str, Any], retrieved_at: str) -> dict[str, Any]:
     """Convert a raw ArcGIS feature attributes dict to a normalised bridge record."""
+    bridge_cond = attrs.get("BRIDGE_CONDITION")
     return {
         "structure_number": attrs.get("STRUCTURE_NUMBER_008"),
         "facility_carried": attrs.get("FACILITY_CARRIED_007"),
@@ -158,9 +169,11 @@ def _normalise_feature(attrs: dict[str, Any], retrieved_at: str) -> dict[str, An
         "superstructure_condition": _decode_condition(attrs.get("SUPERSTRUCTURE_COND_059")),
         "substructure_condition_code": attrs.get("SUBSTRUCTURE_COND_060"),
         "substructure_condition": _decode_condition(attrs.get("SUBSTRUCTURE_COND_060")),
-        "structurally_deficient": attrs.get("STRUCTURALLY_DEFICIENT") == "1",
-        "sufficiency_rating": attrs.get("SUFFICIENCY_RATING"),
-        "last_inspection_date": attrs.get("INSPECT_DATE_090"),
+        "structurally_deficient": bridge_cond == "P",
+        "bridge_condition_category": _BRIDGE_CONDITION_LABELS.get(bridge_cond) if bridge_cond else None,
+        "lowest_rating": attrs.get("LOWEST_RATING"),
+        "scour_critical": attrs.get("SCOUR_CRITICAL_113"),
+        "last_inspection_date": attrs.get("DATE_OF_INSPECT_090"),
         "year_built": attrs.get("YEAR_BUILT_027"),
         "latitude": attrs.get("LAT_016"),
         "longitude": attrs.get("LONG_017"),

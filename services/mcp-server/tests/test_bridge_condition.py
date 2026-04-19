@@ -40,9 +40,9 @@ def _make_feature(
     deck: str = "4",
     superstructure: str = "3",
     substructure: str = "4",
-    sufficiency: float = 32.5,
+    lowest_rating: int = 3,
     adt: int = 12_000,
-    structurally_deficient: str = "1",
+    bridge_condition: str = "P",
 ) -> dict:
     return {
         "attributes": {
@@ -56,9 +56,10 @@ def _make_feature(
             "DECK_COND_058": deck,
             "SUPERSTRUCTURE_COND_059": superstructure,
             "SUBSTRUCTURE_COND_060": substructure,
-            "STRUCTURALLY_DEFICIENT": structurally_deficient,
-            "SUFFICIENCY_RATING": sufficiency,
-            "INSPECT_DATE_090": "2021-06-15",
+            "BRIDGE_CONDITION": bridge_condition,
+            "LOWEST_RATING": lowest_rating,
+            "SCOUR_CRITICAL_113": "8",
+            "DATE_OF_INSPECT_090": "0621",
             "YEAR_BUILT_027": 1968,
             "LAT_016": 29.425,
             "LONG_017": -98.494,
