@@ -43,13 +43,17 @@ jobs:
 
       - name: Build and push
         uses: docker/build-push-action@v7
+        env:
+          # Disables all default buildx attestations — fixes GHCR 403 on HEAD
+          # requests for new packages (GHCR returns 403 instead of 404 for
+          # non-existent blobs when the package hasn't been pushed before)
+          BUILDX_NO_DEFAULT_ATTESTATIONS: "1"
         with:
           context: services/${{ matrix.service }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # provenance=false works around GHCR returning 403 on HEAD requests
-          # for non-existent blobs when pushing a new package for the first time
           provenance: false
+          sbom: false
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
