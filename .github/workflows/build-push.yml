@@ -41,9 +41,9 @@ jobs:
             type=sha,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
 
-      # Build to a local OCI tar — avoids buildx pushing directly to GHCR
+      # Build to a local Docker tar — avoids buildx pushing directly to GHCR
       # which triggers 403 on blob HEAD for packages not yet in GHCR.
-      - name: Build image to OCI tar
+      - name: Build image to Docker tar
         uses: docker/build-push-action@v7
         with:
           context: services/${{ matrix.service }}
@@ -54,13 +54,14 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
-      # crane push handles GHCR correctly: treats 403 on blob HEAD as
-      # "needs upload" rather than a fatal auth error (unlike buildx push).
-      - name: Install crane
-        uses: imjasonh/setup-crane@v0.4
-
-      - name: Push with crane
+      # skopeo (containers/image library) explicitly treats GHCR 403 on blob
+      # HEAD as "not found, upload anyway" — unlike buildx/crane which treat
+      # 403 as a fatal auth error. skopeo is pre-installed on ubuntu-latest.
+      - name: Push with skopeo
         run: |
           while IFS= read -r tag; do
-            [ -n "$tag" ] && crane push /tmp/${{ matrix.service }}.tar "$tag"
+            [ -n "$tag" ] && skopeo copy \
+              --dest-creds "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" \
+              "docker-archive:/tmp/${{ matrix.service }}.tar" \
+              "docker://$tag"
           done <<< "${{ steps.meta.outputs.tags }}"
