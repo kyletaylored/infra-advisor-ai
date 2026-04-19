@@ -47,7 +47,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: services/${{ matrix.service }}
-          outputs: type=oci,dest=/tmp/${{ matrix.service }}.tar
+          outputs: type=docker,dest=/tmp/${{ matrix.service }}.tar
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
           sbom: false
