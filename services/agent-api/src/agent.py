@@ -129,7 +129,7 @@ async def run_agent(
 
     # Build tools and agent (lazy per-request so tool list stays fresh)
     tools = await mcp_client.get_tools()
-    agent = create_agent(llm=llm, tools=tools, system_prompt=_SYSTEM_PROMPT_TEXT)
+    agent = create_agent(model=llm, tools=tools, system_prompt=_SYSTEM_PROMPT_TEXT)
 
     # Invoke — new API takes {"messages": [...]}
     result = await agent.ainvoke({"messages": messages})
