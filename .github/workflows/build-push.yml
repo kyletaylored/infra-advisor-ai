@@ -41,26 +41,14 @@ jobs:
             type=sha,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
 
-      # Build to a local Docker tar — avoids buildx pushing directly to GHCR
-      # which triggers 403 on blob HEAD for packages not yet in GHCR.
-      - name: Build image to Docker tar
+      - name: Build and push
         uses: docker/build-push-action@v7
         with:
           context: services/${{ matrix.service }}
-          outputs: type=docker,dest=/tmp/${{ matrix.service }}.tar
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
           sbom: false
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
-
-      # Load into Docker daemon and push via docker push.
-      # The Docker daemon's distribution client falls through to blob upload
-      # when it receives 403 on blob HEAD, unlike buildx/crane/skopeo.
-      - name: Load and push image
-        run: |
-          docker load --input /tmp/${{ matrix.service }}.tar
-          while IFS= read -r tag; do
-            [ -n "$tag" ] && docker push "$tag"
-          done <<< "${{ steps.meta.outputs.tags }}"
