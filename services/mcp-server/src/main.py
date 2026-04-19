@@ -52,10 +52,10 @@ async def get_bridge_condition(
     county_code: str | None = None,
     structure_number: str | None = None,
     min_adt: int | None = None,
-    max_sufficiency_rating: float | None = None,
+    max_lowest_rating: int | None = None,
     structurally_deficient_only: bool = False,
     last_inspection_before: str | None = None,
-    order_by: str = "SUFFICIENCY_RATING ASC",
+    order_by: str = "LOWEST_RATING ASC",
     limit: int = 50,
 ) -> list | dict:
     """Query the FHWA National Bridge Inventory for bridges matching specified criteria."""
@@ -65,7 +65,7 @@ async def get_bridge_condition(
             county_code=county_code,
             structure_number=structure_number,
             min_adt=min_adt,
-            max_sufficiency_rating=max_sufficiency_rating,
+            max_lowest_rating=max_lowest_rating,
             structurally_deficient_only=structurally_deficient_only,
             last_inspection_before=last_inspection_before,
             order_by=order_by,
