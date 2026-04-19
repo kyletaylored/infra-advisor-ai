@@ -58,7 +58,11 @@ async def get_bridge_condition(
     order_by: str = "LOWEST_RATING ASC",
     limit: int = 50,
 ) -> list | dict:
-    """Query the FHWA National Bridge Inventory for bridges matching specified criteria."""
+    """Query the FHWA National Bridge Inventory for bridges matching specified criteria.
+
+    state_code must be a 2-digit FIPS numeric code, NOT a 2-letter abbreviation:
+    TX=48, CA=06, FL=12, NY=36, LA=22, OK=40, AZ=04, CO=08, NM=35, AR=05.
+    """
     return await _get_bridge_condition(
         BridgeConditionInput(
             state_code=state_code,

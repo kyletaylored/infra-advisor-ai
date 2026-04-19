@@ -161,14 +161,21 @@ async def run_agent(
             context_chunks.append(content_str[:500])
 
             # Try to parse _source fields from JSON-like observation.
-            # MCP tools return content as a list of ContentBlocks:
+            # MCP tools return content as a Python list of ContentBlocks:
             # [{"type": "text", "text": "{...json...}"}]
-            # We unwrap those and try to extract _source from the inner JSON.
+            # msg.content may already be a list (not a JSON string).
             try:
                 import json
 
-                parsed = json.loads(msg.content)
-                items = parsed if isinstance(parsed, list) else [parsed]
+                content = msg.content
+                if isinstance(content, list):
+                    items = content
+                elif isinstance(content, str):
+                    parsed = json.loads(content)
+                    items = parsed if isinstance(parsed, list) else [parsed]
+                else:
+                    items = []
+
                 for item in items:
                     if not isinstance(item, dict):
                         continue
