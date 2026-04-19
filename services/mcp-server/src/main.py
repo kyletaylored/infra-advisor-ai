@@ -1,7 +1,4 @@
 import ddtrace.auto  # must be first import — monkey-patches httpx, openai, redis at import time
-from ddtrace import patch_all
-
-patch_all()
 
 import logging
 import os
@@ -206,7 +203,7 @@ app = FastAPI(
 )
 
 # Mount the MCP server under /mcp
-app.mount("/mcp", mcp.get_asgi_app())
+app.mount("/mcp", mcp.streamable_http_app())
 
 
 @app.get("/health")
