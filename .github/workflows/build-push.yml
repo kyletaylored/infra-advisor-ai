@@ -48,6 +48,7 @@ jobs:
         with:
           context: services/${{ matrix.service }}
           outputs: type=docker,dest=/tmp/${{ matrix.service }}.tar
+          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
           sbom: false
