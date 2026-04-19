@@ -2,10 +2,10 @@ import ddtrace.auto  # must be first import — monkey-patches httpx, openai, re
 
 import logging
 import os
-from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
 from mcp.server.fastmcp import FastMCP
+from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 from tools.bridge_condition import BridgeConditionInput
 from tools.bridge_condition import get_bridge_condition as _get_bridge_condition
@@ -176,7 +176,7 @@ async def draft_document(
     )
 
 
-# ─── FastAPI app ──────────────────────────────────────────────────────────────
+# ─── Health endpoint (custom route on the MCP server) ─────────────────────────
 
 TOOL_NAMES = [
     "get_bridge_condition",
@@ -188,29 +188,15 @@ TOOL_NAMES = [
 ]
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    logger.info("InfraTools MCP server starting up")
-    yield
-    logger.info("InfraTools MCP server shutting down")
-
-
-app = FastAPI(
-    title="InfraTools MCP Server",
-    description="Infrastructure consulting MCP tools for InfraAdvisor AI",
-    version="0.1.0",
-    lifespan=lifespan,
-)
-
-# Mount the MCP server under /mcp
-app.mount("/mcp", mcp.streamable_http_app())
-
-
-@app.get("/health")
-async def health() -> dict:
+@mcp.custom_route("/health", methods=["GET"])
+async def health(request: Request) -> JSONResponse:
     """Liveness probe — returns service status and available tool names."""
-    return {
+    return JSONResponse({
         "status": "ok",
         "service": os.environ.get("DD_SERVICE", "infratools-mcp"),
         "tools": TOOL_NAMES,
-    }
+    })
+
+
+# The MCP server is the ASGI app; /mcp handles MCP protocol, /health handles probes
+app = mcp.streamable_http_app()
