@@ -30,3 +30,4 @@ jobs:
           AZURE_OPENAI_API_KEY: mock-key
           DD_AGENT_HOST: localhost
           EIA_API_KEY: mock-key
+          KAFKA_BOOTSTRAP_SERVERS: localhost:9092

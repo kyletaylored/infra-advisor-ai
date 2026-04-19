@@ -1,7 +1,4 @@
 import ddtrace.auto  # must be first import — monkey-patches httpx, openai, langchain at import time
-from ddtrace import patch_all
-
-patch_all()
 
 import logging
 import os

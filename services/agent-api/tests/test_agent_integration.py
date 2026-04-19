@@ -86,6 +86,7 @@ def client():
         patch("main.run_agent", new=AsyncMock(return_value=CANNED_RESULT)),
         patch("main.append_exchange"),
         patch("main.enable_llm_obs"),
+        patch("main.start_consumer_thread"),
         patch("main._mcp_connected", True, create=True),
         patch("main._llm_connected", True, create=True),
     ):
@@ -207,6 +208,7 @@ def test_query_503_when_mcp_not_ready():
         patch("main.build_mcp_client", side_effect=Exception("MCP unavailable")),
         patch("main.build_llm", return_value=MagicMock()),
         patch("main.enable_llm_obs"),
+        patch("main.start_consumer_thread"),
     ):
         # Re-import app fresh so lifespan runs with patches in effect
         if "main" in sys.modules:
