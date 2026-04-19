@@ -3,13 +3,7 @@ name: Build and push images
 on:
   push:
     branches: [main]
-  workflow_dispatch:
-    inputs:
-      service:
-        description: 'Service to build (leave blank for all)'
-        required: false
-        type: choice
-        options: ['', 'mcp-server', 'agent-api', 'load-generator', 'ui']
+  workflow_dispatch: # manual full rebuild without a commit
 
 env:
   IMAGE_PREFIX: ghcr.io/kyletaylored/infra-advisor-ai
@@ -25,8 +19,6 @@ jobs:
       fail-fast: false
       matrix:
         service: [mcp-server, agent-api, load-generator, ui]
-    # Skip matrix entries that don't match a manual service filter
-    if: ${{ github.event.inputs.service == '' || github.event.inputs.service == matrix.service }}
     steps:
       - uses: actions/checkout@v6
 
