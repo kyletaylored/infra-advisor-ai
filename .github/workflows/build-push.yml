@@ -41,21 +41,26 @@ jobs:
             type=sha,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push
+      # Build to a local OCI tar — avoids buildx pushing directly to GHCR
+      # which triggers 403 on blob HEAD for packages not yet in GHCR.
+      - name: Build image to OCI tar
         uses: docker/build-push-action@v7
-        env:
-          # Disables all default buildx attestations — fixes GHCR 403 on HEAD
-          # requests for new packages (GHCR returns 403 instead of 404 for
-          # non-existent blobs when the package hasn't been pushed before)
-          BUILDX_NO_DEFAULT_ATTESTATIONS: "1"
         with:
           context: services/${{ matrix.service }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          outputs: type=oci,dest=/tmp/${{ matrix.service }}.tar
           labels: ${{ steps.meta.outputs.labels }}
           provenance: false
           sbom: false
-          # cache-from intentionally omitted: GHA-cached (but never pushed) layers
-          # trigger GHCR 403 on blob HEAD. Once packages are established in GHCR
-          # cache-from can be re-enabled — the layers will already exist (200 not 403).
+          cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+      # crane push handles GHCR correctly: treats 403 on blob HEAD as
+      # "needs upload" rather than a fatal auth error (unlike buildx push).
+      - name: Install crane
+        uses: imjasonh/setup-crane@v0.4
+
+      - name: Push with crane
+        run: |
+          while IFS= read -r tag; do
+            [ -n "$tag" ] && crane push /tmp/${{ matrix.service }}.tar "$tag"
+          done <<< "${{ steps.meta.outputs.tags }}"
