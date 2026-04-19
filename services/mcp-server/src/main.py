@@ -40,6 +40,9 @@ mcp = FastMCP(
     ),
     # Disable DNS rebinding protection — running inside K8s cluster, all hostnames are trusted
     transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    # Stateless mode: no session state between requests, avoids session cleanup 404s
+    # when langchain_mcp_adapters creates a new connection per tool call
+    stateless_http=True,
 )
 
 
