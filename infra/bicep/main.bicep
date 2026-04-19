@@ -31,6 +31,18 @@ param aksNodeVmSize string = 'Standard_D2s_v3'
 // ---------------------------------------------------------------------------
 // Resource group
 // ---------------------------------------------------------------------------
+// Live resources in rg-tola-infra-advisor-ai (as of 2026-04-19):
+//   aks-infra-advisor-dev        — managed by this template (aks.bicep)
+//   oai-infra-advisor-dev        — managed by this template (azure-openai.bicep)
+//   srch-infra-advisor-dev       — managed by this template (azure-ai-search.bicep)
+//   law-infra-advisor-dev        — managed by this template (monitoring.bicep)
+//   vnet01                       — manually created, not yet in Bicep
+//   infra-advisor-openai         — ORPHAN: pre-Bicep manual resource, safe to delete
+//   infra-advisor-search         — ORPHAN: pre-Bicep manual resource, safe to delete
+//
+// Node resource group: rg-tola-infra-advisor-ai-nodes (on next cluster create)
+// Current live node RG: MC_rg-tola-infra-advisor-ai_aks-infra-advisor-dev_eastus
+//   (immutable for existing cluster — contains VMs, NICs, LB, public IPs)
 
 resource resourceGroup 'Microsoft.Resources/resourceGroups@2023-07-01' = {
   name: 'rg-tola-infra-advisor-ai'
@@ -125,6 +137,9 @@ output aksName string = aks.outputs.aksName
 
 @description('Fully-qualified domain name of the AKS API server')
 output aksFqdn string = aks.outputs.aksFqdn
+
+@description('AKS-managed node resource group (contains VMs, NICs, LB, public IPs)')
+output aksNodeResourceGroup string = aks.outputs.nodeResourceGroup
 
 @description('Azure AI Search HTTPS endpoint')
 output searchEndpoint string = search.outputs.endpoint

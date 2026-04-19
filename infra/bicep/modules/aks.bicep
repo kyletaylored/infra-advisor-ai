@@ -17,6 +17,12 @@ param nodeVmSize string = 'Standard_D2s_v3'
 
 var clusterName = 'aks-infra-advisor-${environment}'
 var dnsPrefix = 'infra-advisor-${environment}'
+// Explicit node RG name avoids the auto-generated MC_... prefix.
+// NOTE: nodeResourceGroup is immutable after cluster creation.
+// The live cluster was created before this was set, so its node RG is
+// MC_rg-tola-infra-advisor-ai_aks-infra-advisor-dev_eastus.
+// Recreating the cluster will use this clean name.
+var nodeResourceGroupName = 'rg-tola-infra-advisor-ai-nodes'
 
 resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-02-01' = {
   name: clusterName
@@ -31,6 +37,7 @@ resource aksCluster 'Microsoft.ContainerService/managedClusters@2024-02-01' = {
   properties: {
     kubernetesVersion: '1.33'
     dnsPrefix: dnsPrefix
+    nodeResourceGroup: nodeResourceGroupName
     enableRBAC: true
     aadProfile: {
       managed: true
@@ -74,3 +81,6 @@ output aksFqdn string = aksCluster.properties.fqdn
 
 @description('OIDC issuer URL for workload identity federation')
 output oidcIssuerUrl string = aksCluster.properties.oidcIssuerProfile.issuerURL
+
+@description('Name of the AKS-managed node resource group')
+output nodeResourceGroup string = aksCluster.properties.nodeResourceGroup

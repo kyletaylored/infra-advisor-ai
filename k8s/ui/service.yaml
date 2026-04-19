@@ -5,12 +5,19 @@ metadata:
   namespace: infra-advisor
   labels:
     app: ui
+  annotations:
+    # Azure-managed public DNS label — optional, gives a stable *.eastus.cloudapp.azure.com hostname
+    service.beta.kubernetes.io/azure-dns-label-name: infra-advisor-ai
 spec:
-  type: ClusterIP
+  type: LoadBalancer
   selector:
     app: ui
   ports:
     - name: http
       port: 80
+      targetPort: 80
+      protocol: TCP
+    - name: https
+      port: 443
       targetPort: 80
       protocol: TCP
