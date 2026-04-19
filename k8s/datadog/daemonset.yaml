@@ -109,17 +109,19 @@ spec:
               memory: 512Mi
               cpu: 500m
           livenessProbe:
-            httpGet:
-              path: /live
-              port: 5555
+            exec:
+              command:
+                - agent
+                - health
             initialDelaySeconds: 15
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 6
           readinessProbe:
-            httpGet:
-              path: /ready
-              port: 5555
+            exec:
+              command:
+                - agent
+                - health
             initialDelaySeconds: 15
             periodSeconds: 15
             timeoutSeconds: 5
