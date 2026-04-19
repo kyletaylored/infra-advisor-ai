@@ -4,6 +4,7 @@ import logging
 import os
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -37,6 +38,8 @@ mcp = FastMCP(
         "TWDB 2026 State Water Plan projects, "
         "the firm's internal knowledge base, and document drafting."
     ),
+    # Disable DNS rebinding protection — running inside K8s cluster, all hostnames are trusted
+    transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
 )
 
 
