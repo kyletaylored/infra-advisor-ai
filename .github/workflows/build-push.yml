@@ -54,14 +54,12 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
 
-      # skopeo (containers/image library) explicitly treats GHCR 403 on blob
-      # HEAD as "not found, upload anyway" — unlike buildx/crane which treat
-      # 403 as a fatal auth error. skopeo is pre-installed on ubuntu-latest.
-      - name: Push with skopeo
+      # Load into Docker daemon and push via docker push.
+      # The Docker daemon's distribution client falls through to blob upload
+      # when it receives 403 on blob HEAD, unlike buildx/crane/skopeo.
+      - name: Load and push image
         run: |
+          docker load --input /tmp/${{ matrix.service }}.tar
           while IFS= read -r tag; do
-            [ -n "$tag" ] && skopeo copy \
-              --dest-creds "${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}" \
-              "docker-archive:/tmp/${{ matrix.service }}.tar" \
-              "docker://$tag"
+            [ -n "$tag" ] && docker push "$tag"
           done <<< "${{ steps.meta.outputs.tags }}"
