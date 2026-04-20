@@ -20,15 +20,13 @@ export function initDatadogRum(): void {
     version: (import.meta.env.VITE_APP_VERSION as string) || "local",
     sessionSampleRate: 100,
     sessionReplaySampleRate: 100,
-    trackUserInteractions: true,
-    trackResources: true,
-    trackLongTasks: true,
+    trackBfcacheViews: true,
     defaultPrivacyLevel: "mask-user-input",
     // Inject Datadog trace headers so RUM sessions correlate with backend APM spans
     allowedTracingUrls: [
       { match: /\/api\//i, propagatorTypes: ["datadog" as PropagatorType] },
       ...((import.meta.env.VITE_AGENT_API_URL as string | undefined) &&
-      import.meta.env.VITE_AGENT_API_URL !== "/api"
+        import.meta.env.VITE_AGENT_API_URL !== "/api"
         ? [{ match: import.meta.env.VITE_AGENT_API_URL as string, propagatorTypes: ["datadog" as PropagatorType] }]
         : []),
     ],
