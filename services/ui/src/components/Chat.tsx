@@ -3,6 +3,7 @@ import {
   Alert,
   Badge,
   Box,
+  Button,
   Circle,
   Flex,
   Grid,
@@ -24,9 +25,11 @@ import {
   trackMessageReported,
   trackQuerySubmitted,
 } from "../lib/datadog-rum";
+import { AboutModal } from "./AboutModal";
 import { BridgeCard } from "./BridgeCard";
 import { CitationPanel } from "./CitationPanel";
 import { QuerySuggestions } from "./QuerySuggestions";
+import { Sandbox } from "./Sandbox";
 
 type Suggestion = SuggestionItem;
 
@@ -362,6 +365,7 @@ function MarkdownContent({ content }: { content: string }) {
 }
 
 export function Chat() {
+  const [activeView, setActiveView] = useState<"chat" | "sandbox">("chat");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -471,7 +475,29 @@ export function Chat() {
           </Box>
         </HStack>
 
-        <HStack gap={3}>
+        {/* ── View tabs ──────────────────────────────────────────────────── */}
+        <HStack gap={0.5} bg="gray.100" borderRadius="lg" p={0.5}>
+          {(["chat", "sandbox"] as const).map((view) => (
+            <Button
+              key={view}
+              size="xs"
+              variant={activeView === view ? "solid" : "ghost"}
+              colorPalette={activeView === view ? "blue" : "gray"}
+              borderRadius="md"
+              fontWeight={activeView === view ? "semibold" : "normal"}
+              fontSize="xs"
+              px={3}
+              h="24px"
+              onClick={() => setActiveView(view)}
+              textTransform="capitalize"
+            >
+              {view === "chat" ? "Chat" : "Sandbox"}
+            </Button>
+          ))}
+        </HStack>
+
+        <HStack gap={2}>
+          <AboutModal />
           <Badge colorPalette="green" variant="subtle" fontSize="xs" borderRadius="full" px={2}>
             Live
           </Badge>
@@ -509,7 +535,8 @@ export function Chat() {
       </Flex>
 
       {/* ── Body ───────────────────────────────────────────────────────────── */}
-      <Flex flex={1} minH={0} overflow="hidden">
+      {activeView === "sandbox" && <Sandbox />}
+      <Flex flex={1} minH={0} overflow="hidden" display={activeView === "chat" ? "flex" : "none"}>
         {/* Chat column */}
         <Flex direction="column" flex={1} minW={0}>
           {/* Message thread */}

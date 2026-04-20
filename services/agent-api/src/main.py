@@ -4,10 +4,12 @@ import json
 import logging
 import os
 import re
+import time
 import uuid
 from contextlib import asynccontextmanager
+from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Body, FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
@@ -235,6 +237,54 @@ async def suggestions(body: SuggestionsRequest) -> SuggestionsResponse:
         logger.warning("Suggestions LLM call failed: %s", exc)
 
     return SuggestionsResponse(suggestions=_FALLBACK_SUGGESTIONS)
+
+
+@app.get("/tools")
+async def list_tools() -> list[dict]:
+    """List all available MCP tools with their name, description, and parameter schema."""
+    if not _mcp_client:
+        raise HTTPException(status_code=503, detail="MCP client not available")
+    tools = await _mcp_client.get_tools()
+    result = []
+    for t in tools:
+        schema: dict = {}
+        try:
+            if hasattr(t, "args_schema") and t.args_schema is not None:
+                schema = t.args_schema.model_json_schema()
+        except Exception:
+            pass
+        result.append({"name": t.name, "description": t.description, "parameters": schema})
+    return result
+
+
+@app.post("/tools/{tool_name}")
+async def invoke_tool(
+    tool_name: str,
+    params: dict[str, Any] = Body(default={}),
+) -> dict:
+    """Directly invoke an MCP tool by name with the given parameters."""
+    if not _mcp_client:
+        raise HTTPException(status_code=503, detail="MCP client not available")
+    tools = await _mcp_client.get_tools()
+    tool = next((t for t in tools if t.name == tool_name), None)
+    if not tool:
+        raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
+
+    start = time.monotonic()
+    try:
+        result = await tool.ainvoke(params)
+    except Exception as exc:
+        return {
+            "tool_name": tool_name,
+            "error": str(exc),
+            "duration_ms": round((time.monotonic() - start) * 1000, 2),
+        }
+
+    return {
+        "tool_name": tool_name,
+        "result": result,
+        "duration_ms": round((time.monotonic() - start) * 1000, 2),
+    }
 
 
 @app.get("/health")
