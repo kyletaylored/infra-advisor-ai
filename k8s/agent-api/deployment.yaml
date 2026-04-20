@@ -21,7 +21,7 @@ spec:
         tags.datadoghq.com/service: infraadvisor-agent-api
         tags.datadoghq.com/version: latest
       annotations:
-        ad.datadoghq.com/agent-api.logs: '[{"source":"python","service":"infraadvisor-agent-api"}]'
+        ad.datadoghq.com/agent-api.logs: "[{\"source\":\"python\",\"service\":\"infraadvisor-agent-api\"}]"
     spec:
       imagePullSecrets:
         - name: ghcr-pull-secret
@@ -37,7 +37,7 @@ spec:
             - name: DD_LLMOBS_ML_APP
               value: "infra-advisor-ai"
             - name: DD_LLMOBS_AGENTLESS_ENABLED
-              value: "false"
+              value: "true"
           envFrom:
             - configMapRef:
                 name: agent-api-config
