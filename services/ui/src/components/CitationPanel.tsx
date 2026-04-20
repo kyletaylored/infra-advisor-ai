@@ -1,12 +1,5 @@
 import React from "react";
-import {
-  Accordion,
-  Badge,
-  Box,
-  Link,
-  Text,
-  VStack,
-} from "@chakra-ui/react";
+import { Badge, Box, Flex, Separator, Text, VStack } from "@chakra-ui/react";
 import { Citation } from "../lib/api";
 import { trackCitationExpanded } from "../lib/datadog-rum";
 
@@ -14,99 +7,107 @@ interface Props {
   citations: Citation[];
 }
 
-const DOCTYPE_SCHEME: Record<string, string> = {
-  proposal: "blue",
-  close_out_report: "purple",
-  water_plan_project: "teal",
-  risk_assessment: "orange",
-  cost_benchmark: "green",
-  technical_memo: "gray",
+const DOCTYPE_PALETTE: Record<string, string> = {
+  Bridge:   "blue",
+  Disaster: "red",
+  Energy:   "yellow",
+  Water:    "teal",
+  Document: "purple",
+  Tool:     "gray",
 };
 
-function DocTypeBadge({ type }: { type: string }) {
-  const scheme = DOCTYPE_SCHEME[type] ?? "gray";
+const DOCTYPE_ICON: Record<string, string> = {
+  Bridge:   "🌉",
+  Disaster: "🌊",
+  Energy:   "⚡",
+  Water:    "💧",
+  Document: "📄",
+  Tool:     "🔧",
+};
+
+function SourceItem({ citation, index }: { citation: Citation; index: number }) {
+  const palette = DOCTYPE_PALETTE[citation.document_type] ?? "gray";
+  const icon = DOCTYPE_ICON[citation.document_type] ?? "🔧";
+
   return (
-    <Badge colorPalette={scheme} variant="subtle" fontSize="xs" flexShrink={0}>
-      {type.replace(/_/g, " ")}
-    </Badge>
+    <Flex
+      gap={3}
+      align="flex-start"
+      py={2.5}
+      px={3}
+      borderRadius="lg"
+      _hover={{ bg: "gray.50" }}
+      cursor="default"
+      onClick={() => trackCitationExpanded(citation.document_type, citation.score)}
+    >
+      <Flex
+        w={8}
+        h={8}
+        borderRadius="md"
+        bg={`${palette}.50`}
+        align="center"
+        justify="center"
+        flexShrink={0}
+        fontSize="sm"
+      >
+        {icon}
+      </Flex>
+      <Box flex={1} minW={0}>
+        <Flex align="center" justify="space-between" gap={1} mb={0.5}>
+          <Badge
+            colorPalette={palette}
+            variant="subtle"
+            fontSize="xs"
+            borderRadius="full"
+            px={1.5}
+          >
+            {citation.document_type}
+          </Badge>
+          {citation.score != null && (
+            <Text fontSize="xs" color="gray.400" fontFamily="mono">
+              {(citation.score * 100).toFixed(0)}%
+            </Text>
+          )}
+        </Flex>
+        <Text fontSize="xs" color="gray.600" lineHeight="snug">
+          {citation.content}
+        </Text>
+      </Box>
+    </Flex>
   );
 }
 
 export function CitationPanel({ citations }: Props) {
-  if (citations.length === 0) {
-    return (
-      <Box h="full" display="flex" alignItems="center" justifyContent="center">
-        <Text fontSize="xs" color="gray.400" textAlign="center" px={4}>
-          Sources will appear here when the agent retrieves knowledge base chunks.
-        </Text>
-      </Box>
-    );
-  }
-
   return (
-    <VStack gap={2} align="stretch">
-      <Text fontSize="xs" fontWeight="semibold" color="gray.500" textTransform="uppercase" letterSpacing="wide">
-        Sources ({citations.length})
-      </Text>
+    <VStack gap={0} align="stretch" h="full">
+      {/* Panel header */}
+      <Flex align="center" justify="space-between" mb={3}>
+        <Text fontSize="xs" fontWeight="semibold" color="gray.500" textTransform="uppercase" letterSpacing="wider">
+          Sources
+        </Text>
+        {citations.length > 0 && (
+          <Badge variant="solid" colorPalette="blue" fontSize="xs" borderRadius="full" px={1.5} minW={5} textAlign="center">
+            {citations.length}
+          </Badge>
+        )}
+      </Flex>
 
-      <Accordion.Root multiple>
-        {citations.map((citation, i) => (
-          <Accordion.Item
-            key={i}
-            value={String(i)}
-            border="1px solid"
-            borderColor="gray.100"
-            borderRadius="md"
-            mb={1.5}
-            overflow="hidden"
-          >
-            <Accordion.ItemTrigger
-              px={3}
-              py={2}
-              bg="gray.50"
-              _hover={{ bg: "gray.100" }}
-              onClick={() => {
-                trackCitationExpanded(citation.document_type, citation.score);
-              }}
-            >
-              <Box flex={1} textAlign="left" minW={0}>
-                <DocTypeBadge type={citation.document_type} />
-                <Text fontSize="xs" color="gray.600" lineClamp={1} mt={1}>
-                  {citation.content.slice(0, 70)}…
-                </Text>
-              </Box>
-              <Box display="flex" alignItems="center" gap={2} ml={2} flexShrink={0}>
-                {citation.score != null && (
-                  <Text fontSize="xs" color="gray.400">
-                    {(citation.score * 100).toFixed(0)}%
-                  </Text>
-                )}
-                <Accordion.ItemIndicator color="gray.400" boxSize={3} />
-              </Box>
-            </Accordion.ItemTrigger>
+      <Separator mb={3} />
 
-            <Accordion.ItemContent px={3} py={2} bg="white">
-              <Text fontSize="xs" color="gray.700" lineHeight="tall">
-                {citation.content}
-              </Text>
-              {citation.source_url && (
-                <Link
-                  href={citation.source_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  fontSize="xs"
-                  color="blue.600"
-                  mt={1}
-                  display="block"
-                  _hover={{ textDecoration: "underline" }}
-                >
-                  Source document →
-                </Link>
-              )}
-            </Accordion.ItemContent>
-          </Accordion.Item>
-        ))}
-      </Accordion.Root>
+      {citations.length === 0 ? (
+        <Flex flex={1} align="center" justify="center" direction="column" gap={2} py={8}>
+          <Text fontSize="xl">🔍</Text>
+          <Text fontSize="xs" color="gray.400" textAlign="center" lineHeight="snug">
+            Tools used by the agent will appear here after a query.
+          </Text>
+        </Flex>
+      ) : (
+        <VStack gap={0} align="stretch">
+          {citations.map((citation, i) => (
+            <SourceItem key={i} citation={citation} index={i} />
+          ))}
+        </VStack>
+      )}
     </VStack>
   );
 }
