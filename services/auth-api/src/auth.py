@@ -1,9 +1,9 @@
 import os
 from datetime import datetime, timedelta, timezone
 
+import bcrypt as _bcrypt
 from fastapi import Depends, Header, HTTPException
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel
 
 from database import get_user_by_id
@@ -11,8 +11,6 @@ from database import get_user_by_id
 JWT_SECRET: str = os.environ["JWT_SECRET"]
 ALGORITHM = "HS256"
 TOKEN_EXPIRE_HOURS = 24
-
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
 # ─── Pydantic output model ────────────────────────────────────────────────────
@@ -28,11 +26,11 @@ class UserOut(BaseModel):
 # ─── Password helpers ─────────────────────────────────────────────────────────
 
 def hash_password(plain: str) -> str:
-    return pwd_context.hash(plain)
+    return _bcrypt.hashpw(plain.encode(), _bcrypt.gensalt()).decode()
 
 
 def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
+    return _bcrypt.checkpw(plain.encode(), hashed.encode())
 
 
 # ─── JWT helpers ──────────────────────────────────────────────────────────────
