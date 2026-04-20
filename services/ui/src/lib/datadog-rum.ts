@@ -1,5 +1,7 @@
 import { datadogRum } from "@datadog/browser-rum";
 
+type PropagatorType = "datadog" | "b3" | "b3multi" | "tracecontext";
+
 export function initDatadogRum(): void {
   const appId = import.meta.env.VITE_DD_RUM_APP_ID;
   const clientToken = import.meta.env.VITE_DD_RUM_CLIENT_TOKEN;
@@ -24,10 +26,10 @@ export function initDatadogRum(): void {
     defaultPrivacyLevel: "mask-user-input",
     // Inject Datadog trace headers so RUM sessions correlate with backend APM spans
     allowedTracingUrls: [
-      { match: /\/api\//i, propagatorTypes: ["datadog"] as const },
+      { match: /\/api\//i, propagatorTypes: ["datadog" as PropagatorType] },
       ...((import.meta.env.VITE_AGENT_API_URL as string | undefined) &&
       import.meta.env.VITE_AGENT_API_URL !== "/api"
-        ? [{ match: import.meta.env.VITE_AGENT_API_URL as string, propagatorTypes: ["datadog"] as const }]
+        ? [{ match: import.meta.env.VITE_AGENT_API_URL as string, propagatorTypes: ["datadog" as PropagatorType] }]
         : []),
     ],
   });
