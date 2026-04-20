@@ -116,6 +116,19 @@ module redis 'modules/redis.bicep' = {
 }
 
 // ---------------------------------------------------------------------------
+// Module: Azure Blob Storage (raw ingestion data, Spark output, knowledge docs)
+// ---------------------------------------------------------------------------
+
+module storage 'modules/azure-storage.bicep' = {
+  name: 'deploy-azure-storage'
+  scope: resourceGroup
+  params: {
+    location: location
+    environment: environment
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Module: Monitoring (Log Analytics workspace + Datadog DaemonSet note)
 // ---------------------------------------------------------------------------
 
@@ -155,3 +168,9 @@ output redisConnectionString string = redis.outputs.redisConnectionString
 
 @description('Log Analytics workspace name (AKS diagnostics)')
 output logAnalyticsWorkspaceName string = monitoring.outputs.workspaceName
+
+@description('Azure Blob Storage account name')
+output storageAccountName string = storage.outputs.storageAccountName
+
+@description('Azure Blob Storage primary endpoint')
+output storageBlobEndpoint string = storage.outputs.blobEndpoint
