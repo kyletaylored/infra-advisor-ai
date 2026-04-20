@@ -42,6 +42,7 @@ _pip_additional_requirements: >-
   openpyxl
   pandas
   openai
+  pyspark==3.5.3
   ddtrace
 
 # Scheduler env vars
@@ -118,10 +119,9 @@ triggerer:
     - name: DD_AGENT_HOST
       value: "datadog-agent.datadog.svc.cluster.local"
 
-# Webserver
-webserver:
+# User creation job (AF3: moved from webserver.defaultUser)
+createUserJob:
   defaultUser:
-    enabled: true
     role: Admin
     username: admin
     email: admin@infra-advisor.local
@@ -145,12 +145,9 @@ logs:
     storageClassName: azurefile-csi
     size: 2Gi
 
-# Service type for webserver (ClusterIP; port-forward for local access)
-webserverServiceType: ClusterIP
-
 # Labels for Datadog log collection autodiscovery
 labels:
   app: airflow
   tags.datadoghq.com/env: dev
   tags.datadoghq.com/service: airflow
-  tags.datadoghq.com/version: "2.9"
+  tags.datadoghq.com/version: "3.1"

@@ -34,6 +34,20 @@ get-credentials: ## Fetch AKS kubeconfig
 
 # ─── Kubernetes ───────────────────────────────────────────────────────────────
 
+create-airflow-secret: ## Create airflow-azure-secret K8s Secret in airflow namespace
+	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ]; then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set"; exit 1; fi
+	@if [ -z "$(EIA_API_KEY)" ]; then echo "ERROR: EIA_API_KEY is not set"; exit 1; fi
+	kubectl create secret generic airflow-azure-secret \
+		--namespace airflow \
+		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
+		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
+		--from-literal=AZURE_SEARCH_ENDPOINT=$(AZURE_SEARCH_ENDPOINT) \
+		--from-literal=AZURE_SEARCH_API_KEY=$(AZURE_SEARCH_API_KEY) \
+		--from-literal=AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=https;AccountName=placeholder;AccountKey=placeholder;EndpointSuffix=core.windows.net" \
+		--from-literal=EIA_API_KEY=$(EIA_API_KEY) \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "✓ airflow-azure-secret created in namespace airflow"
+
 create-ghcr-secret: ## Create ghcr-pull-secret K8s Secret in infra-advisor namespace
 	@if [ -z "$(GHCR_PAT)" ]; then echo "ERROR: GHCR_PAT is not set"; exit 1; fi
 	@if [ -z "$(GITHUB_EMAIL)" ]; then echo "ERROR: GITHUB_EMAIL is not set"; exit 1; fi
@@ -62,6 +76,9 @@ deploy-k8s: ## Apply all Kubernetes manifests
 
 	@echo "→ Deploying Redis..."
 	kubectl apply -f k8s/redis/
+
+	@echo "→ Creating Airflow Azure secret..."
+	$(MAKE) create-airflow-secret
 
 	@echo "→ Deploying Airflow..."
 	helm repo add apache-airflow https://airflow.apache.org || true
