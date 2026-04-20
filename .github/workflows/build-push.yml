@@ -79,16 +79,18 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Install kubectl and kubelogin
-        run: az aks install-cli
+      - name: Set up kubelogin
+        uses: azure/use-kubelogin@v1.2
+        with:
+          kubelogin-version: 'v0.0.24'
 
       - name: Get AKS credentials
-        uses: azure/aks-set-context@v4
+        uses: azure/aks-set-context@v5
         with:
           resource-group: rg-tola-infra-advisor-ai
           cluster-name: aks-infra-advisor-dev
-          admin: false
-          use-kubelogin: true
+          admin: 'false'
+          use-kubelogin: 'true'
 
       - name: Rolling restart deployments
         run: |
