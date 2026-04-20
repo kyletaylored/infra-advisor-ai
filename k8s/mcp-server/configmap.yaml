@@ -19,4 +19,6 @@ data:
   AZURE_OPENAI_DEPLOYMENT_NAME: "gpt-4.1-mini"
   AZURE_OPENAI_EMBEDDING_DEPLOYMENT: "text-embedding-3-small"
   EPA_SDWIS_BASE_URL: "https://enviro.epa.gov/enviro/efservice"
+  ERCOT_API_BASE_URL: "https://api.ercot.com/api/public-data"
+  TXDOT_HUB_URL: "https://gis-txdot.opendata.arcgis.com/api/search"
   LOG_LEVEL: "INFO"

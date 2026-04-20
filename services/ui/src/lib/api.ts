@@ -62,6 +62,35 @@ export async function sendQuery(query: string): Promise<QueryResponse> {
   return data;
 }
 
+export interface SuggestionItem {
+  label: string;
+  query: string;
+}
+
+export interface SuggestionsResponse {
+  suggestions: SuggestionItem[];
+}
+
+export async function fetchSuggestions(
+  query: string,
+  answer: string,
+  sources: string[],
+): Promise<SuggestionItem[]> {
+  const response = await fetch(`${AGENT_API_BASE}/suggestions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Session-ID": getSessionId(),
+    },
+    body: JSON.stringify({ query, answer, sources }),
+  });
+
+  if (!response.ok) return [];
+
+  const data: SuggestionsResponse = await response.json();
+  return data.suggestions ?? [];
+}
+
 export async function clearSession(): Promise<void> {
   if (!_sessionId) return;
   await fetch(`${AGENT_API_BASE}/session/${_sessionId}`, { method: "DELETE" });

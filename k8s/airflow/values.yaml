@@ -60,6 +60,8 @@ scheduler:
     #   apache-airflow-providers-openlineage >= 2.7.3
     #   openlineage-python >= 1.37.0
     # Docs: https://docs.datadoghq.com/data_observability/jobs_monitoring/airflow/
+    - name: DD_DATA_JOBS_ENABLED
+      value: "true"
     - name: OPENLINEAGE__TRANSPORT__TYPE
       value: "datadog"
     # OPENLINEAGE_NAMESPACE sets the 'env' tag on all DJM runs in Datadog.
@@ -144,6 +146,8 @@ scheduler:
 triggerer:
   env:
     # OpenLineage must also be configured on the triggerer (deferred tasks)
+    - name: DD_DATA_JOBS_ENABLED
+      value: "true"
     - name: OPENLINEAGE__TRANSPORT__TYPE
       value: "datadog"
     - name: OPENLINEAGE_NAMESPACE

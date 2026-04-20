@@ -21,6 +21,10 @@ from tools.project_knowledge import ProjectKnowledgeInput
 from tools.project_knowledge import search_project_knowledge as _search_project_knowledge
 from tools.draft_document import DraftDocumentInput
 from tools.draft_document import draft_document as _draft_document
+from tools.ercot_energy import ERCOTEnergyStorageInput
+from tools.ercot_energy import get_ercot_energy_storage as _get_ercot_energy_storage
+from tools.txdot_open_data import TxDOTOpenDataInput
+from tools.txdot_open_data import search_txdot_open_data as _search_txdot_open_data
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -35,7 +39,9 @@ mcp = FastMCP(
     instructions=(
         "InfraTools MCP server for infrastructure consulting. "
         "Provides access to FHWA NBI bridge inventory, FEMA disaster declarations, "
-        "EIA energy data, EPA SDWIS water system compliance data, "
+        "EIA energy data, ERCOT Texas grid energy storage data, "
+        "TxDOT Open Data (traffic counts, construction projects), "
+        "EPA SDWIS water system compliance data, "
         "TWDB 2026 State Water Plan projects, "
         "the firm's internal knowledge base, and document drafting."
     ),
@@ -184,6 +190,69 @@ async def search_project_knowledge(
 
 
 @mcp.tool()
+async def get_ercot_energy_storage(
+    query_type: Literal["charging_data", "products"] = "charging_data",
+    time_from: str | None = None,
+    time_to: str | None = None,
+    min_charging_mw: float | None = None,
+    max_charging_mw: float | None = None,
+    page: int = 1,
+    size: int = 100,
+) -> list | dict:
+    """Query ERCOT's public data API for Energy Storage Resource (ESR) data.
+
+    query_type must be exactly one of:
+      - "charging_data" — 4-second ESR charging MW time-series (default)
+      - "products"      — list available ERCOT public data product IDs
+
+    time_from / time_to accept ISO-8601 strings e.g. "2024-06-01T00:00:00".
+    This tool is Texas-specific — ERCOT covers ~90% of the Texas grid.
+    Use get_energy_infrastructure for multi-state EIA data.
+    """
+    return await _get_ercot_energy_storage(
+        ERCOTEnergyStorageInput(
+            query_type=query_type,
+            time_from=time_from,
+            time_to=time_to,
+            min_charging_mw=min_charging_mw,
+            max_charging_mw=max_charging_mw,
+            page=page,
+            size=size,
+        )
+    )
+
+
+@mcp.tool()
+async def search_txdot_open_data(
+    query_type: Literal["catalog_search", "traffic_counts", "construction_projects"] = "catalog_search",
+    query: str = "",
+    county: str | None = None,
+    limit: int = 20,
+    page: int = 1,
+) -> list | dict:
+    """Search the TxDOT Open Data portal (ArcGIS Hub) for Texas transportation datasets.
+
+    query_type must be exactly one of:
+      - "catalog_search"       — free-text search across all TxDOT datasets (requires query)
+      - "traffic_counts"       — Annual Average Daily Traffic (AADT) count datasets
+      - "construction_projects"— TxDOT highway construction and maintenance project datasets
+
+    county: optional Texas county name to narrow results (e.g. "Harris", "Travis").
+    Returns dataset metadata including title, description, url, and type.
+    Texas-specific — all data is from the TxDOT Open Data portal.
+    """
+    return await _search_txdot_open_data(
+        TxDOTOpenDataInput(
+            query_type=query_type,
+            query=query,
+            county=county,
+            limit=limit,
+            page=page,
+        )
+    )
+
+
+@mcp.tool()
 async def draft_document(
     document_type: str,
     context: dict,
@@ -210,6 +279,8 @@ TOOL_NAMES = [
     "get_disaster_history",
     "get_energy_infrastructure",
     "get_water_infrastructure",
+    "get_ercot_energy_storage",
+    "search_txdot_open_data",
     "search_project_knowledge",
     "draft_document",
 ]

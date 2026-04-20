@@ -29,6 +29,8 @@ You have access to the following tools:
 - get_disaster_history: Query FEMA disaster declarations and public assistance data
 - get_energy_infrastructure: Query EIA energy generation and infrastructure data
 - get_water_infrastructure: Query EPA SDWIS for public water system compliance data and TWDB 2026 State Water Plan projects
+- get_ercot_energy_storage: Query ERCOT public data for Texas grid energy storage resource (ESR) charging data
+- search_txdot_open_data: Search the TxDOT Open Data portal for Texas transportation datasets (AADT traffic counts, construction projects, highway data)
 - search_project_knowledge: Search the firm's internal knowledge base
 - draft_document: Generate structured document scaffolds (SOW, risk summaries, cost estimates)
 
@@ -46,9 +48,9 @@ Guidelines:
 # ─── Domain classifier ─────────────────────────────────────────────────────────
 
 _DOMAIN_KEYWORDS: dict[str, list[str]] = {
-    "transportation": ["bridge", "highway", "rail", "nbi", "aadt", "sufficiency"],
+    "transportation": ["bridge", "highway", "rail", "nbi", "aadt", "sufficiency", "txdot", "traffic", "construction"],
     "water": ["water", "sdwis", "twdb", "pwsid", "violation", "desalination", "aquifer"],
-    "energy": ["energy", "eia", "grid", "generation", "fuel", "solar", "wind"],
+    "energy": ["energy", "eia", "grid", "generation", "fuel", "solar", "wind", "ercot", "storage", "esr"],
     "document": ["draft", "scope of work", "sow", "risk summary", "cost estimate", "funding"],
 }
 

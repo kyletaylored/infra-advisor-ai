@@ -1,12 +1,15 @@
 import ddtrace.auto  # must be first import — monkey-patches httpx, openai, langchain at import time
 
+import json
 import logging
 import os
+import re
 import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import JSONResponse
+from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 from agent import build_llm, build_mcp_client, run_agent
@@ -93,6 +96,85 @@ class QueryResponse(BaseModel):
     session_id: str
 
 
+class SuggestionsRequest(BaseModel):
+    query: str
+    answer: str
+    sources: list[str] = []
+    session_id: str | None = None
+
+
+class SuggestionItem(BaseModel):
+    label: str
+    query: str
+
+
+class SuggestionsResponse(BaseModel):
+    suggestions: list[SuggestionItem]
+
+
+# All available tools — kept here so the suggestions prompt stays in sync with main.py TOOL_NAMES
+_ALL_TOOLS = (
+    "get_bridge_condition (FHWA National Bridge Inventory — structural ratings, ADT, sufficiency), "
+    "get_disaster_history (FEMA disaster declarations and hazard mitigation grants), "
+    "get_energy_infrastructure (EIA electricity generation and capacity by state/fuel), "
+    "get_water_infrastructure (EPA SDWIS water system compliance and TWDB water plans), "
+    "get_ercot_energy_storage (ERCOT Texas grid energy storage resource 4-second charging data), "
+    "search_txdot_open_data (TxDOT Open Data portal — AADT traffic counts, construction projects, highway datasets), "
+    "search_project_knowledge (firm knowledge base — case studies, risk frameworks, templates), "
+    "draft_document (generate SOW, risk summary, cost estimate, or funding memo)"
+)
+
+_FALLBACK_SUGGESTIONS: list[SuggestionItem] = [
+    SuggestionItem(label="🌉 Deficient Texas bridges", query="Pull all structurally deficient bridges in Texas with ADT over 10,000 and last inspection before 2022."),
+    SuggestionItem(label="⚡ ERCOT storage trends", query="What are current energy storage resource charging patterns in the ERCOT Texas grid?"),
+    SuggestionItem(label="💧 SDWA violations", query="Which Texas community water systems have open Safe Drinking Water Act violations serving more than 10,000 people?"),
+    SuggestionItem(label="🌊 Recent FEMA declarations", query="What major disaster declarations have occurred in Texas in the last 3 years?"),
+]
+
+_SUGGESTIONS_PROMPT = """\
+You are generating follow-up question suggestions for an infrastructure consulting AI assistant.
+
+The user just asked:
+{query}
+
+The AI used these data tools: {sources}
+
+The AI answered (truncated):
+{answer}
+
+Available tools the user can query next:
+{tools}
+
+Generate exactly 4 concise follow-up questions that are natural next steps given this conversation. \
+Each should explore a different angle — risk, cost, comparison, or document drafting. \
+Keep labels short (2-5 words with a relevant emoji). Keep queries specific and actionable.
+
+Return ONLY valid JSON, no markdown fences, no explanation:
+{{"suggestions": [{{"label": "...", "query": "..."}}, {{"label": "...", "query": "..."}}, {{"label": "...", "query": "..."}}, {{"label": "...", "query": "..."}}]}}"""
+
+
+def _parse_suggestions(text: str) -> list[SuggestionItem]:
+    """Extract and validate suggestion JSON from LLM response text."""
+    try:
+        data = json.loads(text.strip())
+        items = data.get("suggestions", [])
+        return [SuggestionItem(label=s["label"], query=s["query"]) for s in items[:4] if "label" in s and "query" in s]
+    except Exception:
+        pass
+
+    # Fallback: extract first JSON object from response
+    match = re.search(r'\{.*"suggestions".*\}', text, re.DOTALL)
+    if match:
+        try:
+            data = json.loads(match.group())
+            items = data.get("suggestions", [])
+            return [SuggestionItem(label=s["label"], query=s["query"]) for s in items[:4] if "label" in s and "query" in s]
+        except Exception:
+            pass
+
+    return []
+
+
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 
@@ -127,6 +209,32 @@ async def query(
         trace_id=current_trace_id(),
         session_id=session_id,
     )
+
+
+@app.post("/suggestions", response_model=SuggestionsResponse)
+async def suggestions(body: SuggestionsRequest) -> SuggestionsResponse:
+    """Generate 4 LLM-powered follow-up question suggestions for the given conversation turn."""
+    if not _llm:
+        return SuggestionsResponse(suggestions=_FALLBACK_SUGGESTIONS)
+
+    sources_str = ", ".join(body.sources) if body.sources else "general knowledge"
+    prompt = _SUGGESTIONS_PROMPT.format(
+        query=body.query[:500],
+        sources=sources_str,
+        answer=body.answer[:800],
+        tools=_ALL_TOOLS,
+    )
+
+    try:
+        response = await _llm.ainvoke([HumanMessage(content=prompt)])
+        content = response.content if isinstance(response.content, str) else str(response.content)
+        parsed = _parse_suggestions(content)
+        if parsed:
+            return SuggestionsResponse(suggestions=parsed)
+    except Exception as exc:
+        logger.warning("Suggestions LLM call failed: %s", exc)
+
+    return SuggestionsResponse(suggestions=_FALLBACK_SUGGESTIONS)
 
 
 @app.get("/health")

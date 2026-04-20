@@ -16,7 +16,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import ReactMarkdown from "react-markdown";
-import { BridgeData, Citation, QueryResponse, extractBridgeData, sendQuery } from "../lib/api";
+import { BridgeData, Citation, QueryResponse, SuggestionItem, extractBridgeData, fetchSuggestions, sendQuery } from "../lib/api";
 import {
   trackBridgeCardRendered,
   trackMessageCopied,
@@ -26,7 +26,9 @@ import {
 } from "../lib/datadog-rum";
 import { BridgeCard } from "./BridgeCard";
 import { CitationPanel } from "./CitationPanel";
-import { QuerySuggestions, Suggestion } from "./QuerySuggestions";
+import { QuerySuggestions } from "./QuerySuggestions";
+
+type Suggestion = SuggestionItem;
 
 const VERSION = import.meta.env.VITE_APP_VERSION as string | undefined;
 const REPO_URL = "https://github.com/kyletaylored/infra-advisor-ai";
@@ -41,12 +43,14 @@ interface Message {
 }
 
 const TOOL_META: Record<string, { label: string; document_type: string; description: string }> = {
-  get_bridge_condition:      { label: "Bridge Condition",      document_type: "Bridge",   description: "FHWA National Bridge Inventory" },
-  get_disaster_history:      { label: "Disaster History",      document_type: "Disaster", description: "OpenFEMA disaster declarations" },
-  get_energy_infrastructure: { label: "Energy Infrastructure", document_type: "Energy",   description: "EIA energy infrastructure data" },
-  get_water_infrastructure:  { label: "Water Infrastructure",  document_type: "Water",    description: "Texas Water Development Board plans" },
-  search_project_knowledge:  { label: "Knowledge Base",        document_type: "Document", description: "Azure AI Search hybrid index" },
-  draft_document:            { label: "Draft Document",        document_type: "Document", description: "Jinja2 consulting document template" },
+  get_bridge_condition:       { label: "Bridge Condition",      document_type: "Bridge",   description: "FHWA National Bridge Inventory" },
+  get_disaster_history:       { label: "Disaster History",      document_type: "Disaster", description: "OpenFEMA disaster declarations" },
+  get_energy_infrastructure:  { label: "Energy Infrastructure", document_type: "Energy",   description: "EIA energy infrastructure data" },
+  get_water_infrastructure:   { label: "Water Infrastructure",  document_type: "Water",    description: "Texas Water Development Board plans" },
+  get_ercot_energy_storage:   { label: "ERCOT Storage",         document_type: "Energy",          description: "ERCOT Texas grid energy storage data" },
+  search_txdot_open_data:     { label: "TxDOT Open Data",       document_type: "Transportation",  description: "TxDOT traffic counts and construction projects" },
+  search_project_knowledge:   { label: "Knowledge Base",        document_type: "Document",        description: "Azure AI Search hybrid index" },
+  draft_document:             { label: "Draft Document",        document_type: "Document", description: "Jinja2 consulting document template" },
 };
 
 // ── Initial suggestion pills (shown before first message) ─────────────────────
@@ -401,8 +405,11 @@ export function Chat() {
       };
       setMessages((prev) => [...prev, aiMessage]);
       setActiveCitations(aiMessage.citations);
-      // Update pills with domain-specific follow-ups so Synthetics can chain queries
+      // Show static domain follow-ups immediately, then upgrade to LLM-generated ones
       setRecommendations(getFollowUpSuggestions(resp.sources));
+      fetchSuggestions(query, resp.answer, resp.sources)
+        .then((items) => { if (items.length > 0) setRecommendations(items); })
+        .catch(() => { /* keep static fallback already shown */ });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
