@@ -10,6 +10,74 @@
 
 ---
 
+## Running the full stack locally (no AKS)
+
+Use `docker-compose.yml` at the repo root to spin up Redis and Kafka, then run each service with local env overrides.
+
+### 1. Start local infrastructure
+
+```bash
+docker compose up -d
+# Waits for Redis and Kafka to be healthy, then creates the two topics.
+docker compose ps   # confirm all containers are Up
+```
+
+### 2. Set local env overrides
+
+Create `.env.local` (not committed) to override the cluster DNS with localhost:
+
+```bash
+cat > .env.local << 'EOF'
+REDIS_HOST=localhost
+REDIS_PORT=6379
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092
+MCP_SERVER_URL=http://localhost:8000/mcp
+AGENT_API_URL=http://localhost:8001
+EOF
+```
+
+Load it alongside `.env` when starting services:
+
+```bash
+# One-liner to export both files
+set -a && source .env && source .env.local && set +a
+```
+
+### 3. Run MCP server
+
+```bash
+cd services/mcp-server
+uv sync
+uv run uvicorn src.main:app --reload --port 8000
+# http://localhost:8000/health → {"status":"ok","tools":[...]}
+```
+
+### 4. Run Agent API
+
+```bash
+cd services/agent-api
+uv sync
+uv run uvicorn src.main:app --reload --port 8001
+# http://localhost:8001/health → {"status":"ok","mcp_connected":true,"llm_connected":true}
+```
+
+### 5. Run UI dev server
+
+```bash
+cd services/ui
+npm install
+npm run dev
+# http://localhost:3000 — /api/* proxied to localhost:8001
+```
+
+### 6. Stop local infrastructure
+
+```bash
+docker compose down
+```
+
+---
+
 ## Top-level Makefile targets
 
 ```bash

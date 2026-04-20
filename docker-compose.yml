@@ -1,0 +1,55 @@
+# Local development stack
+# Provides Redis and Kafka so Python services can run without an AKS cluster.
+# Python services still need Azure credentials from .env for OpenAI/AI Search.
+#
+# Usage:
+#   docker compose up -d          # start Redis + Kafka
+#   docker compose down           # stop and remove containers
+#
+# Then run each service with the local overrides:
+#   cd services/mcp-server && LOCAL=1 uv run uvicorn src.main:app --reload --port 8000
+#   cd services/agent-api  && LOCAL=1 uv run uvicorn src.main:app --reload --port 8001
+#   cd services/ui         && npm run dev   # proxies to localhost:8001 via vite.config.ts
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  kafka:
+    image: redpandadata/redpanda:v24.2.18
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=512M
+      - --overprovisioned
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092
+      - --advertise-kafka-addr=PLAINTEXT://localhost:9092
+    ports:
+      - "9092:9092"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -q 'Healthy.*true'"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Create required Kafka topics after broker is healthy
+  kafka-init:
+    image: redpandadata/redpanda:v24.2.18
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        rpk topic create infra.query.events --brokers localhost:9092 --partitions 1 || true
+        rpk topic create infra.eval.results  --brokers localhost:9092 --partitions 1 || true
+        echo "Topics ready."
+    network_mode: service:kafka
