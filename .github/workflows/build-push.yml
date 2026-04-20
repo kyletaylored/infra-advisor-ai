@@ -41,6 +41,19 @@ jobs:
             type=sha,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Collect UI build args
+        id: ui-args
+        if: matrix.service == 'ui'
+        run: |
+          {
+            echo "args<<EOF"
+            echo "VITE_DD_RUM_APP_ID=${{ secrets.VITE_DD_RUM_APP_ID }}"
+            echo "VITE_DD_RUM_CLIENT_TOKEN=${{ secrets.VITE_DD_RUM_CLIENT_TOKEN }}"
+            echo "VITE_DD_RUM_SITE=${{ secrets.VITE_DD_RUM_SITE || 'us3.datadoghq.com' }}"
+            echo "VITE_DD_ENV=${{ vars.DD_ENV || 'dev' }}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Build and push
         uses: docker/build-push-action@v7
         with:
@@ -52,3 +65,4 @@ jobs:
           sbom: false
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          build-args: ${{ steps.ui-args.outputs.args }}
