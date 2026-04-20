@@ -37,6 +37,8 @@ spec:
             - name: DD_LLMOBS_ML_APP
               value: "infra-advisor-ai"
             - name: DD_LLMOBS_AGENTLESS_ENABLED
+              value: "false"
+            - name: DD_CODE_ORIGIN_FOR_SPANS_ENABLED
               value: "true"
           envFrom:
             - configMapRef:

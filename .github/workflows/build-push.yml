@@ -96,8 +96,33 @@ jobs:
             echo "VITE_DD_RUM_CLIENT_TOKEN=${{ secrets.VITE_DD_RUM_CLIENT_TOKEN }}"
             echo "VITE_DD_RUM_SITE=${{ secrets.VITE_DD_RUM_SITE || 'us3.datadoghq.com' }}"
             echo "VITE_DD_ENV=${{ vars.DD_ENV || 'dev' }}"
+            echo "VITE_APP_VERSION=${{ github.sha }}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
+
+      # Build UI on runner so we can extract sourcemaps before the Docker image is sealed
+      - name: Build UI (for sourcemap upload)
+        id: ui-build
+        if: matrix.changed == 'true' && matrix.service == 'ui'
+        working-directory: services/ui
+        env:
+          VITE_DD_RUM_APP_ID: ${{ secrets.VITE_DD_RUM_APP_ID }}
+          VITE_DD_RUM_CLIENT_TOKEN: ${{ secrets.VITE_DD_RUM_CLIENT_TOKEN }}
+          VITE_DD_RUM_SITE: ${{ secrets.VITE_DD_RUM_SITE || 'us3.datadoghq.com' }}
+          VITE_DD_ENV: ${{ vars.DD_ENV || 'dev' }}
+          VITE_APP_VERSION: ${{ github.sha }}
+        run: npm ci && npm run build
+
+      - name: Upload sourcemaps to Datadog
+        if: matrix.changed == 'true' && matrix.service == 'ui'
+        working-directory: services/ui
+        env:
+          DATADOG_API_KEY: ${{ secrets.DD_API_KEY }}
+        run: |
+          npx @datadog/datadog-ci sourcemaps upload ./dist \
+            --service infra-advisor-ui \
+            --release-version "${{ github.sha }}" \
+            --minified-path-prefix "https://infra-advisor-ai.kyletaylor.dev"
 
       - name: Build and push
         if: matrix.changed == 'true'
@@ -111,7 +136,10 @@ jobs:
           sbom: false
           cache-from: type=gha,scope=${{ matrix.service }}
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
-          build-args: ${{ steps.ui-args.outputs.args }}
+          build-args: |
+            DD_GIT_REPOSITORY_URL=https://github.com/kyletaylored/infra-advisor-ai
+            DD_GIT_COMMIT_SHA=${{ github.sha }}
+            ${{ steps.ui-args.outputs.args }}
 
   # ── Rolling restart on AKS (only if a deployable service was rebuilt) ──────
   deploy:

@@ -17,7 +17,7 @@ export function initDatadogRum(): void {
     site: (import.meta.env.VITE_DD_RUM_SITE as string) || "us3.datadoghq.com",
     service: "infra-advisor-ui",
     env: (import.meta.env.VITE_DD_ENV as string) || "dev",
-    version: "1.0.0",
+    version: (import.meta.env.VITE_APP_VERSION as string) || "local",
     sessionSampleRate: 100,
     sessionReplaySampleRate: 100,
     trackUserInteractions: true,

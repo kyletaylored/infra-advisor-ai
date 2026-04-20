@@ -15,6 +15,8 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    sourcemap: false,
+    // 'hidden' generates sourcemaps without the //# sourceMappingURL comment —
+    // they are uploaded to Datadog RUM but never served to end-users.
+    sourcemap: "hidden",
   },
 });

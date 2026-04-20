@@ -18,6 +18,12 @@ COPY src/ ./src/
 ARG DD_VERSION=local
 ENV DD_VERSION=${DD_VERSION}
 
+# Git metadata for Datadog source code integration
+ARG DD_GIT_REPOSITORY_URL
+ARG DD_GIT_COMMIT_SHA
+ENV DD_GIT_REPOSITORY_URL=${DD_GIT_REPOSITORY_URL}
+ENV DD_GIT_COMMIT_SHA=${DD_GIT_COMMIT_SHA}
+
 # Service identification (overridden per-pod in K8s via env)
 ENV DD_SERVICE=infratools-mcp
 ENV PYTHONPATH=/app/src

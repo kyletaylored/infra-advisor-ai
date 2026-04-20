@@ -43,6 +43,23 @@ function SendIcon() {
   );
 }
 
+const TOOL_META: Record<string, { label: string; document_type: string; description: string }> = {
+  get_bridge_condition:       { label: "Bridge Condition",     document_type: "Bridge",   description: "FHWA National Bridge Inventory" },
+  get_disaster_history:       { label: "Disaster History",     document_type: "Disaster", description: "OpenFEMA disaster declarations" },
+  get_energy_infrastructure:  { label: "Energy Infrastructure",document_type: "Energy",   description: "EIA energy infrastructure data" },
+  get_water_infrastructure:   { label: "Water Infrastructure", document_type: "Water",    description: "Texas Water Development Board plans" },
+  search_project_knowledge:   { label: "Knowledge Base",       document_type: "Document", description: "Azure AI Search hybrid index" },
+  draft_document:             { label: "Draft Document",       document_type: "Document", description: "Jinja2 consulting document template" },
+};
+
+function sourceToCitation(tool: string): Citation {
+  const meta = TOOL_META[tool];
+  return {
+    content: meta ? meta.description : tool,
+    document_type: meta ? meta.document_type : "Tool",
+  };
+}
+
 export function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -80,11 +97,12 @@ export function Chat() {
       const bridges = extractBridgeData(resp.answer);
       if (bridges.length > 0) trackBridgeCardRendered(bridges.length);
 
+      const citations = resp.sources.map((tool) => sourceToCitation(tool));
       const aiMessage: Message = {
         role: "assistant",
         content: resp.answer,
         sources: resp.sources,
-        citations: [],
+        citations,
         bridges,
         traceId: resp.trace_id,
       };
