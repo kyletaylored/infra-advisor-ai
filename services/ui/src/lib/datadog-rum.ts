@@ -22,13 +22,9 @@ export function initDatadogRum(): void {
     sessionReplaySampleRate: 100,
     trackBfcacheViews: true,
     defaultPrivacyLevel: "mask-user-input",
-    // Inject Datadog trace headers so RUM sessions correlate with backend APM spans
+    // Trace all same-origin requests so /api/, /auth/, and any future endpoints correlate with APM
     allowedTracingUrls: [
-      { match: /\/api\//i, propagatorTypes: ["datadog" as PropagatorType] },
-      ...((import.meta.env.VITE_AGENT_API_URL as string | undefined) &&
-        import.meta.env.VITE_AGENT_API_URL !== "/api"
-        ? [{ match: import.meta.env.VITE_AGENT_API_URL as string, propagatorTypes: ["datadog" as PropagatorType] }]
-        : []),
+      { match: window.location.origin, propagatorTypes: ["datadog" as PropagatorType] },
     ],
   });
 

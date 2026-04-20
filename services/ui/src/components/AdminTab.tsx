@@ -82,6 +82,7 @@ export function AdminTab() {
   // Per-row action state
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [patchingId, setPatchingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   async function loadUsers() {
     setLoadingUsers(true);

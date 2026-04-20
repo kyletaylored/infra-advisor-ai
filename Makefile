@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s create-ghcr-secret create-airflow-secret create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-secrets run-dags apply-datadog-agent upgrade-airflow help
+.PHONY: deploy-infra deploy-k8s create-ghcr-secret create-airflow-secret create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent upgrade-airflow help
 
 # Load .env if present (for local dev)
 -include .env
@@ -108,7 +108,23 @@ create-auth-api-secret: ## Create auth-api-secret K8s Secret (DATABASE_URL, JWT_
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ auth-api-secret created"
 
-create-secrets: create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-airflow-secret ## Create all application K8s secrets
+create-dd-postgres-secret: ## Create dd-postgres-secret K8s Secret (Datadog monitoring user password)
+	@if [ -z "$(DD_POSTGRES_PASSWORD)" ]; then echo "ERROR: DD_POSTGRES_PASSWORD is not set"; exit 1; fi
+	kubectl create secret generic dd-postgres-secret \
+		--namespace $(NAMESPACE) \
+		--from-literal=DD_POSTGRES_PASSWORD=$(DD_POSTGRES_PASSWORD) \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "✓ dd-postgres-secret created"
+
+create-secrets: create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-airflow-secret ## Create all application K8s secrets
+
+setup-postgres-dbm: ## Create Datadog monitoring user + grants in Postgres (run once after deploy)
+	@if [ -z "$(POSTGRES_USER)" ]; then echo "ERROR: POSTGRES_USER is not set"; exit 1; fi
+	@if [ -z "$(DD_POSTGRES_PASSWORD)" ]; then echo "ERROR: DD_POSTGRES_PASSWORD is not set"; exit 1; fi
+	chmod +x k8s/postgres/setup-dbm.sh
+	NAMESPACE=$(NAMESPACE) POSTGRES_USER=$(POSTGRES_USER) POSTGRES_DB=$(POSTGRES_DB) \
+		DD_POSTGRES_PASSWORD='$(DD_POSTGRES_PASSWORD)' \
+		bash k8s/postgres/setup-dbm.sh
 
 create-ghcr-secret: ## Create ghcr-pull-secret K8s Secret in infra-advisor namespace
 	@if [ -z "$(GHCR_PAT)" ]; then echo "ERROR: GHCR_PAT is not set"; exit 1; fi

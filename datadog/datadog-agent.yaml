@@ -63,6 +63,13 @@ spec:
     liveProcessCollection:
       enabled: true
   override:
+    nodeAgent:
+      env:
+        - name: DD_POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: dd-postgres-secret
+              key: DD_POSTGRES_PASSWORD
     clusterAgent:
       containers:
         cluster-agent:

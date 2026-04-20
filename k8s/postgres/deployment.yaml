@@ -16,10 +16,31 @@ spec:
         app: postgres
       annotations:
         admission.datadoghq.com/enabled: "false"
+        ad.datadoghq.com/postgres.checks: |
+          {
+            "postgres": {
+              "init_config": {},
+              "instances": [{
+                "dbm": true,
+                "host": "%%host%%",
+                "port": 5432,
+                "username": "datadog",
+                "password": "%%env_DD_POSTGRES_PASSWORD%%"
+              }]
+            }
+          }
     spec:
       containers:
         - name: postgres
           image: postgres:16-alpine
+          args:
+            - postgres
+            - -c
+            - shared_preload_libraries=pg_stat_statements
+            - -c
+            - track_activity_query_size=4096
+            - -c
+            - pg_stat_statements.track=all
           ports:
             - containerPort: 5432
               name: postgres
