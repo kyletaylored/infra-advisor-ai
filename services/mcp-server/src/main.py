@@ -2,6 +2,7 @@ import ddtrace.auto  # must be first import — monkey-patches httpx, openai, re
 
 import logging
 import os
+from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -103,12 +104,18 @@ async def get_disaster_history(
 @mcp.tool()
 async def get_energy_infrastructure(
     states: list[str],
-    data_series: str = "generation",
+    data_series: Literal["generation", "capacity", "fuel_mix"] = "generation",
     year_from: int | None = None,
     year_to: int | None = None,
     fuel_types: list[str] | None = None,
 ) -> list | dict:
-    """Query EIA for state-level energy generation and infrastructure data."""
+    """Query EIA for state-level energy generation and infrastructure data.
+
+    data_series must be exactly one of:
+      - "generation" — electricity generated per state/fuel type (default)
+      - "capacity"   — installed generating capacity
+      - "fuel_mix"   — share of generation by fuel type
+    """
     return await _get_energy_infrastructure(
         EnergyInfrastructureInput(
             states=states,
@@ -122,7 +129,7 @@ async def get_energy_infrastructure(
 
 @mcp.tool()
 async def get_water_infrastructure(
-    query_type: str,
+    query_type: Literal["water_systems", "water_plan_projects", "violations"],
     states: list[str] | None = None,
     counties: list[str] | None = None,
     planning_regions: list[str] | None = None,
@@ -132,7 +139,17 @@ async def get_water_infrastructure(
     min_population_served: int | None = None,
     limit: int = 50,
 ) -> list | dict:
-    """Query water infrastructure data: EPA SDWIS for compliance or TWDB 2026 State Water Plan for projects."""
+    """Query water infrastructure data.
+
+    query_type must be exactly one of:
+      - "water_systems"      — EPA SDWIS public water system inventory
+      - "water_plan_projects"— TWDB 2026 State Water Plan recommended projects
+      - "violations"         — EPA SDWIS health-based SDWA violations
+
+    Use "water_plan_projects" for any question about TWDB plans, recommended
+    projects, supply strategies, or regional water planning.
+    Use "water_systems" or "violations" for EPA compliance questions.
+    """
     return await _get_water_infrastructure(
         WaterInfrastructureInput(
             query_type=query_type,
