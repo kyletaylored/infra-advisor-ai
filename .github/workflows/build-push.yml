@@ -23,6 +23,7 @@ jobs:
     outputs:
       mcp-server:    ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.mcp-server == 'true' }}
       agent-api:     ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.agent-api == 'true' }}
+      auth-api:      ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.auth-api == 'true' }}
       load-generator: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.load-generator == 'true' }}
       ui:            ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.ui == 'true' }}
       airflow:       ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.airflow == 'true' }}
@@ -39,6 +40,8 @@ jobs:
               - 'services/mcp-server/**'
             agent-api:
               - 'services/agent-api/**'
+            auth-api:
+              - 'services/auth-api/**'
             load-generator:
               - 'services/load-generator/**'
             ui:
@@ -64,6 +67,8 @@ jobs:
             changed: ${{ needs.changes.outputs.mcp-server }}
           - service: agent-api
             changed: ${{ needs.changes.outputs.agent-api }}
+          - service: auth-api
+            changed: ${{ needs.changes.outputs.auth-api }}
           - service: load-generator
             changed: ${{ needs.changes.outputs.load-generator }}
           - service: ui
@@ -159,6 +164,7 @@ jobs:
       github.ref == 'refs/heads/main' && (
         needs.changes.outputs.mcp-server    == 'true' ||
         needs.changes.outputs.agent-api     == 'true' ||
+        needs.changes.outputs.auth-api      == 'true' ||
         needs.changes.outputs.ui            == 'true'
       )
     permissions:
@@ -190,6 +196,9 @@ jobs:
           if [ "${{ needs.changes.outputs.agent-api }}" == "true" ]; then
             kubectl rollout restart deployment/agent-api -n infra-advisor
           fi
+          if [ "${{ needs.changes.outputs.auth-api }}" == "true" ]; then
+            kubectl rollout restart deployment/auth-api -n infra-advisor
+          fi
           if [ "${{ needs.changes.outputs.ui }}" == "true" ]; then
             kubectl rollout restart deployment/ui -n infra-advisor
           fi
@@ -201,6 +210,9 @@ jobs:
           fi
           if [ "${{ needs.changes.outputs.agent-api }}" == "true" ]; then
             kubectl rollout status deployment/agent-api -n infra-advisor --timeout=5m
+          fi
+          if [ "${{ needs.changes.outputs.auth-api }}" == "true" ]; then
+            kubectl rollout status deployment/auth-api -n infra-advisor --timeout=5m
           fi
           if [ "${{ needs.changes.outputs.ui }}" == "true" ]; then
             kubectl rollout status deployment/ui -n infra-advisor --timeout=5m

@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s create-ghcr-secret create-airflow-secret create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-secrets run-dags apply-datadog-agent upgrade-airflow help
+.PHONY: deploy-infra deploy-k8s create-ghcr-secret create-airflow-secret create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-secrets run-dags apply-datadog-agent upgrade-airflow help
 
 # Load .env if present (for local dev)
 -include .env
@@ -86,7 +86,29 @@ create-load-generator-secret: ## Create load-generator-secret K8s Secret (Datado
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ load-generator-secret created in namespace $(NAMESPACE)"
 
-create-secrets: create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-airflow-secret ## Create all application K8s secrets
+create-postgres-secret: ## Create postgres-secret K8s Secret
+	@if [ -z "$(POSTGRES_USER)" ]; then echo "ERROR: POSTGRES_USER is not set"; exit 1; fi
+	@if [ -z "$(POSTGRES_PASSWORD)" ]; then echo "ERROR: POSTGRES_PASSWORD is not set"; exit 1; fi
+	@if [ -z "$(POSTGRES_DB)" ]; then echo "ERROR: POSTGRES_DB is not set"; exit 1; fi
+	kubectl create secret generic postgres-secret \
+		--namespace $(NAMESPACE) \
+		--from-literal=POSTGRES_USER=$(POSTGRES_USER) \
+		--from-literal=POSTGRES_PASSWORD=$(POSTGRES_PASSWORD) \
+		--from-literal=POSTGRES_DB=$(POSTGRES_DB) \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "✓ postgres-secret created"
+
+create-auth-api-secret: ## Create auth-api-secret K8s Secret (DATABASE_URL, JWT_SECRET)
+	@if [ -z "$(DATABASE_URL)" ]; then echo "ERROR: DATABASE_URL is not set"; exit 1; fi
+	@if [ -z "$(JWT_SECRET)" ]; then echo "ERROR: JWT_SECRET is not set"; exit 1; fi
+	kubectl create secret generic auth-api-secret \
+		--namespace $(NAMESPACE) \
+		--from-literal=DATABASE_URL=$(DATABASE_URL) \
+		--from-literal=JWT_SECRET=$(JWT_SECRET) \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "✓ auth-api-secret created"
+
+create-secrets: create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-airflow-secret ## Create all application K8s secrets
 
 create-ghcr-secret: ## Create ghcr-pull-secret K8s Secret in infra-advisor namespace
 	@if [ -z "$(GHCR_PAT)" ]; then echo "ERROR: GHCR_PAT is not set"; exit 1; fi
@@ -136,10 +158,16 @@ deploy-k8s: ## Apply all Kubernetes manifests
 	$(MAKE) create-mcp-server-secret
 	$(MAKE) create-agent-api-secret
 	$(MAKE) create-load-generator-secret
+	$(MAKE) create-postgres-secret
+	$(MAKE) create-auth-api-secret
+
+	@echo "→ Deploying Postgres..."
+	kubectl apply -f k8s/postgres/
 
 	@echo "→ Deploying application services..."
 	kubectl apply -f k8s/mcp-server/
 	kubectl apply -f k8s/agent-api/
+	kubectl apply -f k8s/auth-api/
 	kubectl apply -f k8s/load-generator/
 	kubectl apply -f k8s/ui/
 

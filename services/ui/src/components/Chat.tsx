@@ -26,10 +26,12 @@ import {
   trackQuerySubmitted,
 } from "../lib/datadog-rum";
 import { AboutModal } from "./AboutModal";
+import { AdminTab } from "./AdminTab";
 import { BridgeCard } from "./BridgeCard";
 import { CitationPanel } from "./CitationPanel";
 import { QuerySuggestions } from "./QuerySuggestions";
 import { Sandbox } from "./Sandbox";
+import { useAuth } from "../hooks/useAuth";
 
 type Suggestion = SuggestionItem;
 
@@ -365,7 +367,8 @@ function MarkdownContent({ content }: { content: string }) {
 }
 
 export function Chat() {
-  const [activeView, setActiveView] = useState<"chat" | "sandbox">("chat");
+  const { user, logout } = useAuth();
+  const [activeView, setActiveView] = useState<"chat" | "sandbox" | "admin">("chat");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -485,6 +488,21 @@ export function Chat() {
               {view === "chat" ? "Chat" : "Sandbox"}
             </Button>
           ))}
+          {user?.is_admin && (
+            <Button
+              size="xs"
+              variant={activeView === "admin" ? "solid" : "ghost"}
+              colorPalette={activeView === "admin" ? "purple" : "gray"}
+              borderRadius="md"
+              fontWeight={activeView === "admin" ? "semibold" : "normal"}
+              fontSize="xs"
+              px={3}
+              h="24px"
+              onClick={() => setActiveView("admin")}
+            >
+              Admin
+            </Button>
+          )}
         </HStack>
 
         <HStack gap={2}>
@@ -522,11 +540,31 @@ export function Chat() {
               GitHub
             </Link>
           )}
+          {user && (
+            <HStack gap={1.5}>
+              <Text fontSize="xs" color="gray.400" display={{ base: "none", md: "block" }}>
+                {user.email}
+              </Text>
+              <Button
+                size="xs"
+                variant="ghost"
+                colorPalette="gray"
+                borderRadius="md"
+                fontSize="xs"
+                h="24px"
+                px={2}
+                onClick={logout}
+              >
+                Sign out
+              </Button>
+            </HStack>
+          )}
         </HStack>
       </Flex>
 
       {/* ── Body ───────────────────────────────────────────────────────────── */}
       {activeView === "sandbox" && <Sandbox />}
+      {activeView === "admin" && <AdminTab />}
       <Flex flex={1} minH={0} overflow="hidden" display={activeView === "chat" ? "flex" : "none"}>
         {/* Chat column */}
         <Flex direction="column" flex={1} minW={0}>
