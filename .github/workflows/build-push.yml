@@ -3,14 +3,48 @@ name: Build and push images
 on:
   push:
     branches: [main]
-  workflow_dispatch: # manual full rebuild without a commit
+    paths:
+      # Only trigger when service code or this workflow changes.
+      # README, docs/, infra/, .claude/ etc. never trigger a build.
+      - 'services/**'
+      - '.github/workflows/build-push.yml'
+  workflow_dispatch: # manual full rebuild — always builds all services
 
 env:
   IMAGE_PREFIX: ghcr.io/kyletaylored/infra-advisor-ai
   REGISTRY: ghcr.io
 
 jobs:
+  # ── Detect which services have changed ─────────────────────────────────────
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      mcp-server:    ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.mcp-server == 'true' }}
+      agent-api:     ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.agent-api == 'true' }}
+      load-generator: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.load-generator == 'true' }}
+      ui:            ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.ui == 'true' }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        if: github.event_name == 'push'
+        with:
+          filters: |
+            mcp-server:
+              - 'services/mcp-server/**'
+            agent-api:
+              - 'services/agent-api/**'
+            load-generator:
+              - 'services/load-generator/**'
+            ui:
+              - 'services/ui/**'
+
+  # ── Build and push each changed service ────────────────────────────────────
   build:
+    needs: changes
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -18,14 +52,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [mcp-server, agent-api, load-generator, ui]
+        include:
+          - service: mcp-server
+            changed: ${{ needs.changes.outputs.mcp-server }}
+          - service: agent-api
+            changed: ${{ needs.changes.outputs.agent-api }}
+          - service: load-generator
+            changed: ${{ needs.changes.outputs.load-generator }}
+          - service: ui
+            changed: ${{ needs.changes.outputs.ui }}
     steps:
       - uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
+        if: matrix.changed == 'true'
         uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
+        if: matrix.changed == 'true'
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
@@ -34,6 +78,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
+        if: matrix.changed == 'true'
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
@@ -43,7 +88,7 @@ jobs:
 
       - name: Collect UI build args
         id: ui-args
-        if: matrix.service == 'ui'
+        if: matrix.changed == 'true' && matrix.service == 'ui'
         run: |
           {
             echo "args<<EOF"
@@ -55,6 +100,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and push
+        if: matrix.changed == 'true'
         uses: docker/build-push-action@v7
         with:
           context: services/${{ matrix.service }}
@@ -67,10 +113,18 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.service }}
           build-args: ${{ steps.ui-args.outputs.args }}
 
+  # ── Rolling restart on AKS (only if a deployable service was rebuilt) ──────
   deploy:
-    needs: build
+    needs: [changes, build]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    # Only deploy when at least one of the three long-running services changed.
+    # load-generator is a CronJob — it picks up :latest on its next scheduled run.
+    if: |
+      github.ref == 'refs/heads/main' && (
+        needs.changes.outputs.mcp-server    == 'true' ||
+        needs.changes.outputs.agent-api     == 'true' ||
+        needs.changes.outputs.ui            == 'true'
+      )
     permissions:
       contents: read
     steps:
@@ -92,14 +146,26 @@ jobs:
           admin: 'false'
           use-kubelogin: 'true'
 
-      - name: Rolling restart deployments
+      - name: Rolling restart changed deployments
         run: |
-          kubectl rollout restart deployment/mcp-server -n infra-advisor
-          kubectl rollout restart deployment/agent-api   -n infra-advisor
-          kubectl rollout restart deployment/ui          -n infra-advisor
+          if [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]; then
+            kubectl rollout restart deployment/mcp-server -n infra-advisor
+          fi
+          if [ "${{ needs.changes.outputs.agent-api }}" == "true" ]; then
+            kubectl rollout restart deployment/agent-api -n infra-advisor
+          fi
+          if [ "${{ needs.changes.outputs.ui }}" == "true" ]; then
+            kubectl rollout restart deployment/ui -n infra-advisor
+          fi
 
       - name: Wait for rollouts
         run: |
-          kubectl rollout status deployment/mcp-server -n infra-advisor --timeout=5m
-          kubectl rollout status deployment/agent-api  -n infra-advisor --timeout=5m
-          kubectl rollout status deployment/ui         -n infra-advisor --timeout=5m
+          if [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]; then
+            kubectl rollout status deployment/mcp-server -n infra-advisor --timeout=5m
+          fi
+          if [ "${{ needs.changes.outputs.agent-api }}" == "true" ]; then
+            kubectl rollout status deployment/agent-api -n infra-advisor --timeout=5m
+          fi
+          if [ "${{ needs.changes.outputs.ui }}" == "true" ]; then
+            kubectl rollout status deployment/ui -n infra-advisor --timeout=5m
+          fi
