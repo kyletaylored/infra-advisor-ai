@@ -19,7 +19,7 @@ import { BridgeData, Citation, QueryResponse, extractBridgeData, sendQuery } fro
 import { trackBridgeCardRendered, trackQuerySubmitted } from "../lib/datadog-rum";
 import { BridgeCard } from "./BridgeCard";
 import { CitationPanel } from "./CitationPanel";
-import { QuerySuggestions } from "./QuerySuggestions";
+import { QuerySuggestions, Suggestion } from "./QuerySuggestions";
 
 const VERSION = import.meta.env.VITE_APP_VERSION as string | undefined;
 const REPO_URL = "https://github.com/kyletaylored/infra-advisor-ai";
@@ -41,6 +41,77 @@ const TOOL_META: Record<string, { label: string; document_type: string; descript
   search_project_knowledge:  { label: "Knowledge Base",        document_type: "Document", description: "Azure AI Search hybrid index" },
   draft_document:            { label: "Draft Document",        document_type: "Document", description: "Jinja2 consulting document template" },
 };
+
+// ── Initial suggestion pills (shown before first message) ─────────────────────
+
+const INITIAL_SUGGESTIONS: Suggestion[] = [
+  {
+    label: "🌉 Deficient Texas bridges",
+    query: "Pull all structurally deficient bridges in Texas with ADT over 10,000 and last inspection before 2022.",
+  },
+  {
+    label: "💧 SDWA violations",
+    query: "Which Texas community water systems have open Safe Drinking Water Act violations serving more than 10,000 people?",
+  },
+  {
+    label: "🗺️ Corpus Christi water plan",
+    query: "What water supply projects are recommended for the Corpus Christi region in the TWDB 2026 State Water Plan?",
+  },
+  {
+    label: "⚡ Southeast grid resilience",
+    query: "Compare grid resilience investment patterns across southeastern states since 2018 using EIA data.",
+  },
+];
+
+// ── Domain-specific follow-ups keyed by MCP tool name ────────────────────────
+
+const FOLLOW_UPS_BY_TOOL: Record<string, Suggestion[]> = {
+  get_bridge_condition: [
+    { label: "🌉 Poor-rated bridges",     query: "Show all Texas bridges rated poor or below on the NBI structural evaluation scale." },
+    { label: "🌉 High-traffic deficient", query: "List structurally deficient Texas bridges with ADT over 20,000 vehicles per day." },
+    { label: "🌉 Inspection backlog",     query: "Which Texas bridges have not been inspected in more than 4 years per NBI records?" },
+    { label: "🌉 Rehab cost estimate",    query: "What is the estimated cost to rehabilitate all structurally deficient bridges in Texas?" },
+  ],
+  get_disaster_history: [
+    { label: "🌊 Recent declarations",  query: "What major disaster declarations have occurred in Texas in the last 3 years?" },
+    { label: "🌊 Hurricane risk zones", query: "Which Texas counties have the highest frequency of hurricane disaster declarations?" },
+    { label: "🌊 Flood damage history", query: "Summarize FEMA flood disaster declarations in Texas since 2015 by county." },
+    { label: "🌊 Mitigation grants",    query: "What FEMA hazard mitigation grants are available for Texas infrastructure projects?" },
+  ],
+  get_energy_infrastructure: [
+    { label: "⚡ Grid vulnerabilities",  query: "What are the key grid vulnerability points identified in EIA data for Texas?" },
+    { label: "⚡ Renewable capacity",    query: "What is the current renewable energy generation capacity in Texas according to EIA?" },
+    { label: "⚡ Post-2021 resilience",  query: "How has Texas improved grid resilience since the 2021 winter storm based on EIA data?" },
+    { label: "⚡ Aging power plants",    query: "What percentage of Texas power plants are more than 30 years old per EIA records?" },
+  ],
+  get_water_infrastructure: [
+    { label: "💧 Supply gap projections", query: "What water supply gaps are projected for Texas in the 2026 State Water Plan?" },
+    { label: "💧 Conservation strategies", query: "What conservation strategies are recommended in the TWDB 2026 water plan?" },
+    { label: "💧 Project cost estimates", query: "What is the total estimated cost of recommended water projects in the TWDB plan?" },
+    { label: "💧 Drought risk regions",  query: "Which Texas regions face the highest drought risk according to TWDB projections?" },
+  ],
+  search_project_knowledge: [
+    { label: "📄 Similar projects",   query: "Find consulting projects in our knowledge base similar to this infrastructure type." },
+    { label: "📄 Risk frameworks",    query: "What risk assessment frameworks does our knowledge base recommend for this project type?" },
+    { label: "📄 Federal funding",    query: "What federal funding sources are available for this type of infrastructure project?" },
+    { label: "📄 Case studies",       query: "Show case studies from our knowledge base for similar completed infrastructure projects." },
+  ],
+  draft_document: [
+    { label: "📝 Cost estimate",   query: "Generate a cost estimate scaffold for this infrastructure project." },
+    { label: "📝 Risk summary",    query: "Draft a risk summary memo for this infrastructure assessment." },
+    { label: "📝 Funding memo",    query: "Create a federal funding positioning memo for this project." },
+    { label: "📝 Scope of work",   query: "Draft a scope of work document for this infrastructure improvement project." },
+  ],
+};
+
+/** Derive 4 follow-up suggestions from the MCP tools used in a response. */
+function getFollowUpSuggestions(sources: string[]): Suggestion[] {
+  for (const src of sources) {
+    const follow = FOLLOW_UPS_BY_TOOL[src];
+    if (follow) return follow;
+  }
+  return INITIAL_SUGGESTIONS;
+}
 
 function sourceToCitation(tool: string): Citation {
   const meta = TOOL_META[tool];
@@ -120,6 +191,7 @@ export function Chat() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeCitations, setActiveCitations] = useState<Citation[]>([]);
+  const [recommendations, setRecommendations] = useState<Suggestion[]>(INITIAL_SUGGESTIONS);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -128,14 +200,9 @@ export function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  function handleSuggestionSelect(text: string) {
-    setInput(text);
-    inputRef.current?.focus();
-  }
-
-  async function handleSubmit(e?: React.FormEvent) {
-    e?.preventDefault();
-    const query = input.trim();
+  // Core submit logic — accepts query directly so pills can auto-submit without
+  // relying on `input` state (avoids React batching issues).
+  async function submit(query: string) {
     if (!query || loading) return;
 
     setInput("");
@@ -162,11 +229,23 @@ export function Chat() {
       };
       setMessages((prev) => [...prev, aiMessage]);
       setActiveCitations(aiMessage.citations);
+      // Update pills with domain-specific follow-ups so Synthetics can chain queries
+      setRecommendations(getFollowUpSuggestions(resp.sources));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setLoading(false);
     }
+  }
+
+  // Pill click — auto-submits immediately (no manual send needed for Synthetics)
+  function handleSuggestionSelect(text: string) {
+    submit(text);
+  }
+
+  async function handleSubmit(e?: React.FormEvent) {
+    e?.preventDefault();
+    await submit(input.trim());
   }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -369,7 +448,7 @@ export function Chat() {
             flexShrink={0}
           >
             <VStack gap={2.5} align="stretch" maxW="3xl" mx="auto">
-              <QuerySuggestions onSelect={handleSuggestionSelect} disabled={loading} />
+              <QuerySuggestions suggestions={recommendations} onSelect={handleSuggestionSelect} disabled={loading} />
               <HStack as="form" onSubmit={handleSubmit} gap={2} align="flex-end">
                 <Textarea
                   ref={inputRef}
