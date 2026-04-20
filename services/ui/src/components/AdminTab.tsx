@@ -126,11 +126,12 @@ export function AdminTab() {
 
   async function handleDelete(id: string) {
     setDeletingId(id);
+    setActionError(null);
     try {
       await deleteUser(id);
       setUsers((prev) => prev.filter((u) => u.id !== id));
-    } catch {
-      // ignore — user stays in list
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to delete user");
     } finally {
       setDeletingId(null);
     }
@@ -138,11 +139,12 @@ export function AdminTab() {
 
   async function handleToggleAdmin(u: User) {
     setPatchingId(u.id);
+    setActionError(null);
     try {
       const updated = await patchUser(u.id, { is_admin: !u.is_admin });
       setUsers((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
-    } catch {
-      // ignore
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Failed to update user");
     } finally {
       setPatchingId(null);
     }
@@ -263,6 +265,32 @@ export function AdminTab() {
           </form>
         </Box>
 
+        {/* Action error */}
+        {actionError && (
+          <Flex
+            bg="red.50"
+            borderWidth="1px"
+            borderColor="red.200"
+            borderRadius="lg"
+            px={4}
+            py={3}
+            justify="space-between"
+            align="center"
+          >
+            <Text fontSize="sm" color="red.700">
+              {actionError}
+            </Text>
+            <Button
+              size="xs"
+              variant="ghost"
+              colorPalette="red"
+              onClick={() => setActionError(null)}
+            >
+              Dismiss
+            </Button>
+          </Flex>
+        )}
+
         {/* Users table */}
         <Box
           bg="white"
@@ -338,10 +366,10 @@ export function AdminTab() {
                     return (
                       <Table.Row
                         key={u.id}
-                        _hover={{ bg: "gray.50" }}
-                        cursor={isPatching ? "wait" : "pointer"}
-                        onClick={() => !isPatching && handleToggleAdmin(u)}
-                        title="Click to toggle admin role"
+                        _hover={{ bg: isCurrentUser ? undefined : "gray.50" }}
+                        cursor={isCurrentUser ? "default" : isPatching ? "wait" : "pointer"}
+                        onClick={() => !isCurrentUser && !isPatching && handleToggleAdmin(u)}
+                        title={isCurrentUser ? "Cannot change your own admin role" : "Click to toggle admin role"}
                       >
                         <Table.Cell px={4} py={3}>
                           <HStack gap={2}>
@@ -435,7 +463,7 @@ export function AdminTab() {
         </Box>
 
         <Text fontSize="xs" color="gray.400" textAlign="center">
-          Click any user row to toggle admin role. Deleting your own account is disabled.
+          Click any user row to toggle admin role. Your own account cannot be modified.
         </Text>
       </VStack>
     </Box>
