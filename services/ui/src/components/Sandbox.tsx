@@ -289,7 +289,9 @@ export function Sandbox() {
                     color={selectedId === ep.id ? "blue.700" : "gray.700"}
                     fontFamily={ep.group === "MCP Tools" ? "mono" : undefined}
                     fontWeight={selectedId === ep.id ? "medium" : "normal"}
-                    noOfLines={1}
+                    overflow="hidden"
+                    textOverflow="ellipsis"
+                    whiteSpace="nowrap"
                   >
                     {ep.label}
                   </Text>
@@ -319,7 +321,14 @@ export function Sandbox() {
               {AGENT_API_BASE}{endpoint.path}
             </Text>
           </HStack>
-          <Text fontSize="xs" color="gray.400" noOfLines={2}>{endpoint.description}</Text>
+          <Text
+            fontSize="xs"
+            color="gray.400"
+            overflow="hidden"
+            css={{ display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}
+          >
+            {endpoint.description}
+          </Text>
         </Box>
 
         <Flex flex={1} minH={0} direction={{ base: "column", lg: "row" }} overflow="hidden">
