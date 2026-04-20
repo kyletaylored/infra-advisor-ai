@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s create-ghcr-secret run-dags help
+.PHONY: deploy-infra deploy-k8s create-ghcr-secret create-airflow-secret create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-secrets run-dags apply-datadog-agent upgrade-airflow help
 
 # Load .env if present (for local dev)
 -include .env
@@ -50,6 +50,44 @@ create-airflow-secret: ## Create airflow-azure-secret K8s Secret in airflow name
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ airflow-azure-secret created in namespace airflow"
 
+create-mcp-server-secret: ## Create mcp-server-secret K8s Secret (Azure, EIA, ERCOT keys)
+	@if [ -z "$(AZURE_SEARCH_ENDPOINT)" ];  then echo "ERROR: AZURE_SEARCH_ENDPOINT is not set";  exit 1; fi
+	@if [ -z "$(AZURE_SEARCH_API_KEY)" ];   then echo "ERROR: AZURE_SEARCH_API_KEY is not set";   exit 1; fi
+	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ];  then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set";  exit 1; fi
+	@if [ -z "$(AZURE_OPENAI_API_KEY)" ];   then echo "ERROR: AZURE_OPENAI_API_KEY is not set";   exit 1; fi
+	@if [ -z "$(EIA_API_KEY)" ];            then echo "ERROR: EIA_API_KEY is not set";            exit 1; fi
+	@if [ -z "$(ERCOT_API_KEY)" ];          then echo "WARN: ERCOT_API_KEY is not set — ERCOT tool will be disabled"; fi
+	kubectl create secret generic mcp-server-secret \
+		--namespace $(NAMESPACE) \
+		--from-literal=AZURE_SEARCH_ENDPOINT=$(AZURE_SEARCH_ENDPOINT) \
+		--from-literal=AZURE_SEARCH_API_KEY=$(AZURE_SEARCH_API_KEY) \
+		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
+		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
+		--from-literal=EIA_API_KEY=$(EIA_API_KEY) \
+		--from-literal=ERCOT_API_KEY=$(ERCOT_API_KEY) \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "✓ mcp-server-secret created in namespace $(NAMESPACE)"
+
+create-agent-api-secret: ## Create agent-api-secret K8s Secret (Azure OpenAI keys)
+	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ]; then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set"; exit 1; fi
+	@if [ -z "$(AZURE_OPENAI_API_KEY)" ];  then echo "ERROR: AZURE_OPENAI_API_KEY is not set";  exit 1; fi
+	kubectl create secret generic agent-api-secret \
+		--namespace $(NAMESPACE) \
+		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
+		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "✓ agent-api-secret created in namespace $(NAMESPACE)"
+
+create-load-generator-secret: ## Create load-generator-secret K8s Secret (Datadog API key)
+	@if [ -z "$(DD_API_KEY)" ]; then echo "ERROR: DD_API_KEY is not set"; exit 1; fi
+	kubectl create secret generic load-generator-secret \
+		--namespace $(NAMESPACE) \
+		--from-literal=DD_API_KEY=$(DD_API_KEY) \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "✓ load-generator-secret created in namespace $(NAMESPACE)"
+
+create-secrets: create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-airflow-secret ## Create all application K8s secrets
+
 create-ghcr-secret: ## Create ghcr-pull-secret K8s Secret in infra-advisor namespace
 	@if [ -z "$(GHCR_PAT)" ]; then echo "ERROR: GHCR_PAT is not set"; exit 1; fi
 	@if [ -z "$(GITHUB_EMAIL)" ]; then echo "ERROR: GITHUB_EMAIL is not set"; exit 1; fi
@@ -94,6 +132,11 @@ deploy-k8s: ## Apply all Kubernetes manifests
 	@echo "→ Creating GHCR pull secret..."
 	$(MAKE) create-ghcr-secret
 
+	@echo "→ Creating application secrets..."
+	$(MAKE) create-mcp-server-secret
+	$(MAKE) create-agent-api-secret
+	$(MAKE) create-load-generator-secret
+
 	@echo "→ Deploying application services..."
 	kubectl apply -f k8s/mcp-server/
 	kubectl apply -f k8s/agent-api/
@@ -124,7 +167,21 @@ run-dags: ## Manually trigger all 5 Airflow DAGs
 	@echo "✓ All DAGs triggered — check Airflow UI at http://localhost:8080 (after port-forward)"
 
 airflow-ui: ## Port-forward Airflow web UI to localhost:8080
-	kubectl port-forward -n airflow svc/airflow-webserver 8080:8080
+	kubectl port-forward -n airflow svc/airflow-api-server 8080:8080
+
+apply-datadog-agent: ## Apply DatadogAgent CR from datadog/datadog-agent.yaml
+	kubectl apply -f datadog/datadog-agent.yaml
+	@echo "✓ DatadogAgent CR applied"
+
+upgrade-airflow: ## Upgrade Airflow Helm release from k8s/airflow/values.yaml
+	helm repo add apache-airflow https://airflow.apache.org || true
+	helm repo update
+	helm upgrade airflow apache-airflow/airflow \
+		--namespace airflow \
+		--values k8s/airflow/values.yaml \
+		--timeout 10m \
+		--wait
+	@echo "✓ Airflow upgraded"
 
 # ─── Tests ────────────────────────────────────────────────────────────────────
 

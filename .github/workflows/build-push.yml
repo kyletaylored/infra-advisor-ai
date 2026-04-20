@@ -25,6 +25,8 @@ jobs:
       agent-api:     ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.agent-api == 'true' }}
       load-generator: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.load-generator == 'true' }}
       ui:            ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.ui == 'true' }}
+      airflow:       ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.airflow == 'true' }}
+      datadog:       ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.datadog == 'true' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -41,6 +43,11 @@ jobs:
               - 'services/load-generator/**'
             ui:
               - 'services/ui/**'
+            airflow:
+              - 'k8s/airflow/**'
+              - 'services/ingestion/**'
+            datadog:
+              - 'datadog/datadog-agent.yaml'
 
   # ── Build and push each changed service ────────────────────────────────────
   build:
@@ -198,3 +205,79 @@ jobs:
           if [ "${{ needs.changes.outputs.ui }}" == "true" ]; then
             kubectl rollout status deployment/ui -n infra-advisor --timeout=5m
           fi
+
+  # ── Airflow Helm upgrade (values.yaml or ingestion DAG changes) ─────────────
+  upgrade-airflow:
+    needs: [changes]
+    runs-on: ubuntu-latest
+    if: |
+      github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.airflow == 'true'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set up kubelogin
+        uses: azure/use-kubelogin@v1.2
+        with:
+          kubelogin-version: 'v0.0.24'
+
+      - name: Get AKS credentials
+        uses: azure/aks-set-context@v5
+        with:
+          resource-group: rg-tola-infra-advisor-ai
+          cluster-name: aks-infra-advisor-dev
+          admin: 'false'
+          use-kubelogin: 'true'
+
+      - name: Add Airflow Helm repo
+        run: |
+          helm repo add apache-airflow https://airflow.apache.org
+          helm repo update
+
+      - name: Helm upgrade Airflow
+        run: |
+          helm upgrade airflow apache-airflow/airflow \
+            --namespace airflow \
+            --values k8s/airflow/values.yaml \
+            --timeout 10m \
+            --wait
+
+  # ── Apply DatadogAgent CR (datadog/datadog-agent.yaml changes) ─────────────
+  apply-datadog-agent:
+    needs: [changes]
+    runs-on: ubuntu-latest
+    if: |
+      github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.datadog == 'true'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set up kubelogin
+        uses: azure/use-kubelogin@v1.2
+        with:
+          kubelogin-version: 'v0.0.24'
+
+      - name: Get AKS credentials
+        uses: azure/aks-set-context@v5
+        with:
+          resource-group: rg-tola-infra-advisor-ai
+          cluster-name: aks-infra-advisor-dev
+          admin: 'false'
+          use-kubelogin: 'true'
+
+      - name: Apply DatadogAgent CR
+        run: kubectl apply -f datadog/datadog-agent.yaml
