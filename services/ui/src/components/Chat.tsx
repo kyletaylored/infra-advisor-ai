@@ -1,4 +1,16 @@
 import React, { useEffect, useRef, useState } from "react";
+import {
+  Alert,
+  Badge,
+  Box,
+  Flex,
+  HStack,
+  IconButton,
+  Spinner,
+  Text,
+  Textarea,
+  VStack,
+} from "@chakra-ui/react";
 import { BridgeData, Citation, QueryResponse, extractBridgeData, sendQuery } from "../lib/api";
 import { trackBridgeCardRendered, trackQuerySubmitted } from "../lib/datadog-rum";
 import { BridgeCard } from "./BridgeCard";
@@ -12,6 +24,23 @@ interface Message {
   citations: Citation[];
   bridges: BridgeData[];
   traceId?: string | null;
+}
+
+function SendIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M5 12h14m-7-7l7 7-7 7" />
+    </svg>
+  );
 }
 
 export function Chat() {
@@ -42,24 +71,14 @@ export function Chat() {
     setError(null);
     setLoading(true);
 
-    const userMessage: Message = {
-      role: "user",
-      content: query,
-      sources: [],
-      citations: [],
-      bridges: [],
-    };
+    const userMessage: Message = { role: "user", content: query, sources: [], citations: [], bridges: [] };
     setMessages((prev) => [...prev, userMessage]);
-
     trackQuerySubmitted(query.length);
 
     try {
       const resp: QueryResponse = await sendQuery(query);
       const bridges = extractBridgeData(resp.answer);
-
-      if (bridges.length > 0) {
-        trackBridgeCardRendered(bridges.length);
-      }
+      if (bridges.length > 0) trackBridgeCardRendered(bridges.length);
 
       const aiMessage: Message = {
         role: "assistant",
@@ -69,7 +88,6 @@ export function Chat() {
         bridges,
         traceId: resp.trace_id,
       };
-
       setMessages((prev) => [...prev, aiMessage]);
       setActiveCitations(aiMessage.citations);
     } catch (err) {
@@ -87,129 +105,189 @@ export function Chat() {
   }
 
   return (
-    <div className="flex flex-col h-screen bg-gray-50">
+    <Flex h="100vh" direction="column" bg="gray.50">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-            <span className="text-white text-sm font-bold">IA</span>
-          </div>
-          <span className="font-semibold text-gray-900">InfraAdvisor AI</span>
-        </div>
-        <span className="text-xs text-gray-400">Powered by Datadog + GPT-4o</span>
-      </header>
+      <Flex
+        as="header"
+        bg="blue.700"
+        px={6}
+        py={3}
+        align="center"
+        justify="space-between"
+        flexShrink={0}
+        boxShadow="md"
+      >
+        <HStack gap={3}>
+          <Flex w={8} h={8} bg="white" borderRadius="lg" align="center" justify="center" flexShrink={0}>
+            <Text fontSize="sm" fontWeight="bold" color="blue.700">IA</Text>
+          </Flex>
+          <Box>
+            <Text fontWeight="semibold" color="white" fontSize="md" lineHeight="short">
+              InfraAdvisor AI
+            </Text>
+            <Text fontSize="xs" color="blue.200">
+              Bridge · Water · Energy · Disaster
+            </Text>
+          </Box>
+        </HStack>
+        <Badge colorPalette="green" variant="solid" fontSize="xs" borderRadius="full" px={2}>
+          Live
+        </Badge>
+      </Flex>
 
-      {/* Main content: chat + citation panel */}
-      <div className="flex flex-1 min-h-0">
-        {/* Chat thread */}
-        <div className="flex-1 flex flex-col min-w-0">
-          <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+      {/* Body */}
+      <Flex flex={1} minH={0} overflow="hidden">
+        {/* Chat column */}
+        <Flex direction="column" flex={1} minW={0}>
+          {/* Message thread */}
+          <Box flex={1} overflowY="auto" px={4} py={5} className="message-thread">
             {messages.length === 0 && (
-              <div className="flex items-center justify-center h-full">
-                <p className="text-sm text-gray-400">Ask about bridges, water systems, energy infrastructure, or upload a project brief.</p>
-              </div>
+              <Flex h="full" align="center" justify="center">
+                <Text fontSize="sm" color="gray.400" textAlign="center" maxW="sm" px={4}>
+                  Ask about bridges, water systems, energy infrastructure, or disaster history across US regions.
+                </Text>
+              </Flex>
             )}
 
-            {messages.map((msg, i) => (
-              <div
-                key={i}
-                data-testid={msg.role === "assistant" ? "ai-message" : "user-message"}
-                className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`max-w-2xl rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                    msg.role === "user"
-                      ? "bg-blue-600 text-white"
-                      : "bg-white border border-gray-200 text-gray-800 shadow-sm"
-                  }`}
+            <VStack gap={4} align="stretch">
+              {messages.map((msg, i) => (
+                <Flex
+                  key={i}
+                  data-testid={msg.role === "assistant" ? "ai-message" : "user-message"}
+                  justify={msg.role === "user" ? "flex-end" : "flex-start"}
                 >
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
+                  <Box
+                    maxW={{ base: "90%", md: "2xl" }}
+                    bg={msg.role === "user" ? "blue.600" : "white"}
+                    color={msg.role === "user" ? "white" : "gray.800"}
+                    borderRadius="2xl"
+                    px={4}
+                    py={3}
+                    fontSize="sm"
+                    lineHeight="tall"
+                    boxShadow={msg.role === "assistant" ? "sm" : "none"}
+                    borderWidth={msg.role === "assistant" ? "1px" : 0}
+                    borderColor="gray.200"
+                  >
+                    <Text whiteSpace="pre-wrap">{msg.content}</Text>
 
-                  {/* Bridge cards */}
-                  {msg.bridges.length > 0 && (
-                    <div className="mt-3 space-y-2">
-                      {msg.bridges.map((b, j) => (
-                        <BridgeCard key={j} bridge={b} />
-                      ))}
-                    </div>
-                  )}
+                    {msg.bridges.length > 0 && (
+                      <VStack mt={3} gap={2} align="stretch">
+                        {msg.bridges.map((b, j) => <BridgeCard key={j} bridge={b} />)}
+                      </VStack>
+                    )}
 
-                  {/* Source pills */}
-                  {msg.sources.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {msg.sources.map((s) => (
-                        <span
-                          key={s}
-                          className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full"
-                        >
-                          {s}
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                    {msg.sources.length > 0 && (
+                      <HStack mt={2} flexWrap="wrap" gap={1}>
+                        {msg.sources.map((s) => (
+                          <Badge key={s} variant="subtle" colorPalette="gray" fontSize="xs" borderRadius="full">
+                            {s}
+                          </Badge>
+                        ))}
+                      </HStack>
+                    )}
 
-                  {msg.traceId && (
-                    <p className="mt-1 text-xs text-gray-400 font-mono">trace: {msg.traceId}</p>
-                  )}
-                </div>
-              </div>
-            ))}
+                    {msg.traceId && (
+                      <Text
+                        mt={1}
+                        fontSize="xs"
+                        color={msg.role === "user" ? "blue.200" : "gray.400"}
+                        fontFamily="mono"
+                      >
+                        trace: {msg.traceId}
+                      </Text>
+                    )}
+                  </Box>
+                </Flex>
+              ))}
 
-            {loading && (
-              <div className="flex justify-start" data-testid="loading-indicator">
-                <div className="bg-white border border-gray-200 rounded-2xl px-4 py-3 shadow-sm">
-                  <div className="flex gap-1">
-                    <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]" />
-                    <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]" />
-                    <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" />
-                  </div>
-                </div>
-              </div>
-            )}
+              {loading && (
+                <Flex justify="flex-start" data-testid="loading-indicator">
+                  <Box
+                    bg="white"
+                    borderRadius="2xl"
+                    px={4}
+                    py={3}
+                    boxShadow="sm"
+                    borderWidth="1px"
+                    borderColor="gray.200"
+                  >
+                    <Spinner size="sm" color="blue.500" />
+                  </Box>
+                </Flex>
+              )}
 
-            {error && (
-              <div className="mx-auto max-w-lg bg-red-50 border border-red-200 rounded-lg px-4 py-3">
-                <p className="text-sm text-red-700">{error}</p>
-              </div>
-            )}
+              {error && (
+                <Alert.Root status="error" borderRadius="lg" fontSize="sm">
+                  <Alert.Indicator />
+                  <Alert.Description>{error}</Alert.Description>
+                </Alert.Root>
+              )}
 
-            <div ref={bottomRef} />
-          </div>
+              <div ref={bottomRef} />
+            </VStack>
+          </Box>
 
-          {/* Query suggestions + input */}
-          <div className="border-t border-gray-200 bg-white px-4 py-3 space-y-2 shrink-0">
-            <QuerySuggestions onSelect={handleSuggestionSelect} disabled={loading} />
-            <form onSubmit={handleSubmit} className="flex gap-2">
-              <textarea
-                ref={inputRef}
-                data-testid="chat-input"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Ask about bridges, disasters, energy..."
-                rows={1}
-                disabled={loading}
-                className="flex-1 resize-none rounded-xl border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-              />
-              <button
-                type="submit"
-                data-testid="send-button"
-                disabled={loading || !input.trim()}
-                className="rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2.5 transition-colors"
-              >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14m-7-7l7 7-7 7" />
-                </svg>
-              </button>
-            </form>
-          </div>
-        </div>
+          {/* Input bar */}
+          <Box
+            borderTopWidth="1px"
+            borderColor="gray.200"
+            bg="white"
+            px={4}
+            py={3}
+            flexShrink={0}
+          >
+            <VStack gap={2} align="stretch">
+              <QuerySuggestions onSelect={handleSuggestionSelect} disabled={loading} />
+              <HStack as="form" onSubmit={handleSubmit} gap={2} align="flex-end">
+                <Textarea
+                  ref={inputRef}
+                  data-testid="chat-input"
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Ask about bridges, disasters, energy..."
+                  rows={1}
+                  disabled={loading}
+                  resize="none"
+                  borderRadius="xl"
+                  borderColor="gray.300"
+                  _focus={{ borderColor: "blue.500", boxShadow: "0 0 0 1px var(--chakra-colors-blue-500)" }}
+                  fontSize="sm"
+                  py="10px"
+                  flex={1}
+                />
+                <IconButton
+                  type="submit"
+                  data-testid="send-button"
+                  aria-label="Send message"
+                  disabled={loading || !input.trim()}
+                  colorPalette="blue"
+                  borderRadius="xl"
+                  h="42px"
+                  flexShrink={0}
+                >
+                  <SendIcon />
+                </IconButton>
+              </HStack>
+            </VStack>
+          </Box>
+        </Flex>
 
-        {/* Citation panel (right sidebar) */}
-        <div className="w-72 border-l border-gray-200 bg-white p-4 overflow-y-auto shrink-0 hidden lg:block">
+        {/* Citation panel — right sidebar */}
+        <Box
+          w="72"
+          borderLeftWidth="1px"
+          borderColor="gray.200"
+          bg="white"
+          p={4}
+          overflowY="auto"
+          flexShrink={0}
+          display={{ base: "none", lg: "block" }}
+        >
           <CitationPanel citations={activeCitations} />
-        </div>
-      </div>
-    </div>
+        </Box>
+      </Flex>
+    </Flex>
   );
 }

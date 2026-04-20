@@ -1,4 +1,5 @@
 import React from "react";
+import { Button, Wrap, WrapItem } from "@chakra-ui/react";
 import { trackSuggestionClicked } from "../lib/datadog-rum";
 
 const SUGGESTIONS = [
@@ -20,17 +21,28 @@ export function QuerySuggestions({ onSelect, disabled }: Props) {
   }
 
   return (
-    <div className="flex flex-wrap gap-2 px-1">
+    <Wrap gap={1.5}>
       {SUGGESTIONS.map((s) => (
-        <button
-          key={s}
-          onClick={() => handleClick(s)}
-          disabled={disabled}
-          className="text-xs bg-gray-100 hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed text-gray-700 px-3 py-1.5 rounded-full transition-colors text-left"
-        >
-          {s.length > 60 ? s.slice(0, 60) + "…" : s}
-        </button>
+        <WrapItem key={s}>
+          <Button
+            size="xs"
+            variant="outline"
+            colorPalette="gray"
+            borderRadius="full"
+            fontWeight="normal"
+            disabled={disabled}
+            onClick={() => handleClick(s)}
+            maxW="56"
+            whiteSpace="normal"
+            h="auto"
+            py={1.5}
+            textAlign="left"
+            justifyContent="flex-start"
+          >
+            {s.length > 60 ? s.slice(0, 60) + "…" : s}
+          </Button>
+        </WrapItem>
       ))}
-    </div>
+    </Wrap>
   );
 }

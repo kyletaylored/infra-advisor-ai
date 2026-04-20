@@ -12,16 +12,24 @@ export function initDatadogRum(): void {
   datadogRum.init({
     applicationId: appId,
     clientToken: clientToken,
-    site: "datadoghq.com",
+    site: (import.meta.env.VITE_DD_RUM_SITE as string) || "us3.datadoghq.com",
     service: "infra-advisor-ui",
-    env: import.meta.env.VITE_DD_ENV || "dev",
+    env: (import.meta.env.VITE_DD_ENV as string) || "dev",
     version: "1.0.0",
     sessionSampleRate: 100,
     sessionReplaySampleRate: 100,
     trackUserInteractions: true,
     trackResources: true,
     trackLongTasks: true,
-    defaultPrivacyLevel: "mask-user-input", // mask text inputs for PII
+    defaultPrivacyLevel: "mask-user-input",
+    // Inject Datadog trace headers so RUM sessions correlate with backend APM spans
+    allowedTracingUrls: [
+      { match: /\/api\//i, propagatorTypes: ["datadog"] as const },
+      ...((import.meta.env.VITE_AGENT_API_URL as string | undefined) &&
+      import.meta.env.VITE_AGENT_API_URL !== "/api"
+        ? [{ match: import.meta.env.VITE_AGENT_API_URL as string, propagatorTypes: ["datadog"] as const }]
+        : []),
+    ],
   });
 
   datadogRum.startSessionReplayRecording();

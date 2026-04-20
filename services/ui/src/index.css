@@ -1,3 +1,15 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Chakra UI handles base resets — minimal overrides only */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+/* Smooth scrolling for message thread */
+.message-thread {
+  scroll-behavior: smooth;
+}

@@ -1,4 +1,14 @@
 import React from "react";
+import {
+  Badge,
+  Box,
+  Flex,
+  HStack,
+  Link,
+  Progress,
+  Text,
+  VStack,
+} from "@chakra-ui/react";
 import { BridgeData } from "../lib/api";
 
 interface Props {
@@ -15,80 +25,106 @@ function conditionLevel(code: string): ConditionLevel {
   return "good";
 }
 
-const CONDITION_COLORS: Record<ConditionLevel, string> = {
-  poor: "bg-red-100 text-red-800 border-red-200",
-  fair: "bg-amber-100 text-amber-800 border-amber-200",
-  good: "bg-green-100 text-green-800 border-green-200",
-  unknown: "bg-gray-100 text-gray-600 border-gray-200",
+const CONDITION_SCHEME: Record<ConditionLevel, string> = {
+  poor: "red",
+  fair: "orange",
+  good: "green",
+  unknown: "gray",
+};
+
+const PROGRESS_COLOR: Record<ConditionLevel, string> = {
+  poor: "red",
+  fair: "orange",
+  good: "green",
+  unknown: "gray",
 };
 
 function ConditionBadge({ code, label }: { code: string; label: string }) {
   const level = conditionLevel(code);
   return (
-    <span
-      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${CONDITION_COLORS[level]}`}
-    >
+    <Badge colorPalette={CONDITION_SCHEME[level]} variant="subtle" fontSize="xs">
       {label}: {code || "N/A"}
-    </span>
+    </Badge>
   );
 }
 
 export function BridgeCard({ bridge }: Props) {
   const sufficiency = bridge.sufficiency_rating ?? 0;
+  const progressLevel: ConditionLevel = sufficiency <= 40 ? "poor" : sufficiency <= 70 ? "fair" : "good";
   const mapsUrl =
     bridge.latitude && bridge.longitude
       ? `https://www.google.com/maps?q=${bridge.latitude},${bridge.longitude}`
       : null;
 
   return (
-    <div className="border border-gray-200 rounded-lg p-4 bg-white shadow-sm space-y-3">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="text-xs font-mono text-gray-500">Structure #{bridge.structure_number}</p>
-          <p className="text-sm font-semibold text-gray-900">
-            {bridge.county}, {bridge.state}
-          </p>
-        </div>
-        {mapsUrl && (
-          <a
-            href={mapsUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-xs text-blue-600 hover:underline whitespace-nowrap"
+    <Box
+      borderWidth="1px"
+      borderColor="gray.200"
+      borderRadius="lg"
+      p={4}
+      bg="gray.50"
+      boxShadow="xs"
+    >
+      <VStack gap={3} align="stretch">
+        {/* Header row */}
+        <Flex justify="space-between" align="flex-start" gap={2}>
+          <Box>
+            <Text fontSize="xs" fontFamily="mono" color="gray.500">
+              Structure #{bridge.structure_number}
+            </Text>
+            <Text fontSize="sm" fontWeight="semibold" color="gray.800">
+              {bridge.county}, {bridge.state}
+            </Text>
+          </Box>
+          {mapsUrl && (
+            <Link
+              href={mapsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              fontSize="xs"
+              color="blue.600"
+              whiteSpace="nowrap"
+              _hover={{ textDecoration: "underline" }}
+            >
+              View map →
+            </Link>
+          )}
+        </Flex>
+
+        {/* Sufficiency rating */}
+        <Box>
+          <Flex justify="space-between" mb={1}>
+            <Text fontSize="xs" color="gray.500">Sufficiency Rating</Text>
+            <Text fontSize="xs" fontWeight="medium" color="gray.700">
+              {sufficiency.toFixed(1)}
+            </Text>
+          </Flex>
+          <Progress.Root
+            value={Math.min(100, sufficiency)}
+            colorPalette={PROGRESS_COLOR[progressLevel]}
+            borderRadius="full"
+            size="sm"
+            bg="gray.200"
           >
-            View on map →
-          </a>
+            <Progress.Track>
+              <Progress.Range />
+            </Progress.Track>
+          </Progress.Root>
+        </Box>
+
+        {/* Condition badges */}
+        <HStack flexWrap="wrap" gap={1.5}>
+          <ConditionBadge code={bridge.deck_condition} label="Deck" />
+          <ConditionBadge code={bridge.superstructure_condition} label="Super" />
+          <ConditionBadge code={bridge.substructure_condition} label="Sub" />
+        </HStack>
+
+        {bridge.last_inspection_date && (
+          <Text fontSize="xs" color="gray.400">
+            Last inspection: {bridge.last_inspection_date}
+          </Text>
         )}
-      </div>
-
-      {/* Sufficiency rating bar */}
-      <div>
-        <div className="flex justify-between text-xs text-gray-500 mb-1">
-          <span>Sufficiency Rating</span>
-          <span className="font-medium">{sufficiency.toFixed(1)}</span>
-        </div>
-        <div className="w-full bg-gray-100 rounded-full h-2">
-          <div
-            className={`h-2 rounded-full ${
-              sufficiency <= 40 ? "bg-red-500" : sufficiency <= 70 ? "bg-amber-400" : "bg-green-500"
-            }`}
-            style={{ width: `${Math.min(100, sufficiency)}%` }}
-          />
-        </div>
-      </div>
-
-      {/* Condition badges */}
-      <div className="flex flex-wrap gap-1.5">
-        <ConditionBadge code={bridge.deck_condition} label="Deck" />
-        <ConditionBadge code={bridge.superstructure_condition} label="Super" />
-        <ConditionBadge code={bridge.substructure_condition} label="Sub" />
-      </div>
-
-      {bridge.last_inspection_date && (
-        <p className="text-xs text-gray-400">
-          Last inspection: {bridge.last_inspection_date}
-        </p>
-      )}
-    </div>
+      </VStack>
+    </Box>
   );
 }
