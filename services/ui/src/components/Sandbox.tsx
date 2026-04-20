@@ -10,6 +10,7 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
+import { Sparkles } from "lucide-react";
 
 const AGENT_API_BASE = (import.meta.env.VITE_AGENT_API_URL as string | undefined) || "/api";
 
@@ -23,6 +24,8 @@ interface EndpointDef {
   path: string;
   description: string;
   example: object | null;
+  /** If true, show the LLM Suggest button to randomize the `query` field */
+  suggestable?: boolean;
 }
 
 const ENDPOINTS: EndpointDef[] = [
@@ -44,6 +47,7 @@ const ENDPOINTS: EndpointDef[] = [
     path: "/query",
     description: "Run a natural-language query through the full ReAct agent loop. The agent selects tools, retrieves data, and synthesises a response.",
     example: { query: "What are the most structurally deficient bridges in Harris County, Texas with ADT over 10,000?" },
+    suggestable: true,
   },
   {
     id: "suggestions",
@@ -121,6 +125,7 @@ const ENDPOINTS: EndpointDef[] = [
     path: "/tools/search_project_knowledge",
     description: "Hybrid semantic + keyword search against the firm's internal knowledge base indexed in Azure AI Search.",
     example: { query: "Texas bridge rehabilitation scour risk", top_k: 5 },
+    suggestable: true,
   },
   {
     id: "draft_document",
@@ -165,6 +170,7 @@ export function Sandbox() {
   const [selectedId, setSelectedId] = useState<string>("health");
   const [paramsText, setParamsText] = useState<string>("");
   const [running, setRunning] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const [result, setResult] = useState<RunResult | null>(null);
   const [responseTab, setResponseTab] = useState<"response" | "request">("response");
 
@@ -174,6 +180,40 @@ export function Sandbox() {
     setSelectedId(ep.id);
     setParamsText(ep.example ? formatJson(ep.example) : "");
     setResult(null);
+  }
+
+  async function handleSuggest() {
+    setSuggesting(true);
+    try {
+      const resp = await fetch(`${AGENT_API_BASE}/suggestions`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: "infrastructure",
+          answer: "Explore infrastructure data across bridges, energy, water, and disaster records.",
+          sources: [],
+        }),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        const suggestions: Array<{ label: string; query: string }> = data.suggestions ?? [];
+        if (suggestions.length > 0) {
+          const pick = suggestions[Math.floor(Math.random() * suggestions.length)];
+          const q = pick.query ?? pick.label ?? "";
+          try {
+            const parsed = paramsText.trim() ? JSON.parse(paramsText) : { ...endpoint.example };
+            parsed.query = q;
+            setParamsText(formatJson(parsed));
+          } catch {
+            setParamsText(formatJson({ ...(endpoint.example ?? {}), query: q }));
+          }
+        }
+      }
+    } catch {
+      // silently ignore — network error or agent not ready
+    } finally {
+      setSuggesting(false);
+    }
   }
 
   async function handleRun() {
@@ -375,7 +415,7 @@ export function Sandbox() {
               />
             )}
 
-            <HStack gap={2}>
+            <HStack gap={2} flexWrap="wrap">
               {endpoint.example && (
                 <Button
                   size="xs"
@@ -386,6 +426,21 @@ export function Sandbox() {
                   onClick={() => setParamsText(formatJson(endpoint.example))}
                 >
                   Reset example
+                </Button>
+              )}
+              {endpoint.suggestable && (
+                <Button
+                  size="xs"
+                  variant="outline"
+                  colorPalette="purple"
+                  borderRadius="md"
+                  fontSize="xs"
+                  disabled={suggesting || running}
+                  onClick={handleSuggest}
+                  title="Generate a new query using the LLM suggestions engine"
+                >
+                  {suggesting ? <Spinner size="xs" /> : <Sparkles size={11} />}
+                  {suggesting ? "Generating…" : "Suggest"}
                 </Button>
               )}
               <Button

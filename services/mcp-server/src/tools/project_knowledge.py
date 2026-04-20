@@ -257,13 +257,26 @@ async def search_project_knowledge(
 
     except Exception as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
-        emit_external_api("azure_ai_search", api_latency_ms, error_type="search_error")
+        exc_str = str(exc)
+        is_index_missing = "not found" in exc_str.lower() and "index" in exc_str.lower()
+        error_type = "index_not_found" if is_index_missing else "search_error"
+        emit_external_api("azure_ai_search", api_latency_ms, error_type=error_type)
         logger.error("Azure AI Search hybrid search failed: %s", exc)
         emit_tool_call(
             "search_project_knowledge",
             (time.monotonic() - tool_start) * 1000,
             "error",
         )
+        if is_index_missing:
+            return {
+                "error": (
+                    "Azure AI Search index not found. "
+                    "Run the knowledge_base_init Airflow DAG (make run-dags) to create "
+                    "and populate the index before searching the knowledge base."
+                ),
+                "source": "azure_ai_search",
+                "retriable": False,
+            }
         return {
             "error": f"Azure AI Search query failed: {exc}",
             "source": "azure_ai_search",

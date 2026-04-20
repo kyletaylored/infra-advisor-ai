@@ -3,6 +3,9 @@
 .env.local
 .env.*.local
 
+# Deploy logs contain plaintext secrets from kubectl create secret output
+*.log
+
 # Claude Code local settings (project settings.json is committed)
 .claude/settings.local.json
 

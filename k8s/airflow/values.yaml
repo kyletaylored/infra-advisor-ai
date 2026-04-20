@@ -3,6 +3,11 @@
 # helm upgrade --install airflow apache-airflow/airflow \
 #   --namespace airflow --values k8s/airflow/values.yaml --timeout 10m --wait
 
+# Static API secret key — prevents unnecessary pod restarts on helm upgrade.
+# Key stored in airflow-azure-secret under key webserver-secret-key.
+# Generate with: python -c "import secrets; print(secrets.token_hex(32))"
+webserverSecretKeySecretName: airflow-azure-secret
+
 # Executor: LocalExecutor — runs tasks inside scheduler process.
 # Eliminates separate worker pods; appropriate for lab scale with 5 DAGs.
 # At 3× Standard_D2s_v3 (24 GB total cluster RAM), this avoids OOM pressure.
@@ -29,6 +34,7 @@ dags:
     size: 1Gi
   gitSync:
     enabled: false
+    recommendedProbeSetting: true
 
 # Extra pip packages for all Airflow pods (scheduler + webserver).
 # With LocalExecutor, tasks run in the scheduler — packages are needed there.

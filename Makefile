@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s create-ghcr-secret create-airflow-secret create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent upgrade-airflow help
+.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent upgrade-airflow help
 
 # Load .env if present (for local dev)
 -include .env
@@ -13,6 +13,26 @@ GITHUB_EMAIL ?=
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+check-env: ## Verify all required env vars are set before deploying
+	@echo "→ Checking required environment variables..."
+	@for var in \
+		AZURE_OPENAI_ENDPOINT AZURE_OPENAI_API_KEY \
+		AZURE_SEARCH_ENDPOINT AZURE_SEARCH_API_KEY \
+		EIA_API_KEY DD_API_KEY \
+		GHCR_PAT GITHUB_EMAIL \
+		POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB \
+		DD_POSTGRES_PASSWORD \
+		DATABASE_URL JWT_SECRET; do \
+		if [ -z "$$(eval echo \$$$$var)" ]; then \
+			echo "  ERROR: $$var is not set"; \
+			MISSING=1; \
+		else \
+			echo "  ✓ $$var"; \
+		fi; \
+	done; \
+	if [ -n "$$MISSING" ]; then echo ""; echo "Set missing vars in .env and re-run."; exit 1; fi
+	@echo "✓ All required env vars present"
 
 # ─── Azure Infrastructure ──────────────────────────────────────────────────────
 
@@ -38,6 +58,7 @@ create-airflow-secret: ## Create airflow-azure-secret K8s Secret in airflow name
 	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ]; then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set"; exit 1; fi
 	@if [ -z "$(EIA_API_KEY)" ]; then echo "ERROR: EIA_API_KEY is not set"; exit 1; fi
 	@if [ -z "$(DD_API_KEY)" ]; then echo "ERROR: DD_API_KEY is not set (required for DJM OpenLineage transport)"; exit 1; fi
+	@if [ -z "$(AIRFLOW_WEBSERVER_SECRET_KEY)" ]; then echo "ERROR: AIRFLOW_WEBSERVER_SECRET_KEY is not set — generate with: python3 -c \"import secrets; print(secrets.token_hex(32))\""; exit 1; fi
 	kubectl create secret generic airflow-azure-secret \
 		--namespace airflow \
 		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
@@ -47,6 +68,7 @@ create-airflow-secret: ## Create airflow-azure-secret K8s Secret in airflow name
 		--from-literal=AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=https;AccountName=placeholder;AccountKey=placeholder;EndpointSuffix=core.windows.net" \
 		--from-literal=EIA_API_KEY=$(EIA_API_KEY) \
 		--from-literal=DD_API_KEY=$(DD_API_KEY) \
+		--from-literal=webserver-secret-key=$(AIRFLOW_WEBSERVER_SECRET_KEY) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ airflow-azure-secret created in namespace airflow"
 
@@ -138,14 +160,15 @@ create-ghcr-secret: ## Create ghcr-pull-secret K8s Secret in infra-advisor names
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ ghcr-pull-secret created in namespace $(NAMESPACE)"
 
-deploy-k8s: ## Apply all Kubernetes manifests
+deploy-k8s: check-env ## Apply all Kubernetes manifests
 	@echo "→ Applying namespaces..."
 	kubectl apply -f k8s/namespace.yaml
 
 	@echo "→ Installing Strimzi CRDs..."
 	kubectl apply -f https://strimzi.io/install/latest?namespace=kafka || true
-	@echo "  Waiting 30s for Strimzi CRDs to register..."
-	sleep 30
+	@echo "  Waiting for Strimzi CRDs to be established..."
+	kubectl wait --for=condition=established crd/kafkas.kafka.strimzi.io --timeout=90s
+	kubectl wait --for=condition=established crd/kafkatopics.kafka.strimzi.io --timeout=30s
 
 	@echo "→ Skipping k8s/datadog/ — Datadog deployed via Operator (datadog/datadog-agent.yaml)"
 
@@ -176,6 +199,7 @@ deploy-k8s: ## Apply all Kubernetes manifests
 	$(MAKE) create-load-generator-secret
 	$(MAKE) create-postgres-secret
 	$(MAKE) create-auth-api-secret
+	$(MAKE) create-dd-postgres-secret
 
 	@echo "→ Deploying Postgres..."
 	kubectl apply -f k8s/postgres/

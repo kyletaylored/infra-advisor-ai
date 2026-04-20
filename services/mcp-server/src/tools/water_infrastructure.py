@@ -338,8 +338,24 @@ async def _fetch_twdb_projects(
 
     except Exception as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
-        emit_external_api("twdb", api_latency_ms, error_type="search_error")
+        exc_str = str(exc)
+        is_index_missing = "not found" in exc_str.lower() and "index" in exc_str.lower()
+        error_type = "index_not_found" if is_index_missing else "search_error"
+        emit_external_api("twdb", api_latency_ms, error_type=error_type)
         logger.error("Azure AI Search error for TWDB query: %s", exc)
+        if is_index_missing:
+            return [
+                {
+                    "_source": TWDB_SOURCE_LABEL,
+                    "error": (
+                        "Azure AI Search index not found. "
+                        "Run the knowledge_base_init Airflow DAG (make run-dags) to create "
+                        "and populate the index before querying water plan projects."
+                    ),
+                    "retriable": False,
+                    "content": "",
+                }
+            ]
         return [
             {
                 "_source": TWDB_SOURCE_LABEL,
