@@ -37,6 +37,7 @@ get-credentials: ## Fetch AKS kubeconfig
 create-airflow-secret: ## Create airflow-azure-secret K8s Secret in airflow namespace
 	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ]; then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set"; exit 1; fi
 	@if [ -z "$(EIA_API_KEY)" ]; then echo "ERROR: EIA_API_KEY is not set"; exit 1; fi
+	@if [ -z "$(DD_API_KEY)" ]; then echo "ERROR: DD_API_KEY is not set (required for DJM OpenLineage transport)"; exit 1; fi
 	kubectl create secret generic airflow-azure-secret \
 		--namespace airflow \
 		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
@@ -45,6 +46,7 @@ create-airflow-secret: ## Create airflow-azure-secret K8s Secret in airflow name
 		--from-literal=AZURE_SEARCH_API_KEY=$(AZURE_SEARCH_API_KEY) \
 		--from-literal=AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=https;AccountName=placeholder;AccountKey=placeholder;EndpointSuffix=core.windows.net" \
 		--from-literal=EIA_API_KEY=$(EIA_API_KEY) \
+		--from-literal=DD_API_KEY=$(DD_API_KEY) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ airflow-azure-secret created in namespace airflow"
 

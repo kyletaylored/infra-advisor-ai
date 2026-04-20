@@ -33,7 +33,7 @@ os.environ.setdefault("DD_TRACE_ENABLED", "false")
 os.environ.setdefault("DD_LLMOBS_ENABLED", "false")
 os.environ.setdefault("AZURE_OPENAI_ENDPOINT", "https://mock.openai.azure.com")
 os.environ.setdefault("AZURE_OPENAI_API_KEY", "mock-key")
-os.environ.setdefault("AZURE_OPENAI_DEPLOYMENT", "gpt-4o")
+os.environ.setdefault("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
 os.environ.setdefault("MCP_SERVER_URL", "http://mock-mcp:8000/mcp")
 os.environ.setdefault("REDIS_HOST", "localhost")
 

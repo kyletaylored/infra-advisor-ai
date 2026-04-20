@@ -30,31 +30,57 @@ dags:
   gitSync:
     enabled: false
 
-# Extra pip packages for all Airflow pods (scheduler + webserver)
-# With LocalExecutor, tasks run in scheduler — packages needed there.
+# Extra pip packages for all Airflow pods (scheduler + webserver).
+# With LocalExecutor, tasks run in the scheduler — packages are needed there.
+#
+# DJM requirements (Kubernetes / Datadog Transport):
+#   apache-airflow-providers-openlineage >= 2.7.3  (Datadog transport support)
+#   openlineage-python >= 1.37.0                   (Datadog transport support)
 _pip_additional_requirements: >-
-  apache-airflow-providers-openlineage
-  apache-airflow-providers-http
-  azure-storage-blob
-  azure-search-documents
-  azure-identity
-  tiktoken
-  openpyxl
-  pandas
-  openai
-  pyspark==3.5.3
-  ddtrace
+  apache-airflow-providers-openlineage>=2.7.3 openlineage-python>=1.37.0
+  apache-airflow-providers-http>=6.0.0 azure-storage-blob>=12.28.0
+  azure-search-documents>=11.6.0 azure-identity>=1.25.3 tiktoken>=0.12.0
+  openpyxl>=3.1.5 pandas>=3.0.0 openai>=2.32.0 pyspark==4.1.1 ddtrace>=4.7.1
 
-# Scheduler env vars
+# ── Scheduler ──────────────────────────────────────────────────────────────────
+
 scheduler:
+  # Log collection annotation — lets the Datadog Agent correlate task logs with
+  # DJM run executions.  The Agent DaemonSet must also mount the logs PVC.
+  # See: https://docs.datadoghq.com/containers/kubernetes/log/
+  podAnnotations:
+    ad.datadoghq.com/scheduler.logs: >-
+      [{"type": "file", "path": "/opt/airflow/logs/*/*/*/*.log", "source":
+      "airflow"}]
+
   env:
-    # Datadog Data Jobs Monitoring — required for DJM
-    - name: DD_DATA_JOBS_ENABLED
+    # ── Datadog Data Jobs Monitoring — OpenLineage Datadog Transport (Option 1) ──
+    # Recommended for Kubernetes. Requires:
+    #   apache-airflow-providers-openlineage >= 2.7.3
+    #   openlineage-python >= 1.37.0
+    # Docs: https://docs.datadoghq.com/data_observability/jobs_monitoring/airflow/
+    - name: OPENLINEAGE__TRANSPORT__TYPE
+      value: "datadog"
+    # OPENLINEAGE_NAMESPACE sets the 'env' tag on all DJM runs in Datadog.
+    # Keep in sync with DD_ENV so runs are grouped with other dev telemetry.
+    - name: OPENLINEAGE_NAMESPACE
+      value: "dev"
+    - name: DD_SITE
+      value: "us3.datadoghq.com"
+    - name: DD_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: airflow-azure-secret
+          key: DD_API_KEY
+
+    # ── Airflow + Spark parent job linking ──────────────────────────────────────
+    # Injects Airflow task context into PySpark applications so DJM shows the
+    # parent Airflow task alongside each Spark job.
+    # Requires: apache-airflow-providers-openlineage >= 2.1.0, Airflow >= 2.9
+    - name: AIRFLOW__OPENLINEAGE__SPARK_INJECT_PARENT_JOB_INFO
       value: "true"
-    # OpenLineage transport → Datadog Agent OpenLineage endpoint
-    - name: OPENLINEAGE_URL
-      value: "http://datadog-agent.datadog.svc.cluster.local:8126/api/v2/openlineage"
-    # Datadog APM
+
+    # ── Datadog APM ─────────────────────────────────────────────────────────────
     - name: DD_ENV
       value: "dev"
     - name: DD_SERVICE
@@ -69,7 +95,8 @@ scheduler:
       value: "true"
     - name: DD_TRACE_SAMPLE_RATE
       value: "1.0"
-    # Azure credentials (populated from K8s Secret in production)
+
+    # ── Azure credentials ───────────────────────────────────────────────────────
     - name: AZURE_OPENAI_ENDPOINT
       valueFrom:
         secretKeyRef:
@@ -80,6 +107,10 @@ scheduler:
         secretKeyRef:
           name: airflow-azure-secret
           key: AZURE_OPENAI_API_KEY
+    - name: AZURE_OPENAI_DEPLOYMENT
+      value: "gpt-4.1-mini"
+    - name: AZURE_OPENAI_EMBEDDING_DEPLOYMENT
+      value: "text-embedding-3-small"
     - name: AZURE_SEARCH_ENDPOINT
       valueFrom:
         secretKeyRef:
@@ -107,17 +138,30 @@ scheduler:
     - name: EPA_SDWIS_BASE_URL
       value: "https://enviro.epa.gov/enviro/efservice"
 
-# Triggerer env vars (same DD config)
+# ── Triggerer ──────────────────────────────────────────────────────────────────
+
 triggerer:
   env:
-    - name: DD_DATA_JOBS_ENABLED
-      value: "true"
+    # OpenLineage must also be configured on the triggerer (deferred tasks)
+    - name: OPENLINEAGE__TRANSPORT__TYPE
+      value: "datadog"
+    - name: OPENLINEAGE_NAMESPACE
+      value: "dev"
+    - name: DD_SITE
+      value: "us3.datadoghq.com"
+    - name: DD_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: airflow-azure-secret
+          key: DD_API_KEY
     - name: DD_ENV
       value: "dev"
     - name: DD_SERVICE
       value: "airflow-triggerer"
     - name: DD_AGENT_HOST
       value: "datadog-agent.datadog.svc.cluster.local"
+
+# ── User creation ──────────────────────────────────────────────────────────────
 
 # User creation job (AF3: moved from webserver.defaultUser)
 createUserJob:
@@ -127,7 +171,9 @@ createUserJob:
     email: admin@infra-advisor.local
     firstName: Admin
     lastName: User
-    password: admin  # Change in production
+    password: admin # Change in production
+
+# ── Resources ─────────────────────────────────────────────────────────────────
 
 # Resource limits — conservative for Standard_D2s_v3 lab cluster
 resources:
@@ -138,12 +184,16 @@ resources:
     memory: "1Gi"
     cpu: "500m"
 
+# ── Logs ──────────────────────────────────────────────────────────────────────
+
 # Logs — use PVC for local log storage
 logs:
   persistence:
     enabled: true
     storageClassName: azurefile-csi
     size: 2Gi
+
+# ── Labels ────────────────────────────────────────────────────────────────────
 
 # Labels for Datadog log collection autodiscovery
 labels:

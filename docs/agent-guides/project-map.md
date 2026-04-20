@@ -62,7 +62,7 @@ Datadog Agent DaemonSet
 | Resource | Type | Notes |
 |---|---|---|
 | `aks-infra-advisor` | AKS | 3 nodes, Standard_D2s_v3, K8s 1.30+ |
-| Azure OpenAI | Cognitive Services | Deployment: `gpt-4o`, `text-embedding-ada-002` |
+| Azure OpenAI | Cognitive Services | Deployments: `gpt-4.1-mini` (agent), `gpt-4.1-nano` (eval), `text-embedding-3-small` |
 | Azure AI Search | Search service | Index: `infra-advisor-knowledge` |
 | Azure Blob Storage | Storage account | Container: `infra-advisor-raw` (raw parquet) |
 | Azure API Management | APIM | Routes external traffic to agent-api |

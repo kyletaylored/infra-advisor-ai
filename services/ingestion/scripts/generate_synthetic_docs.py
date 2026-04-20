@@ -52,8 +52,8 @@ SYNTHETIC_SOURCE = "synthetic"
 MIN_SYNTHETIC_DOCS = 80
 CHUNK_SIZE_TOKENS = 512
 CHUNK_OVERLAP_TOKENS = 64
-EMBEDDING_MODEL = "text-embedding-ada-002"
-COMPLETION_MODEL = "gpt-4o"
+EMBEDDING_MODEL = "text-embedding-3-small"
+COMPLETION_MODEL = "gpt-4.1-mini"
 
 # ---------------------------------------------------------------------------
 # Document specifications (80 documents)

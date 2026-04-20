@@ -1,9 +1,10 @@
-import ddtrace.auto  # must be first import — monkey-patches openai, langchain at import time
+import ddtrace.auto  # must be first import — auto-instruments LangChain, OpenAI, MCP, httpx, Redis, Kafka
 
 import logging
 import os
 from typing import Any
 
+from ddtrace.llmobs import LLMObs
 from langchain.agents import create_agent
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -82,10 +83,11 @@ def build_mcp_client() -> MultiServerMCPClient:
 
 def build_llm() -> AzureChatOpenAI:
     return AzureChatOpenAI(
-        azure_deployment=os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4o"),
+        azure_deployment=os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini"),
         azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         api_key=os.environ["AZURE_OPENAI_API_KEY"],
-        api_version="2024-02-01",
+        # 2025-01-01-preview required for gpt-4.1 model family
+        api_version="2025-01-01-preview",
         temperature=0,
         streaming=True,
     )
@@ -103,6 +105,10 @@ async def run_agent(
     """
     Execute a single agent query.
 
+    Auto-instrumented by ddtrace (LangChain + MCP + Azure OpenAI integrations).
+    Wrapped in an explicit LLMObs.agent() span so annotations land in the correct
+    span rather than requiring LLMObs.current_span() after ainvoke() returns.
+
     Returns:
         {
             "answer": str,
@@ -113,10 +119,14 @@ async def run_agent(
     """
     query_domain = _classify_domain(query)
 
-    # Load session history from Redis
+    # Load session history from Redis (auto-instrumented by ddtrace Redis integration)
     raw_history = load_history(session_id)
 
-    # Build message list: system + history + current query
+    # Build message list: system + history + current query.
+    # SystemMessage is passed here explicitly so ddtrace's LangChain integration
+    # sees the correct role assignments.  Do NOT also pass system_prompt to
+    # create_agent() — LangGraph would prepend a second SystemMessage, causing
+    # ddtrace to misclassify it as user input.
     messages: list[Any] = [SystemMessage(content=_SYSTEM_PROMPT_TEXT)]
     for entry in raw_history:
         role = entry.get("role", "")
@@ -127,84 +137,89 @@ async def run_agent(
             messages.append(AIMessage(content=content))
     messages.append(HumanMessage(content=query))
 
-    # Build tools and agent (lazy per-request so tool list stays fresh)
+    # Build tools; create_agent without system_prompt so we own the SystemMessage above.
+    # Tool calls are auto-instrumented: LangChain BaseTool.invoke() + MCP ClientSession.call_tool()
     tools = await mcp_client.get_tools()
-    agent = create_agent(model=llm, tools=tools, system_prompt=_SYSTEM_PROMPT_TEXT)
+    agent = create_agent(model=llm, tools=tools)
 
-    # Invoke — new API takes {"messages": [...]}
-    result = await agent.ainvoke({"messages": messages})
+    # ── Explicit LLMObs agent span ────────────────────────────────────────────
+    # The with-block keeps the span open during ainvoke(), so LLMObs.annotate()
+    # lands on the correct span.  Child spans from LangChain, MCP tool calls,
+    # and Azure OpenAI chat completions are auto-created inside this scope.
+    with LLMObs.agent("infra-advisor") as agent_span:
+        result = await agent.ainvoke({"messages": messages})
 
-    # Extract final answer from last AI message
-    answer = ""
-    all_messages = result.get("messages", [])
-    for msg in reversed(all_messages):
-        if isinstance(msg, AIMessage) and msg.content:
-            answer = msg.content if isinstance(msg.content, str) else str(msg.content)
-            break
+        # Extract final answer from last AI message
+        answer = ""
+        all_messages = result.get("messages", [])
+        for msg in reversed(all_messages):
+            if isinstance(msg, AIMessage) and msg.content:
+                answer = msg.content if isinstance(msg.content, str) else str(msg.content)
+                break
 
-    # Extract tool names and source citations from tool messages
-    tools_called: list[str] = []
-    sources: list[str] = []
-    context_chunks: list[str] = []
+        # Extract tool names and source citations from tool messages
+        tools_called: list[str] = []
+        sources: list[str] = []
+        context_chunks: list[str] = []
 
-    from langchain_core.messages import ToolMessage
+        from langchain_core.messages import ToolMessage
+        import json
 
-    for msg in all_messages:
-        if isinstance(msg, AIMessage) and msg.tool_calls:
-            for tc in msg.tool_calls:
-                name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
-                if name and name not in tools_called:
-                    tools_called.append(name)
+        for msg in all_messages:
+            if isinstance(msg, AIMessage) and msg.tool_calls:
+                for tc in msg.tool_calls:
+                    name = tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", None)
+                    if name and name not in tools_called:
+                        tools_called.append(name)
 
-        if isinstance(msg, ToolMessage):
-            content_str = str(msg.content)
-            context_chunks.append(content_str[:500])
+            if isinstance(msg, ToolMessage):
+                content_str = str(msg.content)
+                context_chunks.append(content_str[:500])
 
-            # Try to parse _source fields from JSON-like observation.
-            # MCP tools return content as a Python list of ContentBlocks:
-            # [{"type": "text", "text": "{...json...}"}]
-            # msg.content may already be a list (not a JSON string).
-            try:
-                import json
-
-                content = msg.content
-                if isinstance(content, list):
-                    items = content
-                elif isinstance(content, str):
-                    parsed = json.loads(content)
-                    items = parsed if isinstance(parsed, list) else [parsed]
-                else:
-                    items = []
-
-                for item in items:
-                    if not isinstance(item, dict):
-                        continue
-                    # Unwrap MCP ContentBlock {"type": "text", "text": "..."}
-                    if item.get("type") == "text" and isinstance(item.get("text"), str):
-                        try:
-                            inner = json.loads(item["text"])
-                            records = inner if isinstance(inner, list) else [inner]
-                        except Exception:
-                            records = []
-                        for record in records:
-                            if isinstance(record, dict):
-                                src = record.get("_source")
-                                if src and src not in sources:
-                                    sources.append(src)
+                # Parse _source fields from MCP tool responses.
+                # MCP tools return content as a list of ContentBlocks:
+                # [{"type": "text", "text": "{...json...}"}]
+                try:
+                    content = msg.content
+                    if isinstance(content, list):
+                        items = content
+                    elif isinstance(content, str):
+                        parsed = json.loads(content)
+                        items = parsed if isinstance(parsed, list) else [parsed]
                     else:
-                        src = item.get("_source")
-                        if src and src not in sources:
-                            sources.append(src)
-            except Exception:
-                pass
+                        items = []
 
-    # Tag LLMObs span
-    tag_agent_run(
-        query_domain=query_domain,
-        tools_called=tools_called,
-    )
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        if item.get("type") == "text" and isinstance(item.get("text"), str):
+                            try:
+                                inner = json.loads(item["text"])
+                                records = inner if isinstance(inner, list) else [inner]
+                            except Exception:
+                                records = []
+                            for record in records:
+                                if isinstance(record, dict):
+                                    src = record.get("_source")
+                                    if src and src not in sources:
+                                        sources.append(src)
+                        else:
+                            src = item.get("_source")
+                            if src and src not in sources:
+                                sources.append(src)
+                except Exception:
+                    pass
 
-    # Schedule async faithfulness scoring (non-blocking)
+        # Annotate while agent_span is still open
+        tag_agent_run(
+            span=agent_span,
+            query=query,
+            answer=answer,
+            query_domain=query_domain,
+            tools_called=tools_called,
+        )
+
+    # Schedule async faithfulness scoring (fire-and-forget, zero added latency)
     schedule_faithfulness_score(
         query=query,
         context_chunks=context_chunks,

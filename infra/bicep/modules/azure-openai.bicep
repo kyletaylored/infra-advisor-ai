@@ -1,8 +1,9 @@
 // azure-openai.bicep — Azure OpenAI account for InfraAdvisor AI
 // SKU: S0 (standard pay-as-you-go)
 // Model deployments:
-//   - gpt-4o              → primary reasoning and synthesis model (LangChain ReAct agent)
-//   - text-embedding-ada-002 → embedding model for Azure AI Search vector indexing
+//   - gpt-4.1-mini          → primary agent LLM (LangChain ReAct, gpt-4.1 family)
+//   - gpt-4.1-nano          → faithfulness evaluator (async background thread, cheap)
+//   - text-embedding-3-small → embedding model for Azure AI Search vector indexing
 
 @description('Azure region for the OpenAI account')
 param location string
@@ -30,11 +31,11 @@ resource openAiAccount 'Microsoft.CognitiveServices/accounts@2024-04-01-preview'
   }
 }
 
-// GPT-4o — primary agent LLM
+// gpt-4.1-mini — primary agent LLM (reasoning + synthesis)
 // capacity unit = thousands of tokens per minute (TPM)
-resource gpt4oDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-04-01-preview' = {
+resource gpt41MiniDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-04-01-preview' = {
   parent: openAiAccount
-  name: 'gpt-4o'
+  name: 'gpt-4.1-mini'
   sku: {
     name: 'Standard'
     capacity: 10
@@ -42,20 +43,42 @@ resource gpt4oDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-
   properties: {
     model: {
       format: 'OpenAI'
-      name: 'gpt-4o'
-      version: '2024-11-20'
+      name: 'gpt-4.1-mini'
+      version: '2025-04-14'
     }
     versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
   }
 }
 
-// text-embedding-ada-002 — vector embedding for RAG pipeline
-// capacity unit = thousands of tokens per minute (TPM)
+// gpt-4.1-nano — faithfulness evaluator (async background thread only)
+// Low capacity — only scores answers, never handles user-facing queries
+resource gpt41NanoDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-04-01-preview' = {
+  parent: openAiAccount
+  name: 'gpt-4.1-nano'
+  dependsOn: [
+    gpt41MiniDeployment
+  ]
+  sku: {
+    name: 'Standard'
+    capacity: 5
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: 'gpt-4.1-nano'
+      version: '2025-04-14'
+    }
+    versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
+  }
+}
+
+// text-embedding-3-small — vector embedding for RAG pipeline
+// Replaces text-embedding-ada-002: better quality, lower cost, same dimensions
 resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-04-01-preview' = {
   parent: openAiAccount
-  name: 'text-embedding-ada-002'
+  name: 'text-embedding-3-small'
   dependsOn: [
-    gpt4oDeployment
+    gpt41NanoDeployment
   ]
   sku: {
     name: 'Standard'
@@ -64,8 +87,8 @@ resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
   properties: {
     model: {
       format: 'OpenAI'
-      name: 'text-embedding-ada-002'
-      version: '2'
+      name: 'text-embedding-3-small'
+      version: '1'
     }
     versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
   }
