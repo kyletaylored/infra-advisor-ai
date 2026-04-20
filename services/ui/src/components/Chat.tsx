@@ -15,8 +15,15 @@ import {
   Textarea,
   VStack,
 } from "@chakra-ui/react";
+import ReactMarkdown from "react-markdown";
 import { BridgeData, Citation, QueryResponse, extractBridgeData, sendQuery } from "../lib/api";
-import { trackBridgeCardRendered, trackQuerySubmitted } from "../lib/datadog-rum";
+import {
+  trackBridgeCardRendered,
+  trackMessageCopied,
+  trackMessageFeedback,
+  trackMessageReported,
+  trackQuerySubmitted,
+} from "../lib/datadog-rum";
 import { BridgeCard } from "./BridgeCard";
 import { CitationPanel } from "./CitationPanel";
 import { QuerySuggestions, Suggestion } from "./QuerySuggestions";
@@ -185,6 +192,171 @@ function AIAvatar() {
   );
 }
 
+// ── Inline SVG icons for action buttons ───────────────────────────────────────
+
+function ThumbUpIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
+      <path d="M6.956 1.745C7.021.81 7.908.087 8.864.325l.261.066c.463.116.874.456 1.012.965.22.816.533 2.511.062 4.51a19.52 19.52 0 0 1 1.365-.122c.485 0 .965.042 1.42.124 1.072.188 1.799 1.27 1.442 2.317-.48 1.4-1.058 2.523-1.602 3.343-1.07 1.603-2.703 1.888-4.218 1.613a15.7 15.7 0 0 1-1.316-.31A4.01 4.01 0 0 1 5.002 14H2.5a.5.5 0 0 1-.5-.5v-6a.5.5 0 0 1 .5-.5h.463c.535 0 1.02-.28 1.316-.75l2.677-4.51z"/>
+    </svg>
+  );
+}
+
+function ThumbDownIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
+      <path d="M6.956 14.534c.065.936.952 1.659 1.908 1.42l.261-.065a1.378 1.378 0 0 0 1.012-.965c.22-.816.533-2.512.062-4.51.205.031.412.05.621.062.285.006.57-.01.848-.048 1.272-.194 2.048-1.221 1.692-2.272-.48-1.399-1.058-2.523-1.601-3.343-1.07-1.604-2.703-1.888-4.218-1.613a15.67 15.67 0 0 0-1.316.31A4.01 4.01 0 0 0 4.999 2H2.5a.5.5 0 0 0-.5.5v6a.5.5 0 0 0 .5.5h.463c.535 0 1.02.279 1.316.75l2.677 4.284z"/>
+    </svg>
+  );
+}
+
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="4" y="4" width="9" height="11" rx="1.5" />
+      <path d="M3 11H2.5A1.5 1.5 0 0 1 1 9.5v-7A1.5 1.5 0 0 1 2.5 1h7A1.5 1.5 0 0 1 11 2.5V3" />
+    </svg>
+  );
+}
+
+function FlagIcon() {
+  return (
+    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2 14V2" />
+      <path d="M2 2h8l-1.5 3L10 8H2" />
+    </svg>
+  );
+}
+
+// ── Per-message action bar (shown below AI messages) ─────────────────────────
+
+interface MessageActionsProps {
+  content: string;
+  domain?: string;
+}
+
+function MessageActions({ content, domain }: MessageActionsProps) {
+  const [copied, setCopied] = useState(false);
+  const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
+
+  function handleCopy() {
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(true);
+      trackMessageCopied(domain);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  function handleFeedback(positive: boolean) {
+    const next = positive ? "up" : "down";
+    if (feedback === next) return;
+    setFeedback(next);
+    trackMessageFeedback(positive, domain);
+  }
+
+  function handleReport() {
+    trackMessageReported(domain);
+    // visual ack could be added here
+  }
+
+  const actionBtnProps = {
+    size: "xs" as const,
+    variant: "ghost" as const,
+    colorPalette: "gray",
+    borderRadius: "md",
+    h: "22px",
+    w: "22px",
+    minW: "22px",
+  };
+
+  return (
+    <HStack gap={0.5} mt={1.5}>
+      <IconButton
+        {...actionBtnProps}
+        aria-label="Helpful"
+        title="Helpful"
+        color={feedback === "up" ? "green.500" : "gray.400"}
+        onClick={() => handleFeedback(true)}
+      >
+        <ThumbUpIcon />
+      </IconButton>
+      <IconButton
+        {...actionBtnProps}
+        aria-label="Not helpful"
+        title="Not helpful"
+        color={feedback === "down" ? "red.500" : "gray.400"}
+        onClick={() => handleFeedback(false)}
+      >
+        <ThumbDownIcon />
+      </IconButton>
+      <IconButton
+        {...actionBtnProps}
+        aria-label={copied ? "Copied!" : "Copy markdown"}
+        title={copied ? "Copied!" : "Copy markdown"}
+        color={copied ? "blue.500" : "gray.400"}
+        onClick={handleCopy}
+      >
+        <CopyIcon />
+      </IconButton>
+      <IconButton
+        {...actionBtnProps}
+        aria-label="Report issue"
+        title="Report issue"
+        color="gray.400"
+        onClick={handleReport}
+      >
+        <FlagIcon />
+      </IconButton>
+    </HStack>
+  );
+}
+
+// ── Markdown renderer for AI responses ───────────────────────────────────────
+
+function MarkdownContent({ content }: { content: string }) {
+  return (
+    <Box
+      fontSize="sm"
+      lineHeight="tall"
+      css={{
+        "& p": { marginBottom: "0.5em" },
+        "& p:last-child": { marginBottom: 0 },
+        "& ul, & ol": { paddingLeft: "1.25em", marginBottom: "0.5em" },
+        "& li": { marginBottom: "0.15em" },
+        "& strong": { fontWeight: 600 },
+        "& h1, & h2, & h3": { fontWeight: 600, marginBottom: "0.4em", marginTop: "0.6em" },
+        "& h1": { fontSize: "1em" },
+        "& h2": { fontSize: "0.95em" },
+        "& h3": { fontSize: "0.9em" },
+        "& code": {
+          fontFamily: "mono",
+          fontSize: "0.85em",
+          background: "var(--chakra-colors-gray-100)",
+          borderRadius: "3px",
+          padding: "0 3px",
+        },
+        "& pre": {
+          background: "var(--chakra-colors-gray-50)",
+          border: "1px solid var(--chakra-colors-gray-200)",
+          borderRadius: "6px",
+          padding: "0.75em",
+          overflowX: "auto",
+          marginBottom: "0.5em",
+        },
+        "& pre code": { background: "none", padding: 0 },
+        "& blockquote": {
+          borderLeft: "3px solid var(--chakra-colors-gray-200)",
+          paddingLeft: "0.75em",
+          color: "var(--chakra-colors-gray-500)",
+          margin: "0.5em 0",
+        },
+      }}
+    >
+      <ReactMarkdown>{content}</ReactMarkdown>
+    </Box>
+  );
+}
+
 export function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
@@ -349,57 +521,64 @@ export function Chat() {
                   >
                     {msg.role === "assistant" && <AIAvatar />}
 
-                    <Box
-                      maxW={{ base: "90%", md: "2xl" }}
-                      bg={msg.role === "user" ? "blue.600" : "white"}
-                      color={msg.role === "user" ? "white" : "gray.800"}
-                      borderRadius={msg.role === "user" ? "2xl" : "0 2xl 2xl 2xl"}
-                      px={4}
-                      py={3}
-                      fontSize="sm"
-                      lineHeight="tall"
-                      boxShadow={msg.role === "assistant" ? "xs" : "none"}
-                      borderWidth={msg.role === "assistant" ? "1px" : 0}
-                      borderColor="gray.200"
-                    >
-                      <Text whiteSpace="pre-wrap">{msg.content}</Text>
+                    <Box maxW={{ base: "90%", md: "2xl" }}>
+                      <Box
+                        bg={msg.role === "user" ? "blue.600" : "white"}
+                        color={msg.role === "user" ? "white" : "gray.800"}
+                        borderRadius={msg.role === "user" ? "2xl" : "0 2xl 2xl 2xl"}
+                        px={4}
+                        py={3}
+                        boxShadow={msg.role === "assistant" ? "xs" : "none"}
+                        borderWidth={msg.role === "assistant" ? "1px" : 0}
+                        borderColor="gray.200"
+                      >
+                        {msg.role === "assistant" ? (
+                          <MarkdownContent content={msg.content} />
+                        ) : (
+                          <Text fontSize="sm" lineHeight="tall" whiteSpace="pre-wrap">{msg.content}</Text>
+                        )}
 
-                      {msg.bridges.length > 0 && (
-                        <VStack mt={3} gap={2} align="stretch">
-                          {msg.bridges.map((b, j) => <BridgeCard key={j} bridge={b} />)}
-                        </VStack>
-                      )}
+                        {msg.bridges.length > 0 && (
+                          <VStack mt={3} gap={2} align="stretch">
+                            {msg.bridges.map((b, j) => <BridgeCard key={j} bridge={b} />)}
+                          </VStack>
+                        )}
 
-                      {msg.sources.length > 0 && (
-                        <>
-                          <Separator my={2.5} borderColor={msg.role === "user" ? "blue.500" : "gray.100"} />
-                          <HStack flexWrap="wrap" gap={1}>
-                            {msg.sources.map((s) => (
-                              <Badge
-                                key={s}
-                                variant="subtle"
-                                colorPalette={msg.role === "user" ? "blue" : "gray"}
-                                fontSize="xs"
-                                borderRadius="full"
-                                px={2}
-                                py={0.5}
-                              >
-                                {TOOL_META[s]?.label ?? s}
-                              </Badge>
-                            ))}
-                          </HStack>
-                        </>
-                      )}
+                        {msg.sources.length > 0 && (
+                          <>
+                            <Separator my={2.5} borderColor={msg.role === "user" ? "blue.500" : "gray.100"} />
+                            <HStack flexWrap="wrap" gap={1}>
+                              {msg.sources.map((s) => (
+                                <Badge
+                                  key={s}
+                                  variant="subtle"
+                                  colorPalette={msg.role === "user" ? "blue" : "gray"}
+                                  fontSize="xs"
+                                  borderRadius="full"
+                                  px={2}
+                                  py={0.5}
+                                >
+                                  {TOOL_META[s]?.label ?? s}
+                                </Badge>
+                              ))}
+                            </HStack>
+                          </>
+                        )}
 
-                      {msg.traceId && (
-                        <Text
-                          mt={1.5}
-                          fontSize="xs"
-                          color={msg.role === "user" ? "blue.300" : "gray.400"}
-                          fontFamily="mono"
-                        >
-                          trace: {msg.traceId}
-                        </Text>
+                        {msg.traceId && (
+                          <Text
+                            mt={1.5}
+                            fontSize="xs"
+                            color={msg.role === "user" ? "blue.300" : "gray.400"}
+                            fontFamily="mono"
+                          >
+                            trace: {msg.traceId}
+                          </Text>
+                        )}
+                      </Box>
+
+                      {msg.role === "assistant" && (
+                        <MessageActions content={msg.content} />
                       )}
                     </Box>
                   </Flex>

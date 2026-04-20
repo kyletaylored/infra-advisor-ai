@@ -62,3 +62,22 @@ export function trackBridgeCardRendered(count: number): void {
     card_count: count,
   });
 }
+
+export function trackMessageFeedback(positive: boolean, domain?: string): void {
+  datadogRum.addAction("message_feedback", {
+    feedback: positive ? "positive" : "negative",
+    domain: domain ?? "unknown",
+  });
+}
+
+export function trackMessageCopied(domain?: string): void {
+  datadogRum.addAction("message_copied", {
+    domain: domain ?? "unknown",
+  });
+}
+
+export function trackMessageReported(domain?: string): void {
+  datadogRum.addAction("message_reported", {
+    domain: domain ?? "unknown",
+  });
+}

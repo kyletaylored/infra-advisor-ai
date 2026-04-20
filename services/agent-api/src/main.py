@@ -123,7 +123,7 @@ async def query(
 
     return QueryResponse(
         answer=result["answer"],
-        sources=result["sources"],
+        sources=result["tools_called"],
         trace_id=current_trace_id(),
         session_id=session_id,
     )
