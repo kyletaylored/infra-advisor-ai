@@ -1,8 +1,7 @@
 // azure-openai.bicep — Azure OpenAI account for InfraAdvisor AI
 // SKU: S0 (standard pay-as-you-go)
 // Model deployments:
-//   - gpt-4.1-mini          → primary agent LLM (LangChain ReAct, gpt-4.1 family)
-//   - gpt-4.1-nano          → faithfulness evaluator (async background thread, cheap)
+//   - gpt-4.1-mini          → agent LLM + faithfulness evaluator
 //   - text-embedding-3-small → embedding model for Azure AI Search vector indexing
 
 @description('Azure region for the OpenAI account')
@@ -50,35 +49,13 @@ resource gpt41MiniDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
   }
 }
 
-// gpt-4.1-nano — faithfulness evaluator (async background thread only)
-// Low capacity — only scores answers, never handles user-facing queries
-resource gpt41NanoDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-04-01-preview' = {
-  parent: openAiAccount
-  name: 'gpt-4.1-nano'
-  dependsOn: [
-    gpt41MiniDeployment
-  ]
-  sku: {
-    name: 'Standard'
-    capacity: 5
-  }
-  properties: {
-    model: {
-      format: 'OpenAI'
-      name: 'gpt-4.1-nano'
-      version: '2025-04-14'
-    }
-    versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
-  }
-}
-
 // text-embedding-3-small — vector embedding for RAG pipeline
 // Replaces text-embedding-ada-002: better quality, lower cost, same dimensions
 resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-04-01-preview' = {
   parent: openAiAccount
   name: 'text-embedding-3-small'
   dependsOn: [
-    gpt41NanoDeployment
+    gpt41MiniDeployment
   ]
   sku: {
     name: 'Standard'

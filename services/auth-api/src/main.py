@@ -170,6 +170,8 @@ def admin_create_user(body: AdminCreateUserRequest, admin: UserOut = Depends(req
 
 @app.delete("/admin/users/{user_id}")
 def admin_delete_user(user_id: str, admin: UserOut = Depends(require_admin)):
+    if user_id == admin.id:
+        raise HTTPException(status_code=403, detail="You cannot delete your own account")
     if not delete_user(user_id):
         raise HTTPException(status_code=404, detail="User not found")
     return {"deleted": True}
@@ -181,6 +183,9 @@ def admin_patch_user(
     body: AdminPatchUserRequest,
     admin: UserOut = Depends(require_admin),
 ):
+    if user_id == admin.id:
+        raise HTTPException(status_code=403, detail="You cannot modify your own account")
+
     if get_user_by_id(user_id) is None:
         raise HTTPException(status_code=404, detail="User not found")
 

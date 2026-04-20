@@ -17,6 +17,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import ReactMarkdown from "react-markdown";
+import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal } from "lucide-react";
 import { BridgeData, Citation, QueryResponse, SuggestionItem, extractBridgeData, fetchSuggestions, sendQuery } from "../lib/api";
 import {
   trackBridgeCardRendered,
@@ -137,15 +138,6 @@ function sourceToCitation(tool: string): Citation {
   };
 }
 
-function SendIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="15" height="15" fill="none"
-      stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round">
-      <path d="M5 12h14m-7-7l7 7-7 7" />
-    </svg>
-  );
-}
-
 // ── Domain tiles shown in the empty state ────────────────────────────────────
 
 const DOMAINS = [
@@ -201,42 +193,6 @@ function AIAvatar() {
   );
 }
 
-// ── Inline SVG icons for action buttons ───────────────────────────────────────
-
-function ThumbUpIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
-      <path d="M6.956 1.745C7.021.81 7.908.087 8.864.325l.261.066c.463.116.874.456 1.012.965.22.816.533 2.511.062 4.51a19.52 19.52 0 0 1 1.365-.122c.485 0 .965.042 1.42.124 1.072.188 1.799 1.27 1.442 2.317-.48 1.4-1.058 2.523-1.602 3.343-1.07 1.603-2.703 1.888-4.218 1.613a15.7 15.7 0 0 1-1.316-.31A4.01 4.01 0 0 1 5.002 14H2.5a.5.5 0 0 1-.5-.5v-6a.5.5 0 0 1 .5-.5h.463c.535 0 1.02-.28 1.316-.75l2.677-4.51z"/>
-    </svg>
-  );
-}
-
-function ThumbDownIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="currentColor">
-      <path d="M6.956 14.534c.065.936.952 1.659 1.908 1.42l.261-.065a1.378 1.378 0 0 0 1.012-.965c.22-.816.533-2.512.062-4.51.205.031.412.05.621.062.285.006.57-.01.848-.048 1.272-.194 2.048-1.221 1.692-2.272-.48-1.399-1.058-2.523-1.601-3.343-1.07-1.604-2.703-1.888-4.218-1.613a15.67 15.67 0 0 0-1.316.31A4.01 4.01 0 0 0 4.999 2H2.5a.5.5 0 0 0-.5.5v6a.5.5 0 0 0 .5.5h.463c.535 0 1.02.279 1.316.75l2.677 4.284z"/>
-    </svg>
-  );
-}
-
-function CopyIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="4" y="4" width="9" height="11" rx="1.5" />
-      <path d="M3 11H2.5A1.5 1.5 0 0 1 1 9.5v-7A1.5 1.5 0 0 1 2.5 1h7A1.5 1.5 0 0 1 11 2.5V3" />
-    </svg>
-  );
-}
-
-function FlagIcon() {
-  return (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M2 14V2" />
-      <path d="M2 2h8l-1.5 3L10 8H2" />
-    </svg>
-  );
-}
-
 // ── Per-message action bar (shown below AI messages) ─────────────────────────
 
 interface MessageActionsProps {
@@ -287,7 +243,7 @@ function MessageActions({ content, domain }: MessageActionsProps) {
         color={feedback === "up" ? "green.500" : "gray.400"}
         onClick={() => handleFeedback(true)}
       >
-        <ThumbUpIcon />
+        <ThumbsUp size={13} />
       </IconButton>
       <IconButton
         {...actionBtnProps}
@@ -296,7 +252,7 @@ function MessageActions({ content, domain }: MessageActionsProps) {
         color={feedback === "down" ? "red.500" : "gray.400"}
         onClick={() => handleFeedback(false)}
       >
-        <ThumbDownIcon />
+        <ThumbsDown size={13} />
       </IconButton>
       <IconButton
         {...actionBtnProps}
@@ -305,7 +261,7 @@ function MessageActions({ content, domain }: MessageActionsProps) {
         color={copied ? "blue.500" : "gray.400"}
         onClick={handleCopy}
       >
-        <CopyIcon />
+        <Copy size={13} />
       </IconButton>
       <IconButton
         {...actionBtnProps}
@@ -314,7 +270,7 @@ function MessageActions({ content, domain }: MessageActionsProps) {
         color="gray.400"
         onClick={handleReport}
       >
-        <FlagIcon />
+        <Flag size={13} />
       </IconButton>
     </HStack>
   );
@@ -725,7 +681,7 @@ export function Chat() {
                   w="42px"
                   flexShrink={0}
                 >
-                  <SendIcon />
+                  <SendHorizontal size={15} />
                 </IconButton>
               </HStack>
               <Text fontSize="xs" color="gray.400" textAlign="center">

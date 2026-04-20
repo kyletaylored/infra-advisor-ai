@@ -92,7 +92,7 @@ async def _compute_faithfulness(
     session_id: str,
     query_domain: str,
 ) -> None:
-    """Faithfulness eval via a lightweight gpt-4.1-nano call.
+    """Faithfulness eval via gpt-4.1-mini.
 
     Runs as a background task (fire-and-forget) — zero added latency for users.
     Uses an explicit LLMObs.llm() span so the eval call appears as a separate
@@ -111,7 +111,7 @@ async def _compute_faithfulness(
             api_version="2025-01-01-preview",
         )
 
-        eval_model = os.environ.get("AZURE_OPENAI_EVAL_DEPLOYMENT", "gpt-4.1-nano")
+        eval_model = os.environ.get("AZURE_OPENAI_EVAL_DEPLOYMENT", "gpt-4.1-mini")
 
         context_text = "\n---\n".join(context_chunks[:5]) if context_chunks else "(no context)"
         user_content = (

@@ -3,6 +3,7 @@ import {
   Badge,
   Box,
   Button,
+  Dialog,
   Flex,
   HStack,
   IconButton,
@@ -12,30 +13,11 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
+import { Trash2, Shield } from "lucide-react";
 import { User, createUser, deleteUser, listUsers, patchUser } from "../lib/auth";
 import { useAuth } from "../hooks/useAuth";
 
-// ── Trash icon ────────────────────────────────────────────────────────────────
-
-function TrashIcon() {
-  return (
-    <svg
-      viewBox="0 0 16 16"
-      width="13"
-      height="13"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.4"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 9a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-9" />
-    </svg>
-  );
-}
-
 // ── Checkbox helper ───────────────────────────────────────────────────────────
-// Using a plain HTML checkbox styled to avoid Chakra v3 Checkbox compound component complexity.
 
 interface NativeCheckboxProps {
   id: string;
@@ -56,12 +38,18 @@ function NativeCheckbox({ id, label, checked, onChange, disabled }: NativeCheckb
         onChange={(e) => onChange(e.target.checked)}
         style={{ width: 14, height: 14, cursor: disabled ? "not-allowed" : "pointer" }}
       />
-      <Text fontSize="sm" color="gray.700" userSelect="none">
-        {label}
-      </Text>
+      <Text fontSize="sm" color="gray.700" userSelect="none">{label}</Text>
     </Box>
   );
 }
+
+// ── Pending action type ───────────────────────────────────────────────────────
+
+type PendingAction =
+  | { kind: "grant-admin"; user: User }
+  | { kind: "revoke-admin"; user: User }
+  | { kind: "delete"; user: User }
+  | null;
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -71,7 +59,7 @@ export function AdminTab() {
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
 
-  // Add user form state
+  // Add user form
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [newIsAdmin, setNewIsAdmin] = useState(false);
@@ -79,17 +67,16 @@ export function AdminTab() {
   const [addError, setAddError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
-  // Per-row action state
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [patchingId, setPatchingId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  // Confirmation dialog
+  const [pendingAction, setPendingAction] = useState<PendingAction>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
 
   async function loadUsers() {
     setLoadingUsers(true);
     setListError(null);
     try {
-      const data = await listUsers();
-      setUsers(data);
+      setUsers(await listUsers());
     } catch (err) {
       setListError(err instanceof Error ? err.message : "Failed to load users");
     } finally {
@@ -97,9 +84,9 @@ export function AdminTab() {
     }
   }
 
-  useEffect(() => {
-    loadUsers();
-  }, []);
+  useEffect(() => { loadUsers(); }, []);
+
+  // ── Add user ──────────────────────────────────────────────────────────────
 
   async function handleAddUser(e: FormEvent) {
     e.preventDefault();
@@ -124,30 +111,70 @@ export function AdminTab() {
     }
   }
 
-  async function handleDelete(id: string) {
-    setDeletingId(id);
-    setActionError(null);
+  // ── Confirmation dialog ───────────────────────────────────────────────────
+
+  function openConfirm(action: PendingAction) {
+    setConfirmError(null);
+    setPendingAction(action);
+  }
+
+  function closeConfirm() {
+    if (confirming) return;
+    setPendingAction(null);
+    setConfirmError(null);
+  }
+
+  async function handleConfirm() {
+    if (!pendingAction) return;
+    setConfirming(true);
+    setConfirmError(null);
     try {
-      await deleteUser(id);
-      setUsers((prev) => prev.filter((u) => u.id !== id));
+      if (pendingAction.kind === "delete") {
+        await deleteUser(pendingAction.user.id);
+        setUsers((prev) => prev.filter((u) => u.id !== pendingAction.user.id));
+      } else {
+        const isAdmin = pendingAction.kind === "grant-admin";
+        const updated = await patchUser(pendingAction.user.id, { is_admin: isAdmin });
+        setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+      }
+      setPendingAction(null);
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Failed to delete user");
+      setConfirmError(err instanceof Error ? err.message : "Action failed");
     } finally {
-      setDeletingId(null);
+      setConfirming(false);
     }
   }
 
-  async function handleToggleAdmin(u: User) {
-    setPatchingId(u.id);
-    setActionError(null);
-    try {
-      const updated = await patchUser(u.id, { is_admin: !u.is_admin });
-      setUsers((prev) => prev.map((x) => (x.id === updated.id ? updated : x)));
-    } catch (err) {
-      setActionError(err instanceof Error ? err.message : "Failed to update user");
-    } finally {
-      setPatchingId(null);
-    }
+  // ── Dialog copy ───────────────────────────────────────────────────────────
+
+  function dialogTitle(): string {
+    if (!pendingAction) return "";
+    const email = pendingAction.user.email;
+    if (pendingAction.kind === "grant-admin") return `Grant admin to ${email}?`;
+    if (pendingAction.kind === "revoke-admin") return `Remove admin from ${email}?`;
+    return `Delete ${email}?`;
+  }
+
+  function dialogBody(): string {
+    if (!pendingAction) return "";
+    const email = pendingAction.user.email;
+    if (pendingAction.kind === "grant-admin")
+      return `${email} will be able to manage all users and access all admin features.`;
+    if (pendingAction.kind === "revoke-admin")
+      return `${email} will lose admin access and be downgraded to a standard user.`;
+    return `The account for ${email} will be permanently deleted. This cannot be undone.`;
+  }
+
+  function dialogConfirmLabel(): string {
+    if (!pendingAction) return "Confirm";
+    if (pendingAction.kind === "grant-admin") return "Grant admin";
+    if (pendingAction.kind === "revoke-admin") return "Remove admin";
+    return "Delete user";
+  }
+
+  function dialogConfirmColor(): string {
+    if (pendingAction?.kind === "grant-admin") return "blue";
+    return "red";
   }
 
   // ── Render ────────────────────────────────────────────────────────────────
@@ -155,35 +182,21 @@ export function AdminTab() {
   return (
     <Box flex={1} overflowY="auto" px={6} py={6}>
       <VStack gap={6} align="stretch" maxW="4xl" mx="auto">
+
         {/* Header */}
         <Box>
-          <Text fontSize="lg" fontWeight="semibold" color="gray.800">
-            User Management
-          </Text>
-          <Text fontSize="sm" color="gray.400" mt={0.5}>
-            Manage user accounts and permissions
-          </Text>
+          <Text fontSize="lg" fontWeight="semibold" color="gray.800">User Management</Text>
+          <Text fontSize="sm" color="gray.400" mt={0.5}>Manage user accounts and permissions</Text>
         </Box>
 
         {/* Add user form */}
-        <Box
-          bg="white"
-          borderWidth="1px"
-          borderColor="gray.200"
-          borderRadius="xl"
-          p={5}
-          boxShadow="xs"
-        >
-          <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={4}>
-            Add user
-          </Text>
+        <Box bg="white" borderWidth="1px" borderColor="gray.200" borderRadius="xl" p={5} boxShadow="xs">
+          <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={4}>Add user</Text>
           <form onSubmit={handleAddUser}>
             <VStack gap={3} align="stretch">
               <HStack gap={3} align="flex-end">
                 <Box flex={1}>
-                  <Text fontSize="xs" fontWeight="medium" color="gray.600" mb={1}>
-                    Email
-                  </Text>
+                  <Text fontSize="xs" fontWeight="medium" color="gray.600" mb={1}>Email</Text>
                   <Input
                     type="email"
                     value={newEmail}
@@ -194,16 +207,11 @@ export function AdminTab() {
                     fontSize="sm"
                     borderRadius="lg"
                     borderColor="gray.300"
-                    _focus={{
-                      borderColor: "blue.500",
-                      boxShadow: "0 0 0 1px var(--chakra-colors-blue-500)",
-                    }}
+                    _focus={{ borderColor: "blue.500", boxShadow: "0 0 0 1px var(--chakra-colors-blue-500)" }}
                   />
                 </Box>
                 <Box flex={1}>
-                  <Text fontSize="xs" fontWeight="medium" color="gray.600" mb={1}>
-                    Password
-                  </Text>
+                  <Text fontSize="xs" fontWeight="medium" color="gray.600" mb={1}>Password</Text>
                   <Input
                     type="password"
                     value={newPassword}
@@ -214,50 +222,22 @@ export function AdminTab() {
                     fontSize="sm"
                     borderRadius="lg"
                     borderColor="gray.300"
-                    _focus={{
-                      borderColor: "blue.500",
-                      boxShadow: "0 0 0 1px var(--chakra-colors-blue-500)",
-                    }}
+                    _focus={{ borderColor: "blue.500", boxShadow: "0 0 0 1px var(--chakra-colors-blue-500)" }}
                   />
                 </Box>
               </HStack>
-
               <HStack gap={6}>
-                <NativeCheckbox
-                  id="new-is-admin"
-                  label="Admin"
-                  checked={newIsAdmin}
-                  onChange={setNewIsAdmin}
-                  disabled={adding}
-                />
-                <NativeCheckbox
-                  id="new-is-service"
-                  label="Service account"
-                  checked={newIsService}
-                  onChange={setNewIsService}
-                  disabled={adding}
-                />
+                <NativeCheckbox id="new-is-admin" label="Admin" checked={newIsAdmin}
+                  onChange={setNewIsAdmin} disabled={adding} />
+                <NativeCheckbox id="new-is-service" label="Service account" checked={newIsService}
+                  onChange={setNewIsService} disabled={adding} />
                 <Text fontSize="xs" color="gray.400">
-                  {newIsService
-                    ? "Service accounts may use any email domain."
-                    : "Regular accounts require @datadoghq.com."}
+                  {newIsService ? "Service accounts may use any email domain." : "Regular accounts require @datadoghq.com."}
                 </Text>
               </HStack>
-
-              {addError && (
-                <Text fontSize="sm" color="red.500">
-                  {addError}
-                </Text>
-              )}
-
+              {addError && <Text fontSize="sm" color="red.500">{addError}</Text>}
               <Box>
-                <Button
-                  type="submit"
-                  colorPalette="blue"
-                  size="sm"
-                  borderRadius="lg"
-                  disabled={adding}
-                >
+                <Button type="submit" colorPalette="blue" size="sm" borderRadius="lg" disabled={adding}>
                   {adding ? <Spinner size="xs" /> : "Add user"}
                 </Button>
               </Box>
@@ -265,89 +245,24 @@ export function AdminTab() {
           </form>
         </Box>
 
-        {/* Action error */}
-        {actionError && (
-          <Flex
-            bg="red.50"
-            borderWidth="1px"
-            borderColor="red.200"
-            borderRadius="lg"
-            px={4}
-            py={3}
-            justify="space-between"
-            align="center"
-          >
-            <Text fontSize="sm" color="red.700">
-              {actionError}
-            </Text>
-            <Button
-              size="xs"
-              variant="ghost"
-              colorPalette="red"
-              onClick={() => setActionError(null)}
-            >
-              Dismiss
-            </Button>
-          </Flex>
-        )}
-
         {/* Users table */}
-        <Box
-          bg="white"
-          borderWidth="1px"
-          borderColor="gray.200"
-          borderRadius="xl"
-          boxShadow="xs"
-          overflow="hidden"
-        >
+        <Box bg="white" borderWidth="1px" borderColor="gray.200" borderRadius="xl" boxShadow="xs" overflow="hidden">
           {loadingUsers ? (
-            <Flex justify="center" align="center" py={10}>
-              <Spinner size="sm" color="blue.500" />
-            </Flex>
+            <Flex justify="center" align="center" py={10}><Spinner size="sm" color="blue.500" /></Flex>
           ) : listError ? (
             <Flex justify="center" align="center" py={10}>
-              <Text fontSize="sm" color="red.500">
-                {listError}
-              </Text>
+              <Text fontSize="sm" color="red.500">{listError}</Text>
             </Flex>
           ) : (
             <Table.Root size="sm">
               <Table.Header>
                 <Table.Row bg="gray.50">
-                  <Table.ColumnHeader
-                    fontSize="xs"
-                    fontWeight="semibold"
-                    color="gray.500"
-                    textTransform="uppercase"
-                    letterSpacing="wider"
-                    py={3}
-                    px={4}
-                  >
-                    Email
-                  </Table.ColumnHeader>
-                  <Table.ColumnHeader
-                    fontSize="xs"
-                    fontWeight="semibold"
-                    color="gray.500"
-                    textTransform="uppercase"
-                    letterSpacing="wider"
-                    py={3}
-                    px={4}
-                  >
-                    Roles
-                  </Table.ColumnHeader>
-                  <Table.ColumnHeader
-                    fontSize="xs"
-                    fontWeight="semibold"
-                    color="gray.500"
-                    textTransform="uppercase"
-                    letterSpacing="wider"
-                    py={3}
-                    px={4}
-                  >
-                    Created
-                  </Table.ColumnHeader>
-                  <Table.ColumnHeader py={3} px={4} w="48px" />
+                  {["Email", "Roles", "Created", "Actions"].map((h) => (
+                    <Table.ColumnHeader key={h} fontSize="xs" fontWeight="semibold" color="gray.500"
+                      textTransform="uppercase" letterSpacing="wider" py={3} px={4}>
+                      {h}
+                    </Table.ColumnHeader>
+                  ))}
                 </Table.Row>
               </Table.Header>
               <Table.Body>
@@ -359,100 +274,96 @@ export function AdminTab() {
                   </Table.Row>
                 ) : (
                   users.map((u) => {
-                    const isCurrentUser = u.id === currentUser?.id;
-                    const isPatching = patchingId === u.id;
-                    const isDeleting = deletingId === u.id;
-
+                    const isSelf = u.id === currentUser?.id;
                     return (
-                      <Table.Row
-                        key={u.id}
-                        _hover={{ bg: isCurrentUser ? undefined : "gray.50" }}
-                        cursor={isCurrentUser ? "default" : isPatching ? "wait" : "pointer"}
-                        onClick={() => !isCurrentUser && !isPatching && handleToggleAdmin(u)}
-                        title={isCurrentUser ? "Cannot change your own admin role" : "Click to toggle admin role"}
-                      >
+                      <Table.Row key={u.id} _hover={{ bg: "gray.50" }}>
+
+                        {/* Email */}
                         <Table.Cell px={4} py={3}>
                           <HStack gap={2}>
-                            <Text fontSize="sm" color="gray.800">
-                              {u.email}
-                            </Text>
-                            {isCurrentUser && (
-                              <Badge
-                                colorPalette="blue"
-                                variant="subtle"
-                                fontSize="2xs"
-                                borderRadius="full"
-                                px={1.5}
-                              >
+                            <Text fontSize="sm" color="gray.800">{u.email}</Text>
+                            {isSelf && (
+                              <Badge colorPalette="blue" variant="subtle" fontSize="2xs" borderRadius="full" px={1.5}>
                                 you
                               </Badge>
                             )}
                           </HStack>
                         </Table.Cell>
+
+                        {/* Roles */}
                         <Table.Cell px={4} py={3}>
                           <HStack gap={1.5}>
-                            {isPatching ? (
-                              <Spinner size="xs" color="blue.400" />
-                            ) : (
-                              <>
-                                {u.is_admin && (
-                                  <Badge
-                                    colorPalette="purple"
-                                    variant="subtle"
-                                    fontSize="xs"
-                                    borderRadius="full"
-                                    px={2}
-                                  >
-                                    Admin
-                                  </Badge>
-                                )}
-                                {u.is_service_account && (
-                                  <Badge
-                                    colorPalette="orange"
-                                    variant="subtle"
-                                    fontSize="xs"
-                                    borderRadius="full"
-                                    px={2}
-                                  >
-                                    Service
-                                  </Badge>
-                                )}
-                                {!u.is_admin && !u.is_service_account && (
-                                  <Text fontSize="xs" color="gray.400">
-                                    User
-                                  </Text>
-                                )}
-                              </>
+                            {u.is_admin && (
+                              <Badge colorPalette="purple" variant="subtle" fontSize="xs" borderRadius="full" px={2}>
+                                Admin
+                              </Badge>
+                            )}
+                            {u.is_service_account && (
+                              <Badge colorPalette="orange" variant="subtle" fontSize="xs" borderRadius="full" px={2}>
+                                Service
+                              </Badge>
+                            )}
+                            {!u.is_admin && !u.is_service_account && (
+                              <Text fontSize="xs" color="gray.400">User</Text>
                             )}
                           </HStack>
                         </Table.Cell>
+
+                        {/* Created */}
                         <Table.Cell px={4} py={3}>
                           <Text fontSize="xs" color="gray.400">
                             {new Date(u.created_at).toLocaleDateString(undefined, {
-                              year: "numeric",
-                              month: "short",
-                              day: "numeric",
+                              year: "numeric", month: "short", day: "numeric",
                             })}
                           </Text>
                         </Table.Cell>
-                        <Table.Cell
-                          px={4}
-                          py={3}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <IconButton
-                            size="xs"
-                            variant="ghost"
-                            colorPalette="red"
-                            borderRadius="md"
-                            aria-label={`Delete ${u.email}`}
-                            title={isCurrentUser ? "Cannot delete your own account" : `Delete ${u.email}`}
-                            disabled={isCurrentUser || isDeleting || isPatching}
-                            onClick={() => handleDelete(u.id)}
-                          >
-                            {isDeleting ? <Spinner size="xs" /> : <TrashIcon />}
-                          </IconButton>
+
+                        {/* Actions */}
+                        <Table.Cell px={4} py={3}>
+                          <HStack gap={1}>
+                            {/* Admin toggle */}
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              colorPalette={u.is_admin ? "orange" : "purple"}
+                              borderRadius="md"
+                              gap={1}
+                              disabled={isSelf}
+                              title={
+                                isSelf
+                                  ? "You cannot change your own admin role"
+                                  : u.is_admin
+                                  ? "Remove admin role"
+                                  : "Grant admin role"
+                              }
+                              onClick={() =>
+                                openConfirm(
+                                  u.is_admin
+                                    ? { kind: "revoke-admin", user: u }
+                                    : { kind: "grant-admin", user: u }
+                                )
+                              }
+                            >
+                              <Shield size={13} />
+                              {u.is_admin ? "Revoke" : "Grant"}
+                            </Button>
+
+                            {/* Delete */}
+                            <IconButton
+                              size="xs"
+                              variant="ghost"
+                              colorPalette="red"
+                              borderRadius="md"
+                              aria-label={`Delete ${u.email}`}
+                              title={isSelf ? "You cannot delete your own account" : `Delete ${u.email}`}
+                              disabled={isSelf}
+                              onClick={() => openConfirm({ kind: "delete", user: u })}
+                            >
+                              <Trash2 size={13} />
+                            </IconButton>
+                          </HStack>
                         </Table.Cell>
+
                       </Table.Row>
                     );
                   })
@@ -463,9 +374,52 @@ export function AdminTab() {
         </Box>
 
         <Text fontSize="xs" color="gray.400" textAlign="center">
-          Click any user row to toggle admin role. Your own account cannot be modified.
+          Use the action buttons to manage roles and accounts. Your own account cannot be modified.
         </Text>
       </VStack>
+
+      {/* Confirmation dialog */}
+      <Dialog.Root open={pendingAction !== null} onOpenChange={(e) => !e.open && closeConfirm()}>
+        <Dialog.Backdrop />
+        <Dialog.Positioner>
+          <Dialog.Content borderRadius="xl" maxW="sm" mx={4}>
+            <Dialog.Header px={6} pt={6} pb={2}>
+              <Dialog.Title fontSize="md" fontWeight="semibold" color="gray.800">
+                {dialogTitle()}
+              </Dialog.Title>
+            </Dialog.Header>
+
+            <Dialog.Body px={6} py={3}>
+              <Text fontSize="sm" color="gray.600">{dialogBody()}</Text>
+              {confirmError && (
+                <Text fontSize="sm" color="red.500" mt={3}>{confirmError}</Text>
+              )}
+            </Dialog.Body>
+
+            <Dialog.Footer px={6} pb={6} pt={4} gap={3}>
+              <Button
+                size="sm"
+                variant="ghost"
+                colorPalette="gray"
+                borderRadius="lg"
+                disabled={confirming}
+                onClick={closeConfirm}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                colorPalette={dialogConfirmColor()}
+                borderRadius="lg"
+                disabled={confirming}
+                onClick={handleConfirm}
+              >
+                {confirming ? <Spinner size="xs" /> : dialogConfirmLabel()}
+              </Button>
+            </Dialog.Footer>
+          </Dialog.Content>
+        </Dialog.Positioner>
+      </Dialog.Root>
     </Box>
   );
 }

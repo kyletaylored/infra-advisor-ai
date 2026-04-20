@@ -11,3 +11,5 @@ data:
   DD_AGENT_HOST: "datadog-agent.datadog.svc.cluster.local"
   DD_TRACE_AGENT_PORT: "8126"
   DD_LOGS_INJECTION: "true"
+  DD_CODE_ORIGIN_FOR_SPANS_ENABLED: "true"
+  DD_DBM_PROPAGATION_MODE: "full"
