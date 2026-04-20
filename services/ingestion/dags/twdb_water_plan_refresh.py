@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-RAW_CONTAINER = "infra-advisor-raw"
+RAW_CONTAINER = "raw-data"
 
 # TWDB planning regions A–P
 TWDB_REGIONS = list("ABCDEFGHIJKLMNOP")

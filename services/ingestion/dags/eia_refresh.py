@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 EIA_API_URL = "https://api.eia.gov/v2/electricity/electric-power-operational-data/data/"
 SOUTHEASTERN_STATES = ["FL", "GA", "AL", "MS", "LA", "TX", "AR", "TN", "SC", "NC", "VA"]
-RAW_CONTAINER = "infra-advisor-raw"
+RAW_CONTAINER = "raw-data"
 PAGE_SIZE = 5000
 
 # ---------------------------------------------------------------------------

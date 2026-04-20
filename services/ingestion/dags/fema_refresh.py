@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 FEMA_API_URL = "https://www.fema.gov/api/open/v2/DisasterDeclarationsSummaries"
 FILTER_DATE_FROM = "2010-01-01T00:00:00.000Z"
 PAGE_SIZE = 1000
-RAW_CONTAINER = "infra-advisor-raw"
+RAW_CONTAINER = "raw-data"
 
 # ---------------------------------------------------------------------------
 # DAG definition

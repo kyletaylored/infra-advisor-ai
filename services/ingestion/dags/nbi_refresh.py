@@ -45,7 +45,7 @@ NBI_FIELDS = ",".join([
 ])
 STATE_CODE_TX = "48"
 PAGE_SIZE = 2000
-RAW_CONTAINER = "infra-advisor-raw"
+RAW_CONTAINER = "raw-data"
 CHUNK_SIZE = 500  # characters per text chunk
 
 CONDITION_LABELS = {
