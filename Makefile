@@ -244,11 +244,18 @@ apply-datadog-agent: ## Apply DatadogAgent CR from datadog/datadog-agent.yaml
 upgrade-airflow: ## Upgrade Airflow Helm release from k8s/airflow/values.yaml
 	helm repo add apache-airflow https://airflow.apache.org || true
 	helm repo update
+	@STATUS=$$(helm status airflow -n airflow -o json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['status'])" 2>/dev/null || echo "not-found"); \
+	if [ "$$STATUS" = "pending-install" ] || [ "$$STATUS" = "pending-upgrade" ] || [ "$$STATUS" = "pending-rollback" ]; then \
+		echo "Release stuck in $$STATUS — rolling back to clear the lock"; \
+		helm rollback airflow 0 --namespace airflow || true; \
+	fi
 	helm upgrade airflow apache-airflow/airflow \
 		--namespace airflow \
 		--values k8s/airflow/values.yaml \
 		--timeout 10m \
-		--wait
+		--wait \
+		--cleanup-on-fail \
+		--atomic
 	@echo "✓ Airflow upgraded"
 
 # ─── Tests ────────────────────────────────────────────────────────────────────

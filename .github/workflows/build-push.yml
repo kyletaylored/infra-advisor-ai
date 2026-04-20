@@ -255,11 +255,19 @@ jobs:
 
       - name: Helm upgrade Airflow
         run: |
+          # Roll back any stuck pending release before upgrading.
+          STATUS=$(helm status airflow -n airflow -o json 2>/dev/null | jq -r '.info.status' || echo "not-found")
+          if [[ "$STATUS" == "pending-install" || "$STATUS" == "pending-upgrade" || "$STATUS" == "pending-rollback" ]]; then
+            echo "Release is stuck in $STATUS — rolling back to clear the lock"
+            helm rollback airflow 0 --namespace airflow || true
+          fi
           helm upgrade airflow apache-airflow/airflow \
             --namespace airflow \
             --values k8s/airflow/values.yaml \
             --timeout 10m \
-            --wait
+            --wait \
+            --cleanup-on-fail \
+            --atomic
 
   # ── Apply DatadogAgent CR (datadog/datadog-agent.yaml changes) ─────────────
   apply-datadog-agent:
