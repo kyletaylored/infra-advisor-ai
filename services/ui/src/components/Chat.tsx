@@ -455,16 +455,7 @@ export function Chat() {
         flexShrink={0}
       >
         <HStack gap={3}>
-          <Flex
-            w={8} h={8}
-            bg="blue.600"
-            borderRadius="lg"
-            align="center"
-            justify="center"
-            flexShrink={0}
-          >
-            <Text fontSize="xs" fontWeight="bold" color="white" letterSpacing="tight">IA</Text>
-          </Flex>
+          <img src="/favicon.svg" width={32} height={32} alt="InfraAdvisor AI" style={{ flexShrink: 0 }} />
           <Box>
             <Text fontWeight="semibold" color="gray.800" fontSize="sm" lineHeight="shorter">
               InfraAdvisor AI
