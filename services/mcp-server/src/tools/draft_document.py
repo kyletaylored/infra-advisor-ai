@@ -40,7 +40,7 @@ class DraftDocumentInput(BaseModel):
         "cost_estimate_scaffold",
         "funding_positioning_memo",
     ]
-    context: dict[str, Any]
+    context: dict[str, Any] = {}
     project_name: str | None = None
     client_name: str | None = None
     notes: str | None = None

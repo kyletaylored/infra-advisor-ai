@@ -18,6 +18,9 @@ dependencies = [
     # ddtrace 4.x bundles all integrations — no separate extras needed
     "ddtrace>=4.7.1",
     "httpx>=0.28.1",
+    "pypdf>=5.0.0",
+    "beautifulsoup4>=4.12.3",
+    "lxml>=5.3.0",
 ]
 
 [project.optional-dependencies]
