@@ -71,10 +71,10 @@ resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
   }
 }
 
-// gpt-4.5-mini — mid-tier agent option
-resource gpt45MiniDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-04-01-preview' = {
+// gpt-4o-mini — mid-tier agent option
+resource gpt4oMiniDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-04-01-preview' = {
   parent: openAiAccount
-  name: 'gpt-4.5-mini'
+  name: 'gpt-4o-mini'
   dependsOn: [
     embeddingDeployment
   ]
@@ -85,8 +85,8 @@ resource gpt45MiniDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
   properties: {
     model: {
       format: 'OpenAI'
-      name: 'gpt-4.5-mini'
-      version: '2025-04-14'
+      name: 'gpt-4o-mini'
+      version: '2024-07-18'
     }
     versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
   }
@@ -97,7 +97,7 @@ resource gpt41Deployment 'Microsoft.CognitiveServices/accounts/deployments@2024-
   parent: openAiAccount
   name: 'gpt-4.1'
   dependsOn: [
-    gpt45MiniDeployment
+    gpt4oMiniDeployment
   ]
   sku: {
     name: 'Standard'
