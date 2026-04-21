@@ -173,6 +173,34 @@ async def _compute_faithfulness(
         logger.warning("faithfulness scoring failed (non-fatal): %s", exc)
 
 
+def submit_user_feedback(
+    trace_id: str,
+    span_id: str,
+    rating: str,
+    session_id: str | None = None,
+) -> None:
+    """Submit a user feedback evaluation to Datadog LLM Observability.
+
+    Attaches a categorical `user_feedback` evaluation to the LLM span identified
+    by the given trace/span IDs.  `rating` must be one of: positive, negative, reported.
+    """
+    try:
+        tags: dict[str, str] = {}
+        if session_id:
+            tags["session.id"] = session_id
+
+        LLMObs.submit_evaluation(
+            span_context={"trace_id": trace_id, "span_id": span_id},
+            label="user_feedback",
+            metric_type="categorical",
+            value=rating,
+            tags=tags,
+        )
+        logger.info("user_feedback submitted trace_id=%s rating=%s", trace_id, rating)
+    except Exception as exc:
+        logger.warning("submit_user_feedback failed (non-fatal): %s", exc)
+
+
 def schedule_faithfulness_score(
     query: str,
     context_chunks: list[str],

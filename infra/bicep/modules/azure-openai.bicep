@@ -71,6 +71,48 @@ resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2
   }
 }
 
+// gpt-4.5-mini — mid-tier agent option
+resource gpt45MiniDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-04-01-preview' = {
+  parent: openAiAccount
+  name: 'gpt-4.5-mini'
+  dependsOn: [
+    embeddingDeployment
+  ]
+  sku: {
+    name: 'Standard'
+    capacity: 10
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: 'gpt-4.5-mini'
+      version: '2025-04-14'
+    }
+    versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
+  }
+}
+
+// gpt-4.1 — full-capability agent option
+resource gpt41Deployment 'Microsoft.CognitiveServices/accounts/deployments@2024-04-01-preview' = {
+  parent: openAiAccount
+  name: 'gpt-4.1'
+  dependsOn: [
+    gpt45MiniDeployment
+  ]
+  sku: {
+    name: 'Standard'
+    capacity: 10
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: 'gpt-4.1'
+      version: '2025-04-14'
+    }
+    versionUpgradeOption: 'OnceNewDefaultVersionAvailable'
+  }
+}
+
 @description('Azure OpenAI account name')
 output openAiName string = openAiAccount.name
 

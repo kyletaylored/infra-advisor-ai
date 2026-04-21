@@ -97,3 +97,29 @@ def history_to_langchain_messages(history: list[dict[str, str]]) -> list[Any]:
         elif role == "ai":
             messages.append(AIMessage(content=content))
     return messages
+
+
+_MODEL_SUFFIX = "model"
+_DEFAULT_MODEL = "gpt-4.1-mini"
+
+
+def get_session_model(session_id: str) -> str:
+    """Return the last-used deployment name for this session, or the default."""
+    key = f"{_SESSION_PREFIX}:{session_id}:{_MODEL_SUFFIX}"
+    try:
+        client = _redis_client()
+        val = client.get(key)
+        return val if val else _DEFAULT_MODEL
+    except Exception as exc:
+        logger.warning("get_session_model failed for session=%s: %s", session_id, exc)
+        return _DEFAULT_MODEL
+
+
+def set_session_model(session_id: str, model: str) -> None:
+    """Persist the chosen deployment name for this session (same TTL as history)."""
+    key = f"{_SESSION_PREFIX}:{session_id}:{_MODEL_SUFFIX}"
+    try:
+        client = _redis_client()
+        client.setex(key, _SESSION_TTL, model)
+    except Exception as exc:
+        logger.warning("set_session_model failed for session=%s: %s", session_id, exc)

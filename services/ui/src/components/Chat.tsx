@@ -19,7 +19,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Landmark, CloudLightning, Zap, Droplets, Compass } from "lucide-react";
 import { hasSeenTour, startTour } from "../lib/tour";
-import { BridgeData, Citation, QueryResponse, SuggestionItem, extractBridgeData, fetchSuggestions, sendQuery } from "../lib/api";
+import { BridgeData, Citation, FeedbackRating, ModelsResponse, QueryResponse, SuggestionItem, extractBridgeData, fetchModels, fetchSuggestions, sendQuery, submitFeedback } from "../lib/api";
 import {
   trackBridgeCardRendered,
   trackMessageCopied,
@@ -47,6 +47,7 @@ interface Message {
   citations: Citation[];
   bridges: BridgeData[];
   traceId?: string | null;
+  spanId?: string | null;
 }
 
 const TOOL_META: Record<string, { label: string; document_type: string; description: string }> = {
@@ -236,9 +237,11 @@ function AIAvatar() {
 interface MessageActionsProps {
   content: string;
   domain?: string;
+  traceId?: string | null;
+  spanId?: string | null;
 }
 
-function MessageActions({ content, domain }: MessageActionsProps) {
+function MessageActions({ content, domain, traceId, spanId }: MessageActionsProps) {
   const [copied, setCopied] = useState(false);
   const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
 
@@ -255,11 +258,17 @@ function MessageActions({ content, domain }: MessageActionsProps) {
     if (feedback === next) return;
     setFeedback(next);
     trackMessageFeedback(positive, domain);
+    if (traceId && spanId) {
+      const rating: FeedbackRating = positive ? "positive" : "negative";
+      submitFeedback(traceId, spanId, rating);
+    }
   }
 
   function handleReport() {
     trackMessageReported(domain);
-    // visual ack could be added here
+    if (traceId && spanId) {
+      submitFeedback(traceId, spanId, "reported");
+    }
   }
 
   const actionBtnProps = {
@@ -369,6 +378,8 @@ export function Chat() {
   const [error, setError] = useState<string | null>(null);
   const [activeCitations, setActiveCitations] = useState<Citation[]>([]);
   const [recommendations, setRecommendations] = useState<Suggestion[]>(INITIAL_SUGGESTIONS);
+  const [availableModels, setAvailableModels] = useState<string[]>(["gpt-4.1-mini"]);
+  const [selectedModel, setSelectedModel] = useState<string>("gpt-4.1-mini");
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -385,6 +396,13 @@ export function Chat() {
     }
   }, []);
 
+  useEffect(() => {
+    fetchModels().then((data) => {
+      setAvailableModels(data.models);
+      setSelectedModel(data.default);
+    });
+  }, []);
+
   // Core submit logic — accepts query directly so pills can auto-submit without
   // relying on `input` state (avoids React batching issues).
   async function submit(query: string) {
@@ -399,7 +417,7 @@ export function Chat() {
     trackQuerySubmitted(query.length);
 
     try {
-      const resp: QueryResponse = await sendQuery(query);
+      const resp: QueryResponse = await sendQuery(query, selectedModel);
       const bridges = extractBridgeData(resp.answer);
       if (bridges.length > 0) trackBridgeCardRendered(bridges.length);
 
@@ -411,9 +429,11 @@ export function Chat() {
         citations,
         bridges,
         traceId: resp.trace_id,
+        spanId: resp.span_id,
       };
       setMessages((prev) => [...prev, aiMessage]);
       setActiveCitations(aiMessage.citations);
+      if (resp.model && resp.model !== selectedModel) setSelectedModel(resp.model);
       // Show static domain follow-ups immediately, then upgrade to LLM-generated ones
       setRecommendations(getFollowUpSuggestions(resp.sources));
       fetchSuggestions(query, resp.answer, resp.sources)
@@ -661,7 +681,11 @@ export function Chat() {
                       </Box>
 
                       {msg.role === "assistant" && (
-                        <MessageActions content={msg.content} />
+                        <MessageActions
+                          content={msg.content}
+                          traceId={msg.traceId}
+                          spanId={msg.spanId}
+                        />
                       )}
                     </Box>
                   </Flex>
@@ -713,6 +737,29 @@ export function Chat() {
               <Box data-tour="recommendations">
                 <QuerySuggestions suggestions={recommendations} onSelect={handleSuggestionSelect} disabled={loading} />
               </Box>
+              <HStack gap={2} justify="flex-end">
+                <Text fontSize="10px" color="gray.400" fontFamily="mono" letterSpacing="wide" textTransform="uppercase">Model</Text>
+                <HStack gap={0.5} bg="gray.100" borderRadius="md" p="2px">
+                  {availableModels.map((m) => (
+                    <Button
+                      key={m}
+                      size="xs"
+                      variant={selectedModel === m ? "solid" : "ghost"}
+                      colorPalette={selectedModel === m ? "blue" : "gray"}
+                      borderRadius="sm"
+                      h="20px"
+                      px={2}
+                      fontSize="10px"
+                      fontFamily="mono"
+                      fontWeight={selectedModel === m ? "semibold" : "normal"}
+                      onClick={() => setSelectedModel(m)}
+                      disabled={loading}
+                    >
+                      {m}
+                    </Button>
+                  ))}
+                </HStack>
+              </HStack>
               <HStack as="form" onSubmit={handleSubmit} gap={2} align="flex-end">
                 <Textarea
                   ref={inputRef}

@@ -4,7 +4,9 @@ export interface QueryResponse {
   answer: string;
   sources: string[];
   trace_id: string | null;
+  span_id: string | null;
   session_id: string;
+  model: string;
 }
 
 export interface Citation {
@@ -37,14 +39,14 @@ function getSessionId(): string {
   return _sessionId;
 }
 
-export async function sendQuery(query: string): Promise<QueryResponse> {
+export async function sendQuery(query: string, model?: string): Promise<QueryResponse> {
   const response = await fetch(`${AGENT_API_BASE}/query`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-Session-ID": getSessionId(),
     },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ query, ...(model ? { model } : {}) }),
   });
 
   if (!response.ok) {
@@ -104,4 +106,42 @@ export async function clearSession(): Promise<void> {
  */
 export function extractBridgeData(_answer: string): BridgeData[] {
   return [];
+}
+
+export interface ModelsResponse {
+  models: string[];
+  default: string;
+}
+
+export async function fetchModels(): Promise<ModelsResponse> {
+  try {
+    const response = await fetch(`${AGENT_API_BASE}/models`);
+    if (!response.ok) return { models: ["gpt-4.1-mini"], default: "gpt-4.1-mini" };
+    return await response.json();
+  } catch {
+    return { models: ["gpt-4.1-mini"], default: "gpt-4.1-mini" };
+  }
+}
+
+export type FeedbackRating = "positive" | "negative" | "reported";
+
+export async function submitFeedback(
+  traceId: string,
+  spanId: string,
+  rating: FeedbackRating,
+): Promise<void> {
+  try {
+    await fetch(`${AGENT_API_BASE}/feedback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        trace_id: traceId,
+        span_id: spanId,
+        rating,
+        session_id: getSessionId(),
+      }),
+    });
+  } catch {
+    // fire-and-forget — feedback failures are non-fatal
+  }
 }

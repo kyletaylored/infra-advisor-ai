@@ -16,9 +16,9 @@ from pydantic import BaseModel
 
 from agent import build_llm, build_mcp_client, run_agent
 from kafka_consumer import start_consumer_thread
-from memory import append_exchange, clear_session
-from observability.llm_obs import enable_llm_obs
-from observability.tracing import current_trace_id
+from memory import append_exchange, clear_session, get_session_model, set_session_model
+from observability.llm_obs import enable_llm_obs, submit_user_feedback
+from observability.tracing import current_span_id, current_trace_id
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -32,11 +32,12 @@ _mcp_client = None
 _llm = None
 _mcp_connected = False
 _llm_connected = False
+_AVAILABLE_MODELS: list[str] = []
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _mcp_client, _llm, _mcp_connected, _llm_connected
+    global _mcp_client, _llm, _mcp_connected, _llm_connected, _AVAILABLE_MODELS
 
     # Enable LLM Observability before any LLM calls
     enable_llm_obs()
@@ -62,6 +63,12 @@ async def lifespan(app: FastAPI):
     except Exception as exc:
         logger.warning("LLM client failed to initialize: %s", exc)
         _llm_connected = False
+
+    # Parse available model list from env
+    raw_models = os.environ.get("AVAILABLE_MODELS", "gpt-4.1-mini")
+    _AVAILABLE_MODELS.extend(m.strip() for m in raw_models.split(",") if m.strip())
+    if not _AVAILABLE_MODELS:
+        _AVAILABLE_MODELS.append("gpt-4.1-mini")
 
     # Start Kafka consumer background thread (non-fatal if Kafka unavailable)
     if _mcp_client and _llm:
@@ -89,13 +96,16 @@ app = FastAPI(
 class QueryRequest(BaseModel):
     query: str
     session_id: str | None = None
+    model: str | None = None
 
 
 class QueryResponse(BaseModel):
     answer: str
     sources: list[str]
     trace_id: str | None
+    span_id: str | None
     session_id: str
+    model: str
 
 
 class SuggestionsRequest(BaseModel):
@@ -180,13 +190,18 @@ def _parse_suggestions(text: str) -> list[SuggestionItem]:
 # ─── Endpoints ────────────────────────────────────────────────────────────────
 
 
+@app.get("/models")
+async def list_models() -> dict:
+    """Return the list of available Azure OpenAI deployment names."""
+    return {"models": _AVAILABLE_MODELS, "default": _AVAILABLE_MODELS[0] if _AVAILABLE_MODELS else "gpt-4.1-mini"}
+
+
 @app.post("/query", response_model=QueryResponse)
 async def query(
     body: QueryRequest,
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
 ) -> QueryResponse:
     """Run the InfraAdvisor agent against a user query."""
-    # Resolve session ID: header > body > generate new
     session_id = x_session_id or body.session_id or str(uuid.uuid4())
 
     if not _mcp_client or not _llm:
@@ -195,21 +210,31 @@ async def query(
             detail="Agent not ready — MCP or LLM client unavailable",
         )
 
+    # Resolve deployment: request body > session memory > default
+    if body.model and body.model in _AVAILABLE_MODELS:
+        deployment = body.model
+    else:
+        deployment = get_session_model(session_id)
+        if deployment not in _AVAILABLE_MODELS and _AVAILABLE_MODELS:
+            deployment = _AVAILABLE_MODELS[0]
+
     result = await run_agent(
         query=body.query,
         session_id=session_id,
         mcp_client=_mcp_client,
-        llm=_llm,
+        deployment=deployment,
     )
 
-    # Persist exchange to Redis session memory
     append_exchange(session_id, body.query, result["answer"])
+    set_session_model(session_id, deployment)
 
     return QueryResponse(
         answer=result["answer"],
         sources=result["tools_called"],
         trace_id=current_trace_id(),
+        span_id=current_span_id(),
         session_id=session_id,
+        model=deployment,
     )
 
 
@@ -285,6 +310,32 @@ async def invoke_tool(
         "result": result,
         "duration_ms": round((time.monotonic() - start) * 1000, 2),
     }
+
+
+_VALID_RATINGS = {"positive", "negative", "reported"}
+
+
+class FeedbackRequest(BaseModel):
+    trace_id: str
+    span_id: str
+    rating: str  # "positive" | "negative" | "reported"
+    session_id: str | None = None
+
+
+@app.post("/feedback", status_code=204)
+async def feedback(body: FeedbackRequest) -> None:
+    """Record user feedback for an agent response in Datadog LLM Observability."""
+    if body.rating not in _VALID_RATINGS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid rating '{body.rating}'. Must be one of: {sorted(_VALID_RATINGS)}",
+        )
+    submit_user_feedback(
+        trace_id=body.trace_id,
+        span_id=body.span_id,
+        rating=body.rating,
+        session_id=body.session_id,
+    )
 
 
 @app.get("/health")

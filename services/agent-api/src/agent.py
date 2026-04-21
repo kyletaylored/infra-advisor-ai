@@ -83,9 +83,10 @@ def build_mcp_client() -> MultiServerMCPClient:
 # ─── LLM factory ──────────────────────────────────────────────────────────────
 
 
-def build_llm() -> AzureChatOpenAI:
+def build_llm(deployment: str | None = None) -> AzureChatOpenAI:
+    dep = deployment or os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
     return AzureChatOpenAI(
-        azure_deployment=os.environ.get("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini"),
+        azure_deployment=dep,
         azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
         api_key=os.environ["AZURE_OPENAI_API_KEY"],
         # 2025-01-01-preview required for gpt-4.1 model family
@@ -102,7 +103,7 @@ async def run_agent(
     query: str,
     session_id: str,
     mcp_client: MultiServerMCPClient,
-    llm: AzureChatOpenAI,
+    deployment: str,
 ) -> dict[str, Any]:
     """
     Execute a single agent query.
@@ -119,6 +120,7 @@ async def run_agent(
             "query_domain": str,
         }
     """
+    llm = build_llm(deployment)
     query_domain = _classify_domain(query)
 
     # Load session history from Redis (auto-instrumented by ddtrace Redis integration)
