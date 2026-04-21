@@ -1,6 +1,26 @@
 export const AUTH_BASE = "/auth";
 const TOKEN_KEY = "infra_advisor_token";
 
+// ── Error parsing ─────────────────────────────────────────────────────────────
+
+async function parseErrorMessage(res: Response, fallback: string): Promise<string> {
+  const contentType = res.headers.get("content-type") ?? "";
+  try {
+    if (contentType.includes("application/json")) {
+      const body = await res.json();
+      return body.detail ?? body.message ?? JSON.stringify(body);
+    }
+    const text = await res.text();
+    // Nginx/proxy error pages are HTML — show a clean message instead of raw markup
+    if (text.trimStart().startsWith("<")) {
+      return `${fallback} (${res.status})`;
+    }
+    return text || `${fallback} (${res.status})`;
+  } catch {
+    return `${fallback} (${res.status})`;
+  }
+}
+
 export interface User {
   id: string;
   email: string;
@@ -42,11 +62,7 @@ export async function login(
     body: JSON.stringify({ email, password }),
   });
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Login failed (${res.status})`);
-  }
-
+  if (!res.ok) throw new Error(await parseErrorMessage(res, "Login failed"));
   return res.json();
 }
 
@@ -59,12 +75,7 @@ export async function register(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Registration failed (${res.status})`);
-  }
-
+  if (!res.ok) throw new Error(await parseErrorMessage(res, "Registration failed"));
   return res.json();
 }
 
@@ -88,10 +99,7 @@ export async function forgotPassword(email: string): Promise<void> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Request failed (${res.status})`);
-  }
+  if (!res.ok) throw new Error(await parseErrorMessage(res, "Request failed"));
 }
 
 export async function resetPassword(
@@ -103,10 +111,7 @@ export async function resetPassword(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token, new_password: newPassword }),
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Reset failed (${res.status})`);
-  }
+  if (!res.ok) throw new Error(await parseErrorMessage(res, "Reset failed"));
   return res.json();
 }
 
@@ -116,12 +121,7 @@ export async function listUsers(): Promise<User[]> {
   const res = await fetch(`${AUTH_BASE}/admin/users`, {
     headers: { ...authHeaders() },
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Failed to list users (${res.status})`);
-  }
-
+  if (!res.ok) throw new Error(await parseErrorMessage(res, "Failed to list users"));
   return res.json();
 }
 
@@ -136,12 +136,7 @@ export async function createUser(data: {
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(data),
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Failed to create user (${res.status})`);
-  }
-
+  if (!res.ok) throw new Error(await parseErrorMessage(res, "Failed to create user"));
   return res.json();
 }
 
@@ -151,10 +146,7 @@ export async function deleteUser(id: string): Promise<void> {
     headers: { ...authHeaders() },
   });
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Failed to delete user (${res.status})`);
-  }
+  if (!res.ok) throw new Error(await parseErrorMessage(res, "Failed to delete user"));
 }
 
 export async function patchUser(
@@ -166,11 +158,6 @@ export async function patchUser(
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(data),
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Failed to update user (${res.status})`);
-  }
-
+  if (!res.ok) throw new Error(await parseErrorMessage(res, "Failed to update user"));
   return res.json();
 }
