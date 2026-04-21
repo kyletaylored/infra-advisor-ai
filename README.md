@@ -207,6 +207,19 @@ App is served at `https://infra-advisor-ai.kyletaylor.dev` via Cloudflare → AK
 kubectl port-forward -n infra-advisor svc/ui 3000:80
 ```
 
+### When to re-run each command
+
+| You changed… | Run |
+|---|---|
+| `infra/bicep/` — AKS config, OpenAI models, AI Search tier, storage | `make deploy-infra` then `make get-credentials` |
+| `k8s/` manifests, ConfigMaps, or `.env` secrets | `make deploy-k8s` |
+| Application code only (no infra/manifest changes) | Push to `main` — CI builds and `kubectl rollout restart` runs automatically |
+| Both Bicep and K8s manifests | `make deploy-infra` → `make get-credentials` → `make deploy-k8s` (always in this order) |
+
+**`make deploy-infra`** provisions or updates Azure cloud resources (AKS cluster, OpenAI deployments, AI Search index, Blob Storage). It is slow (~10–15 min), subscription-scoped, and only needed when cloud infrastructure changes. Re-running it is safe — Bicep deployments are idempotent.
+
+**`make deploy-k8s`** applies Kubernetes manifests and secrets to the running cluster — it does not touch Azure resources. It runs `check-env` first to catch missing `.env` variables before anything is applied. Use this after any change to manifests, ConfigMaps, or when deploying new image versions.
+
 ---
 
 ## Local Development
