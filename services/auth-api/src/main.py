@@ -2,20 +2,36 @@ import ddtrace.auto  # must be first import — monkey-patches sqlalchemy, fasta
 
 import logging
 import os
+import smtplib
+from datetime import datetime, timezone
+from email.mime.text import MIMEText
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from auth import UserOut, create_token, hash_password, require_admin, require_auth, verify_password
+from auth import (
+    UserOut,
+    create_token,
+    generate_reset_token,
+    hash_password,
+    hash_reset_token,
+    require_admin,
+    require_auth,
+    reset_token_expiry,
+    verify_password,
+)
 from database import (
+    clear_reset_token,
     count_users,
     create_user,
     delete_user,
     get_user_by_email,
     get_user_by_id,
+    get_user_by_reset_token,
     init_db,
     list_users,
+    set_reset_token,
     update_user,
 )
 
@@ -62,6 +78,15 @@ class TokenResponse(BaseModel):
     user: UserOut
 
 
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+
 class AdminCreateUserRequest(BaseModel):
     email: str
     password: str
@@ -84,6 +109,59 @@ def _user_dict_to_out(u: dict) -> UserOut:
         is_service_account=u["is_service_account"],
         created_at=u["created_at"],
     )
+
+
+# ─── Email helper ─────────────────────────────────────────────────────────────
+
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:5173")
+
+
+def _send_reset_email(to_email: str, token: str) -> None:
+    """Send a password reset email via SMTP, or log the link if SMTP is not configured."""
+    reset_url = f"{APP_BASE_URL}?reset_token={token}"
+
+    smtp_host = os.environ.get("SMTP_HOST")
+    if not smtp_host:
+        # No SMTP configured — log the link so devs can use it directly
+        logger.info(
+            "PASSWORD RESET LINK (no SMTP configured) — %s — %s",
+            to_email,
+            reset_url,
+        )
+        return
+
+    smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user = os.environ.get("SMTP_USER", "")
+    smtp_password = os.environ.get("SMTP_PASSWORD", "")
+    smtp_from = os.environ.get("SMTP_FROM", smtp_user)
+
+    body = (
+        f"Hi,\n\n"
+        f"You requested a password reset for your InfraAdvisor AI account.\n\n"
+        f"Click the link below to set a new password (expires in 1 hour):\n\n"
+        f"  {reset_url}\n\n"
+        f"If you did not request this, you can safely ignore this email.\n\n"
+        f"— InfraAdvisor AI"
+    )
+    msg = MIMEText(body)
+    msg["Subject"] = "InfraAdvisor AI — password reset"
+    msg["From"] = smtp_from
+    msg["To"] = to_email
+
+    use_tls = os.environ.get("SMTP_TLS", "true").lower() != "false"
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
+            server.ehlo()
+            if use_tls:
+                server.starttls()
+            if smtp_user and smtp_password:
+                server.login(smtp_user, smtp_password)
+            server.sendmail(smtp_from, [to_email], msg.as_string())
+        logger.info("Password reset email sent to %s", to_email)
+    except Exception as exc:
+        logger.warning("Failed to send reset email to %s: %s", to_email, exc)
+        logger.info("PASSWORD RESET LINK (SMTP failed) — %s — %s", to_email, reset_url)
 
 
 # ─── Public endpoints ─────────────────────────────────────────────────────────
@@ -135,6 +213,54 @@ def login(body: LoginRequest):
 @app.get("/me", response_model=UserOut)
 def me(current_user: UserOut = Depends(require_auth)):
     return current_user
+
+
+@app.post("/forgot-password", status_code=200)
+def forgot_password(body: ForgotPasswordRequest):
+    """Request a password reset link. Always returns 200 to avoid leaking user existence."""
+    email = body.email.strip().lower()
+    user = get_user_by_email(email)
+
+    if user:
+        token = generate_reset_token()
+        token_hash = hash_reset_token(token)
+        expires = reset_token_expiry()
+        set_reset_token(user["id"], token_hash, expires)
+        _send_reset_email(email, token)
+
+    return {"message": "If that email is registered, a reset link has been sent."}
+
+
+@app.post("/reset-password", response_model=TokenResponse)
+def reset_password(body: ResetPasswordRequest):
+    """Consume a reset token and set a new password."""
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    token_hash = hash_reset_token(body.token)
+    user = get_user_by_reset_token(token_hash)
+
+    if user is None:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    # Check expiry
+    expires = user.get("reset_token_expires")
+    if expires:
+        if expires.tzinfo is None:
+            expires = expires.replace(tzinfo=timezone.utc)
+        if expires < datetime.now(timezone.utc):
+            clear_reset_token(user["id"])
+            raise HTTPException(status_code=400, detail="Reset token has expired")
+
+    new_hash = hash_password(body.new_password)
+    updated = update_user(user["id"], password_hash=new_hash)
+    clear_reset_token(user["id"])
+
+    if updated is None:
+        raise HTTPException(status_code=500, detail="Failed to update password")
+
+    token = create_token(updated)
+    return TokenResponse(token=token, user=_user_dict_to_out(updated))
 
 
 # ─── Admin endpoints ──────────────────────────────────────────────────────────

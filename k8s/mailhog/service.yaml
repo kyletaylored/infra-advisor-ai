@@ -1,0 +1,43 @@
+---
+# ClusterIP for internal SMTP (used by auth-api)
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailhog
+  namespace: infra-advisor
+  labels:
+    app: mailhog
+    app.kubernetes.io/name: mailhog
+    app.kubernetes.io/part-of: infra-advisor-ai
+spec:
+  selector:
+    app: mailhog
+  ports:
+    - name: smtp
+      port: 1025
+      targetPort: smtp
+      protocol: TCP
+    - name: http
+      port: 8025
+      targetPort: http
+      protocol: TCP
+---
+# LoadBalancer for web UI access from local machine / demo laptop
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailhog-ui
+  namespace: infra-advisor
+  labels:
+    app: mailhog
+    app.kubernetes.io/name: mailhog
+    app.kubernetes.io/part-of: infra-advisor-ai
+spec:
+  type: LoadBalancer
+  selector:
+    app: mailhog
+  ports:
+    - name: http
+      port: 8025
+      targetPort: http
+      protocol: TCP

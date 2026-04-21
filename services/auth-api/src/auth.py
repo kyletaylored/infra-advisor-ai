@@ -1,4 +1,6 @@
+import hashlib
 import os
+import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt as _bcrypt
@@ -23,6 +25,8 @@ class UserOut(BaseModel):
     created_at: str  # ISO format
 
 
+RESET_TOKEN_EXPIRE_HOURS = 1
+
 # ─── Password helpers ─────────────────────────────────────────────────────────
 
 def hash_password(plain: str) -> str:
@@ -31,6 +35,22 @@ def hash_password(plain: str) -> str:
 
 def verify_password(plain: str, hashed: str) -> bool:
     return _bcrypt.checkpw(plain.encode(), hashed.encode())
+
+
+# ─── Reset token helpers ──────────────────────────────────────────────────────
+
+def generate_reset_token() -> str:
+    """Generate a cryptographically secure URL-safe reset token."""
+    return secrets.token_urlsafe(32)
+
+
+def hash_reset_token(token: str) -> str:
+    """SHA-256 hash the token before storing — prevents DB-breach token reuse."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def reset_token_expiry() -> datetime:
+    return datetime.now(timezone.utc) + timedelta(hours=RESET_TOKEN_EXPIRE_HOURS)
 
 
 # ─── JWT helpers ──────────────────────────────────────────────────────────────

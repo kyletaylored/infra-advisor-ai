@@ -13,3 +13,8 @@ data:
   DD_LOGS_INJECTION: "true"
   DD_CODE_ORIGIN_FOR_SPANS_ENABLED: "true"
   DD_DBM_PROPAGATION_MODE: "full"
+  SMTP_HOST: "mailhog.infra-advisor.svc.cluster.local"
+  SMTP_PORT: "1025"
+  SMTP_FROM: "infra-advisor-ai@demo.local"
+  SMTP_TLS: "false"
+  APP_BASE_URL: "https://infra-advisor.demo.local"

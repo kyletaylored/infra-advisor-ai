@@ -80,6 +80,36 @@ export async function fetchMe(token: string): Promise<User> {
   return res.json();
 }
 
+// ── Password reset API functions ─────────────────────────────────────────────
+
+export async function forgotPassword(email: string): Promise<void> {
+  const res = await fetch(`${AUTH_BASE}/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Request failed (${res.status})`);
+  }
+}
+
+export async function resetPassword(
+  token: string,
+  newPassword: string,
+): Promise<{ token: string; user: User }> {
+  const res = await fetch(`${AUTH_BASE}/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, new_password: newPassword }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(text || `Reset failed (${res.status})`);
+  }
+  return res.json();
+}
+
 // ── Admin API functions ───────────────────────────────────────────────────────
 
 export async function listUsers(): Promise<User[]> {

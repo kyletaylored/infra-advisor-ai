@@ -6,6 +6,7 @@ from sqlalchemy import Boolean, Column, DateTime, Text, create_engine, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
+
 DATABASE_URL: str = os.environ["DATABASE_URL"]
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
@@ -31,12 +32,14 @@ class UserRow(Base):
         nullable=False,
         default=lambda: datetime.now(timezone.utc),
     )
+    reset_token_hash = Column(Text, nullable=True)
+    reset_token_expires = Column(DateTime(timezone=True), nullable=True)
 
 
 # ─── Schema bootstrap ─────────────────────────────────────────────────────────
 
 def init_db() -> None:
-    """Create the users table if it does not already exist."""
+    """Create the users table if it does not already exist, and migrate existing tables."""
     with engine.connect() as conn:
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS users (
@@ -45,9 +48,19 @@ def init_db() -> None:
                 password_hash TEXT NOT NULL,
                 is_admin BOOLEAN NOT NULL DEFAULT FALSE,
                 is_service_account BOOLEAN NOT NULL DEFAULT FALSE,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                reset_token_hash TEXT,
+                reset_token_expires TIMESTAMPTZ
             )
         """))
+        # Add reset columns to existing tables (idempotent)
+        for col, typedef in [
+            ("reset_token_hash", "TEXT"),
+            ("reset_token_expires", "TIMESTAMPTZ"),
+        ]:
+            conn.execute(text(
+                f"ALTER TABLE users ADD COLUMN IF NOT EXISTS {col} {typedef}"
+            ))
         conn.commit()
 
 
@@ -151,5 +164,40 @@ def count_users() -> int:
     db: Session = get_db()
     try:
         return db.query(UserRow).count()
+    finally:
+        db.close()
+
+
+def set_reset_token(user_id: str, token_hash: str, expires: datetime) -> bool:
+    db: Session = get_db()
+    try:
+        row = db.query(UserRow).filter(UserRow.id == user_id).first()
+        if row is None:
+            return False
+        row.reset_token_hash = token_hash
+        row.reset_token_expires = expires
+        db.commit()
+        return True
+    finally:
+        db.close()
+
+
+def get_user_by_reset_token(token_hash: str) -> dict | None:
+    db: Session = get_db()
+    try:
+        row = db.query(UserRow).filter(UserRow.reset_token_hash == token_hash).first()
+        return _row_to_dict(row) if row else None
+    finally:
+        db.close()
+
+
+def clear_reset_token(user_id: str) -> None:
+    db: Session = get_db()
+    try:
+        row = db.query(UserRow).filter(UserRow.id == user_id).first()
+        if row:
+            row.reset_token_hash = None
+            row.reset_token_expires = None
+            db.commit()
     finally:
         db.close()

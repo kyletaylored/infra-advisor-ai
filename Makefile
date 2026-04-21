@@ -182,6 +182,9 @@ deploy-k8s: check-env ## Apply all Kubernetes manifests
 	@echo "→ Deploying Redis..."
 	kubectl apply -f k8s/redis/
 
+	@echo "→ Deploying MailHog (SMTP capture for dev)..."
+	kubectl apply -f k8s/mailhog/
+
 	@echo "→ Creating Airflow Azure secret..."
 	$(MAKE) create-airflow-secret
 
