@@ -191,11 +191,7 @@ deploy-k8s: check-env ## Apply all Kubernetes manifests
 	@echo "→ Deploying Airflow..."
 	helm repo add apache-airflow https://airflow.apache.org || true
 	helm repo update
-	helm upgrade --install airflow apache-airflow/airflow \
-		--namespace airflow \
-		--values k8s/airflow/values.yaml \
-		--timeout 10m \
-		--wait
+	$(MAKE) upgrade-airflow
 
 	@echo "→ Creating GHCR pull secret..."
 	$(MAKE) create-ghcr-secret
@@ -259,10 +255,10 @@ upgrade-airflow: ## Upgrade Airflow Helm release from k8s/airflow/values.yaml
 	helm upgrade airflow apache-airflow/airflow \
 		--namespace airflow \
 		--values k8s/airflow/values.yaml \
-		--timeout 10m \
+		--timeout 15m \
 		--wait \
 		--cleanup-on-fail \
-		--atomic
+		--rollback-on-failure
 	@echo "✓ Airflow upgraded"
 
 # ─── Tests ────────────────────────────────────────────────────────────────────
