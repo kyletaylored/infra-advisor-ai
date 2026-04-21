@@ -88,6 +88,8 @@ scheduler:
     # Requires: apache-airflow-providers-openlineage >= 2.1.0, Airflow >= 2.9
     - name: AIRFLOW__OPENLINEAGE__SPARK_INJECT_PARENT_JOB_INFO
       value: "true"
+    - name: AIRFLOW__LINEAGE__BACKEND
+      value: "openlineage.lineage_backend.OpenLineageBackend"
 
     # ── Datadog APM ─────────────────────────────────────────────────────────────
     - name: DD_ENV
@@ -169,6 +171,33 @@ triggerer:
       value: "dev"
     - name: DD_SERVICE
       value: "airflow-triggerer"
+    - name: DD_AGENT_HOST
+      value: "datadog-agent.datadog.svc.cluster.local"
+    - name: AIRFLOW__LINEAGE__BACKEND
+      value: "openlineage.lineage_backend.OpenLineageBackend"
+
+# ── dagProcessor ──────────────────────────────────────────────────────────────────
+dagProcessor:
+  env:
+    - name: DD_DATA_JOBS_ENABLED
+      value: "true"
+    - name: OPENLINEAGE__TRANSPORT__TYPE
+      value: "datadog"
+    - name: OPENLINEAGE_NAMESPACE
+      value: "dev"
+    - name: AIRFLOW__LINEAGE__BACKEND
+      value: "openlineage.lineage_backend.OpenLineageBackend"
+    - name: DD_SITE
+      value: "us3.datadoghq.com"
+    - name: DD_API_KEY
+      valueFrom:
+        secretKeyRef:
+          name: airflow-azure-secret
+          key: DD_API_KEY
+    - name: DD_ENV
+      value: "dev"
+    - name: DD_SERVICE
+      value: "airflow-dag-processor"
     - name: DD_AGENT_HOST
       value: "datadog-agent.datadog.svc.cluster.local"
 

@@ -17,4 +17,4 @@ data:
   SMTP_PORT: "1025"
   SMTP_FROM: "infra-advisor-ai@demo.local"
   SMTP_TLS: "false"
-  APP_BASE_URL: "https://infra-advisor.demo.local"
+  APP_BASE_URL: "https://infra-advisor-ai.kyletaylor.dev"
