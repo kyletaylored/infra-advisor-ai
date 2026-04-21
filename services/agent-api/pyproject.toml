@@ -8,6 +8,7 @@ dependencies = [
     "fastapi>=0.136.0",
     "httpx>=0.28.1",
     "langchain>=1.2.0",
+    "langgraph>=0.2.23",
     "langchain-openai>=1.1.0",
     "langchain-mcp-adapters>=0.2.0",
     "openai>=2.32.0",

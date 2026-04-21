@@ -5,8 +5,8 @@ Instrumentation strategy
 - LangChain chain/llm/tool calls  → auto-instrumented by ddtrace LangChain integration (>=2.9)
 - MCP ClientSession.call_tool      → auto-instrumented by ddtrace MCP integration (>=3.11)
 - Azure OpenAI chat completions    → auto-instrumented by ddtrace OpenAI integration (>=2.9)
-- Agent-level span                 → explicit LLMObs.agent() in agent.py (owns annotations)
-- Faithfulness eval LLM call      → explicit LLMObs.llm() below (separate eval sub-span)
+- Orchestration spans              → explicit LLMObs.workflow/agent/task() in agent.py
+- Faithfulness eval                → explicit LLMObs.task() wrapping auto-instrumented OpenAI call
 """
 
 import asyncio
@@ -120,9 +120,10 @@ async def _compute_faithfulness(
             f"Answer: {answer}"
         )
 
-        # Explicit LLMObs.llm() span — shows eval call separately in LLM Obs UI,
-        # tagged with the nano model so it's distinct from the main agent call.
-        with LLMObs.llm(model_name=eval_model, model_provider="azure_openai") as eval_span:
+        # LLMObs.task() wraps the eval without conflicting with the auto-instrumented
+        # OpenAI span — the AsyncAzureOpenAI call inside produces its own child LLM span
+        # automatically, with token counts, model name, and i/o messages captured.
+        with LLMObs.task("faithfulness-eval") as eval_span:
             response = await client.chat.completions.create(
                 model=eval_model,
                 messages=[
@@ -136,22 +137,13 @@ async def _compute_faithfulness(
             raw = response.choices[0].message.content or ""
             score = max(0.0, min(1.0, float(raw.strip())))
 
-            usage = response.usage
             LLMObs.annotate(
                 span=eval_span,
-                input_data=[
-                    {"role": "system", "content": _EVAL_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
-                ],
-                output_data={"role": "assistant", "content": raw},
                 tags={
                     "session.id": session_id,
                     "query.domain": query_domain,
                     "eval.faithfulness_score": str(score),
-                },
-                metrics={
-                    "input_tokens": usage.prompt_tokens if usage else 0,
-                    "output_tokens": usage.completion_tokens if usage else 0,
+                    "eval.model": eval_model,
                 },
             )
 
