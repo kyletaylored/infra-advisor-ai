@@ -17,9 +17,9 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import ReactMarkdown from "react-markdown";
-import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Landmark, CloudLightning, Zap, Droplets, Compass } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Landmark, CloudLightning, Zap, Droplets, Compass, ExternalLink, ChartNoAxesGantt } from "lucide-react";
 import { hasSeenTour, startTour } from "../lib/tour";
-import { ApiError, BridgeData, Citation, FeedbackRating, ModelsResponse, QueryResponse, SuggestionItem, extractBridgeData, fetchModels, fetchSuggestions, sendQuery, submitFeedback } from "../lib/api";
+import { ApiError, BridgeData, Citation, FeedbackRating, QueryResponse, SuggestionItem, extractBridgeData, fetchModels, fetchSuggestions, sendQuery, submitFeedback } from "../lib/api";
 import {
   trackBridgeCardRendered,
   trackMessageCopied,
@@ -51,17 +51,17 @@ interface Message {
 }
 
 const TOOL_META: Record<string, { label: string; document_type: string; description: string }> = {
-  get_bridge_condition:       { label: "Bridge Condition",      document_type: "Bridge",   description: "FHWA National Bridge Inventory" },
-  get_disaster_history:       { label: "Disaster History",      document_type: "Disaster", description: "OpenFEMA disaster declarations" },
-  get_energy_infrastructure:  { label: "Energy Infrastructure", document_type: "Energy",   description: "EIA energy infrastructure data" },
-  get_water_infrastructure:   { label: "Water Infrastructure",  document_type: "Water",    description: "Texas Water Development Board plans" },
-  get_ercot_energy_storage:   { label: "ERCOT Storage",         document_type: "Energy",          description: "ERCOT Texas grid energy storage data" },
-  search_txdot_open_data:     { label: "TxDOT Open Data",       document_type: "Transportation",  description: "TxDOT traffic counts and construction projects" },
-  search_project_knowledge:   { label: "Knowledge Base",        document_type: "Document",        description: "Azure AI Search hybrid index" },
-  draft_document:             { label: "Draft Document",        document_type: "Document", description: "Jinja2 consulting document template" },
+  get_bridge_condition: { label: "Bridge Condition", document_type: "Bridge", description: "FHWA National Bridge Inventory" },
+  get_disaster_history: { label: "Disaster History", document_type: "Disaster", description: "OpenFEMA disaster declarations" },
+  get_energy_infrastructure: { label: "Energy Infrastructure", document_type: "Energy", description: "EIA energy infrastructure data" },
+  get_water_infrastructure: { label: "Water Infrastructure", document_type: "Water", description: "Texas Water Development Board plans" },
+  get_ercot_energy_storage: { label: "ERCOT Storage", document_type: "Energy", description: "ERCOT Texas grid energy storage data" },
+  search_txdot_open_data: { label: "TxDOT Open Data", document_type: "Transportation", description: "TxDOT traffic counts and construction projects" },
+  search_project_knowledge: { label: "Knowledge Base", document_type: "Document", description: "Azure AI Search hybrid index" },
+  draft_document: { label: "Draft Document", document_type: "Document", description: "Jinja2 consulting document template" },
   get_procurement_opportunities: { label: "Federal Opportunities", document_type: "Procurement", description: "SAM.gov and grants.gov active opportunities" },
-  get_contract_awards:           { label: "Contract Awards",       document_type: "Procurement", description: "USASpending.gov competitive intelligence" },
-  search_web_procurement:        { label: "Web Procurement",       document_type: "Procurement", description: "State/local RFPs via Brave Search" },
+  get_contract_awards: { label: "Contract Awards", document_type: "Procurement", description: "USASpending.gov competitive intelligence" },
+  search_web_procurement: { label: "Web Procurement", document_type: "Procurement", description: "State/local RFPs via Brave Search" },
 };
 
 // ── Initial suggestion pills (shown before first message) ─────────────────────
@@ -89,39 +89,39 @@ const INITIAL_SUGGESTIONS: Suggestion[] = [
 
 const FOLLOW_UPS_BY_TOOL: Record<string, Suggestion[]> = {
   get_bridge_condition: [
-    { label: "Poor-rated bridges",     query: "Show all Texas bridges rated poor or below on the NBI structural evaluation scale." },
+    { label: "Poor-rated bridges", query: "Show all Texas bridges rated poor or below on the NBI structural evaluation scale." },
     { label: "High-traffic deficient", query: "List structurally deficient Texas bridges with ADT over 20,000 vehicles per day." },
-    { label: "Inspection backlog",     query: "Which Texas bridges have not been inspected in more than 4 years per NBI records?" },
-    { label: "Rehab cost estimate",    query: "What is the estimated cost to rehabilitate all structurally deficient bridges in Texas?" },
+    { label: "Inspection backlog", query: "Which Texas bridges have not been inspected in more than 4 years per NBI records?" },
+    { label: "Rehab cost estimate", query: "What is the estimated cost to rehabilitate all structurally deficient bridges in Texas?" },
   ],
   get_disaster_history: [
-    { label: "Recent declarations",  query: "What major disaster declarations have occurred in Texas in the last 3 years?" },
+    { label: "Recent declarations", query: "What major disaster declarations have occurred in Texas in the last 3 years?" },
     { label: "Hurricane risk zones", query: "Which Texas counties have the highest frequency of hurricane disaster declarations?" },
     { label: "Flood damage history", query: "Summarize FEMA flood disaster declarations in Texas since 2015 by county." },
-    { label: "Mitigation grants",    query: "What FEMA hazard mitigation grants are available for Texas infrastructure projects?" },
+    { label: "Mitigation grants", query: "What FEMA hazard mitigation grants are available for Texas infrastructure projects?" },
   ],
   get_energy_infrastructure: [
-    { label: "Grid vulnerabilities",  query: "What are the key grid vulnerability points identified in EIA data for Texas?" },
-    { label: "Renewable capacity",    query: "What is the current renewable energy generation capacity in Texas according to EIA?" },
-    { label: "Post-2021 resilience",  query: "How has Texas improved grid resilience since the 2021 winter storm based on EIA data?" },
-    { label: "Aging power plants",    query: "What percentage of Texas power plants are more than 30 years old per EIA records?" },
+    { label: "Grid vulnerabilities", query: "What are the key grid vulnerability points identified in EIA data for Texas?" },
+    { label: "Renewable capacity", query: "What is the current renewable energy generation capacity in Texas according to EIA?" },
+    { label: "Post-2021 resilience", query: "How has Texas improved grid resilience since the 2021 winter storm based on EIA data?" },
+    { label: "Aging power plants", query: "What percentage of Texas power plants are more than 30 years old per EIA records?" },
   ],
   get_water_infrastructure: [
-    { label: "Supply gap projections",  query: "What water supply gaps are projected for Texas in the 2026 State Water Plan?" },
+    { label: "Supply gap projections", query: "What water supply gaps are projected for Texas in the 2026 State Water Plan?" },
     { label: "Conservation strategies", query: "What conservation strategies are recommended in the TWDB 2026 water plan?" },
-    { label: "Project cost estimates",  query: "What is the total estimated cost of recommended water projects in the TWDB plan?" },
-    { label: "Drought risk regions",    query: "Which Texas regions face the highest drought risk according to TWDB projections?" },
+    { label: "Project cost estimates", query: "What is the total estimated cost of recommended water projects in the TWDB plan?" },
+    { label: "Drought risk regions", query: "Which Texas regions face the highest drought risk according to TWDB projections?" },
   ],
   search_project_knowledge: [
-    { label: "Similar projects",  query: "Find consulting projects in our knowledge base similar to this infrastructure type." },
-    { label: "Risk frameworks",   query: "What risk assessment frameworks does our knowledge base recommend for this project type?" },
-    { label: "Federal funding",   query: "What federal funding sources are available for this type of infrastructure project?" },
-    { label: "Case studies",      query: "Show case studies from our knowledge base for similar completed infrastructure projects." },
+    { label: "Similar projects", query: "Find consulting projects in our knowledge base similar to this infrastructure type." },
+    { label: "Risk frameworks", query: "What risk assessment frameworks does our knowledge base recommend for this project type?" },
+    { label: "Federal funding", query: "What federal funding sources are available for this type of infrastructure project?" },
+    { label: "Case studies", query: "Show case studies from our knowledge base for similar completed infrastructure projects." },
   ],
   draft_document: [
     { label: "Cost estimate", query: "Generate a cost estimate scaffold for this infrastructure project." },
-    { label: "Risk summary",  query: "Draft a risk summary memo for this infrastructure assessment." },
-    { label: "Funding memo",  query: "Create a federal funding positioning memo for this project." },
+    { label: "Risk summary", query: "Draft a risk summary memo for this infrastructure assessment." },
+    { label: "Funding memo", query: "Create a federal funding positioning memo for this project." },
     { label: "Scope of work", query: "Draft a scope of work document for this infrastructure improvement project." },
   ],
 };
@@ -322,6 +322,26 @@ function MessageActions({ content, domain, traceId, spanId }: MessageActionsProp
       >
         <Flag size={13} />
       </IconButton>
+      {traceId && (
+        <Link
+          href={`https://us3.datadoghq.com/apm/trace/${traceId}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          aria-label="View APM trace in Datadog"
+          title={`View trace ${traceId} in Datadog APM`}
+          display="inline-flex"
+          alignItems="center"
+          justifyContent="center"
+          h="22px"
+          w="22px"
+          borderRadius="md"
+          color="gray.400"
+          _hover={{ color: "purple.500", bg: "gray.100" }}
+          flexShrink={0}
+        >
+          <ChartNoAxesGantt size={13} />
+        </Link>
+      )}
     </HStack>
   );
 }
@@ -674,16 +694,6 @@ export function Chat() {
                           </>
                         )}
 
-                        {msg.traceId && (
-                          <Text
-                            mt={1.5}
-                            fontSize="xs"
-                            color={msg.role === "user" ? "blue.300" : "gray.400"}
-                            fontFamily="mono"
-                          >
-                            trace: {msg.traceId}
-                          </Text>
-                        )}
                       </Box>
 
                       {msg.role === "assistant" && (

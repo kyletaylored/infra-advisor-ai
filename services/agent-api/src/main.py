@@ -1,4 +1,5 @@
-import ddtrace.auto  # must be first import — monkey-patches httpx, openai, langchain at import time
+# must be first import — monkey-patches httpx, openai, langchain at import time
+import ddtrace.auto
 
 import json
 import logging
@@ -52,7 +53,8 @@ async def lifespan(app: FastAPI):
         _mcp_connected = True
         logger.info("MCP client connected")
     except Exception as exc:
-        logger.warning("MCP client failed to connect (will retry per-request): %s", exc)
+        logger.warning(
+            "MCP client failed to connect (will retry per-request): %s", exc)
         _mcp_connected = False
 
     # Build LLM
@@ -66,7 +68,8 @@ async def lifespan(app: FastAPI):
 
     # Parse available model list from env
     raw_models = os.environ.get("AVAILABLE_MODELS", "gpt-4.1-mini")
-    _AVAILABLE_MODELS.extend(m.strip() for m in raw_models.split(",") if m.strip())
+    _AVAILABLE_MODELS.extend(m.strip()
+                             for m in raw_models.split(",") if m.strip())
     if not _AVAILABLE_MODELS:
         _AVAILABLE_MODELS.append("gpt-4.1-mini")
 
@@ -75,7 +78,8 @@ async def lifespan(app: FastAPI):
         try:
             start_consumer_thread(_mcp_client)
         except Exception as exc:
-            logger.warning("Kafka consumer thread failed to start (non-fatal): %s", exc)
+            logger.warning(
+                "Kafka consumer thread failed to start (non-fatal): %s", exc)
 
     yield
 
@@ -93,7 +97,8 @@ app = FastAPI(
 @app.exception_handler(Exception)
 async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     trace_id = current_trace_id()
-    logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+    logger.exception("Unhandled exception on %s %s",
+                     request.method, request.url.path)
     return JSONResponse(
         status_code=500,
         content={"detail": str(exc), "trace_id": trace_id},
@@ -150,10 +155,14 @@ _ALL_TOOLS = (
 )
 
 _FALLBACK_SUGGESTIONS: list[SuggestionItem] = [
-    SuggestionItem(label="🌉 Deficient Texas bridges", query="Pull all structurally deficient bridges in Texas with ADT over 10,000 and last inspection before 2022."),
-    SuggestionItem(label="⚡ ERCOT storage trends", query="What are current energy storage resource charging patterns in the ERCOT Texas grid?"),
-    SuggestionItem(label="💧 SDWA violations", query="Which Texas community water systems have open Safe Drinking Water Act violations serving more than 10,000 people?"),
-    SuggestionItem(label="🌊 Recent FEMA declarations", query="What major disaster declarations have occurred in Texas in the last 3 years?"),
+    SuggestionItem(label="🌉 Deficient Texas bridges",
+                   query="Pull all structurally deficient bridges in Texas with ADT over 10,000 and last inspection before 2022."),
+    SuggestionItem(label="⚡ ERCOT storage trends",
+                   query="What are current energy storage resource charging patterns in the ERCOT Texas grid?"),
+    SuggestionItem(label="💧 SDWA violations",
+                   query="Which Texas community water systems have open Safe Drinking Water Act violations serving more than 10,000 people?"),
+    SuggestionItem(label="🌊 Recent FEMA declarations",
+                   query="What major disaster declarations have occurred in Texas in the last 3 years?"),
 ]
 
 _SUGGESTIONS_PROMPT = """\
@@ -257,7 +266,8 @@ async def suggestions(body: SuggestionsRequest) -> SuggestionsResponse:
     if not _llm:
         return SuggestionsResponse(suggestions=_FALLBACK_SUGGESTIONS)
 
-    sources_str = ", ".join(body.sources) if body.sources else "general knowledge"
+    sources_str = ", ".join(
+        body.sources) if body.sources else "general knowledge"
     prompt = _SUGGESTIONS_PROMPT.format(
         query=body.query[:500],
         sources=sources_str,
@@ -267,7 +277,8 @@ async def suggestions(body: SuggestionsRequest) -> SuggestionsResponse:
 
     try:
         response = await _llm.ainvoke([HumanMessage(content=prompt)])
-        content = response.content if isinstance(response.content, str) else str(response.content)
+        content = response.content if isinstance(
+            response.content, str) else str(response.content)
         parsed = _parse_suggestions(content)
         if parsed:
             return SuggestionsResponse(suggestions=parsed)
@@ -291,7 +302,8 @@ async def list_tools() -> list[dict]:
                 schema = t.args_schema.model_json_schema()
         except Exception:
             pass
-        result.append({"name": t.name, "description": t.description, "parameters": schema})
+        result.append(
+            {"name": t.name, "description": t.description, "parameters": schema})
     return result
 
 
@@ -306,7 +318,8 @@ async def invoke_tool(
     tools = await _mcp_client.get_tools()
     tool = next((t for t in tools if t.name == tool_name), None)
     if not tool:
-        raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
+        raise HTTPException(
+            status_code=404, detail=f"Tool '{tool_name}' not found")
 
     start = time.monotonic()
     try:
