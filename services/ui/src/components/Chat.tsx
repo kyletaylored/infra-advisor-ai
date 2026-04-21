@@ -17,7 +17,8 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import ReactMarkdown from "react-markdown";
-import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Landmark, CloudLightning, Zap, Droplets, Compass } from "lucide-react";
+import { hasSeenTour, startTour } from "../lib/tour";
 import { BridgeData, Citation, QueryResponse, SuggestionItem, extractBridgeData, fetchSuggestions, sendQuery } from "../lib/api";
 import {
   trackBridgeCardRendered,
@@ -63,19 +64,19 @@ const TOOL_META: Record<string, { label: string; document_type: string; descript
 
 const INITIAL_SUGGESTIONS: Suggestion[] = [
   {
-    label: "🌉 Deficient Texas bridges",
+    label: "Deficient Texas bridges",
     query: "Pull all structurally deficient bridges in Texas with ADT over 10,000 and last inspection before 2022.",
   },
   {
-    label: "💧 SDWA violations",
+    label: "SDWA violations",
     query: "Which Texas community water systems have open Safe Drinking Water Act violations serving more than 10,000 people?",
   },
   {
-    label: "🗺️ Corpus Christi water plan",
+    label: "Corpus Christi water plan",
     query: "What water supply projects are recommended for the Corpus Christi region in the TWDB 2026 State Water Plan?",
   },
   {
-    label: "⚡ Southeast grid resilience",
+    label: "Southeast grid resilience",
     query: "Compare grid resilience investment patterns across southeastern states since 2018 using EIA data.",
   },
 ];
@@ -84,40 +85,40 @@ const INITIAL_SUGGESTIONS: Suggestion[] = [
 
 const FOLLOW_UPS_BY_TOOL: Record<string, Suggestion[]> = {
   get_bridge_condition: [
-    { label: "🌉 Poor-rated bridges",     query: "Show all Texas bridges rated poor or below on the NBI structural evaluation scale." },
-    { label: "🌉 High-traffic deficient", query: "List structurally deficient Texas bridges with ADT over 20,000 vehicles per day." },
-    { label: "🌉 Inspection backlog",     query: "Which Texas bridges have not been inspected in more than 4 years per NBI records?" },
-    { label: "🌉 Rehab cost estimate",    query: "What is the estimated cost to rehabilitate all structurally deficient bridges in Texas?" },
+    { label: "Poor-rated bridges",     query: "Show all Texas bridges rated poor or below on the NBI structural evaluation scale." },
+    { label: "High-traffic deficient", query: "List structurally deficient Texas bridges with ADT over 20,000 vehicles per day." },
+    { label: "Inspection backlog",     query: "Which Texas bridges have not been inspected in more than 4 years per NBI records?" },
+    { label: "Rehab cost estimate",    query: "What is the estimated cost to rehabilitate all structurally deficient bridges in Texas?" },
   ],
   get_disaster_history: [
-    { label: "🌊 Recent declarations",  query: "What major disaster declarations have occurred in Texas in the last 3 years?" },
-    { label: "🌊 Hurricane risk zones", query: "Which Texas counties have the highest frequency of hurricane disaster declarations?" },
-    { label: "🌊 Flood damage history", query: "Summarize FEMA flood disaster declarations in Texas since 2015 by county." },
-    { label: "🌊 Mitigation grants",    query: "What FEMA hazard mitigation grants are available for Texas infrastructure projects?" },
+    { label: "Recent declarations",  query: "What major disaster declarations have occurred in Texas in the last 3 years?" },
+    { label: "Hurricane risk zones", query: "Which Texas counties have the highest frequency of hurricane disaster declarations?" },
+    { label: "Flood damage history", query: "Summarize FEMA flood disaster declarations in Texas since 2015 by county." },
+    { label: "Mitigation grants",    query: "What FEMA hazard mitigation grants are available for Texas infrastructure projects?" },
   ],
   get_energy_infrastructure: [
-    { label: "⚡ Grid vulnerabilities",  query: "What are the key grid vulnerability points identified in EIA data for Texas?" },
-    { label: "⚡ Renewable capacity",    query: "What is the current renewable energy generation capacity in Texas according to EIA?" },
-    { label: "⚡ Post-2021 resilience",  query: "How has Texas improved grid resilience since the 2021 winter storm based on EIA data?" },
-    { label: "⚡ Aging power plants",    query: "What percentage of Texas power plants are more than 30 years old per EIA records?" },
+    { label: "Grid vulnerabilities",  query: "What are the key grid vulnerability points identified in EIA data for Texas?" },
+    { label: "Renewable capacity",    query: "What is the current renewable energy generation capacity in Texas according to EIA?" },
+    { label: "Post-2021 resilience",  query: "How has Texas improved grid resilience since the 2021 winter storm based on EIA data?" },
+    { label: "Aging power plants",    query: "What percentage of Texas power plants are more than 30 years old per EIA records?" },
   ],
   get_water_infrastructure: [
-    { label: "💧 Supply gap projections", query: "What water supply gaps are projected for Texas in the 2026 State Water Plan?" },
-    { label: "💧 Conservation strategies", query: "What conservation strategies are recommended in the TWDB 2026 water plan?" },
-    { label: "💧 Project cost estimates", query: "What is the total estimated cost of recommended water projects in the TWDB plan?" },
-    { label: "💧 Drought risk regions",  query: "Which Texas regions face the highest drought risk according to TWDB projections?" },
+    { label: "Supply gap projections",  query: "What water supply gaps are projected for Texas in the 2026 State Water Plan?" },
+    { label: "Conservation strategies", query: "What conservation strategies are recommended in the TWDB 2026 water plan?" },
+    { label: "Project cost estimates",  query: "What is the total estimated cost of recommended water projects in the TWDB plan?" },
+    { label: "Drought risk regions",    query: "Which Texas regions face the highest drought risk according to TWDB projections?" },
   ],
   search_project_knowledge: [
-    { label: "📄 Similar projects",   query: "Find consulting projects in our knowledge base similar to this infrastructure type." },
-    { label: "📄 Risk frameworks",    query: "What risk assessment frameworks does our knowledge base recommend for this project type?" },
-    { label: "📄 Federal funding",    query: "What federal funding sources are available for this type of infrastructure project?" },
-    { label: "📄 Case studies",       query: "Show case studies from our knowledge base for similar completed infrastructure projects." },
+    { label: "Similar projects",  query: "Find consulting projects in our knowledge base similar to this infrastructure type." },
+    { label: "Risk frameworks",   query: "What risk assessment frameworks does our knowledge base recommend for this project type?" },
+    { label: "Federal funding",   query: "What federal funding sources are available for this type of infrastructure project?" },
+    { label: "Case studies",      query: "Show case studies from our knowledge base for similar completed infrastructure projects." },
   ],
   draft_document: [
-    { label: "📝 Cost estimate",   query: "Generate a cost estimate scaffold for this infrastructure project." },
-    { label: "📝 Risk summary",    query: "Draft a risk summary memo for this infrastructure assessment." },
-    { label: "📝 Funding memo",    query: "Create a federal funding positioning memo for this project." },
-    { label: "📝 Scope of work",   query: "Draft a scope of work document for this infrastructure improvement project." },
+    { label: "Cost estimate", query: "Generate a cost estimate scaffold for this infrastructure project." },
+    { label: "Risk summary",  query: "Draft a risk summary memo for this infrastructure assessment." },
+    { label: "Funding memo",  query: "Create a federal funding positioning memo for this project." },
+    { label: "Scope of work", query: "Draft a scope of work document for this infrastructure improvement project." },
   ],
 };
 
@@ -141,13 +142,37 @@ function sourceToCitation(tool: string): Citation {
 // ── Domain tiles shown in the empty state ────────────────────────────────────
 
 const DOMAINS = [
-  { icon: "🌉", label: "Bridges",  sub: "NBI structural conditions" },
-  { icon: "🌊", label: "Disasters", sub: "FEMA declarations & risk" },
-  { icon: "⚡", label: "Energy",    sub: "EIA grid & generation" },
-  { icon: "💧", label: "Water",     sub: "TWDB supply plans" },
-];
+  {
+    Icon: Landmark,
+    label: "Bridges",
+    sub: "NBI structural conditions",
+    query: "Pull all structurally deficient bridges in Texas with ADT over 10,000 and last inspection before 2022.",
+    color: "blue",
+  },
+  {
+    Icon: CloudLightning,
+    label: "Disasters",
+    sub: "FEMA declarations & risk",
+    query: "What major disaster declarations have occurred in Texas in the last 3 years?",
+    color: "orange",
+  },
+  {
+    Icon: Zap,
+    label: "Energy",
+    sub: "EIA grid & generation",
+    query: "Compare grid resilience investment patterns across southeastern states since 2018 using EIA data.",
+    color: "yellow",
+  },
+  {
+    Icon: Droplets,
+    label: "Water",
+    sub: "TWDB supply plans",
+    query: "Which Texas community water systems have open Safe Drinking Water Act violations serving more than 10,000 people?",
+    color: "cyan",
+  },
+] as const;
 
-function EmptyState() {
+function EmptyState({ onSelect }: { onSelect: (query: string) => void }) {
   return (
     <Flex h="full" align="center" justify="center" px={6}>
       <VStack gap={8} maxW="lg" w="full" textAlign="center">
@@ -160,10 +185,11 @@ function EmptyState() {
           </Text>
         </VStack>
 
-        <Grid templateColumns="repeat(2, 1fr)" gap={3} w="full">
+        <Grid templateColumns="repeat(2, 1fr)" gap={3} w="full" data-tour="domain-tiles">
           {DOMAINS.map((d) => (
             <Box
               key={d.label}
+              as="button"
               bg="white"
               borderWidth="1px"
               borderColor="gray.200"
@@ -171,8 +197,20 @@ function EmptyState() {
               p={4}
               textAlign="left"
               boxShadow="xs"
+              cursor="pointer"
+              transition="all 0.15s ease"
+              _hover={{
+                borderColor: `${d.color}.300`,
+                boxShadow: "sm",
+                bg: `${d.color}.50`,
+                transform: "translateY(-1px)",
+              }}
+              _active={{ transform: "translateY(0px)", boxShadow: "xs" }}
+              onClick={() => onSelect(d.query)}
             >
-              <Text fontSize="xl" mb={1}>{d.icon}</Text>
+              <Box color={`${d.color}.500`} mb={2.5}>
+                <d.Icon size={20} strokeWidth={1.5} />
+              </Box>
               <Text fontSize="sm" fontWeight="semibold" color="gray.700">{d.label}</Text>
               <Text fontSize="xs" color="gray.400">{d.sub}</Text>
             </Box>
@@ -339,6 +377,14 @@ export function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Auto-start tour on first visit
+  useEffect(() => {
+    if (!hasSeenTour()) {
+      const t = setTimeout(() => startTour(), 600);
+      return () => clearTimeout(t);
+    }
+  }, []);
+
   // Core submit logic — accepts query directly so pills can auto-submit without
   // relying on `input` state (avoids React batching issues).
   async function submit(query: string) {
@@ -430,6 +476,7 @@ export function Chat() {
           {(["chat", "sandbox"] as const).map((view) => (
             <Button
               key={view}
+              data-tour={view === "sandbox" ? "sandbox-tab" : undefined}
               size="xs"
               variant={activeView === view ? "solid" : "ghost"}
               colorPalette={activeView === view ? "blue" : "gray"}
@@ -462,6 +509,23 @@ export function Chat() {
         </HStack>
 
         <HStack gap={2}>
+          <IconButton
+            data-tour="tour-button"
+            aria-label="Take product tour"
+            title="Take product tour"
+            size="xs"
+            variant="ghost"
+            colorPalette="gray"
+            borderRadius="md"
+            h="24px"
+            w="24px"
+            minW="24px"
+            color="gray.400"
+            _hover={{ color: "blue.600", bg: "blue.50" }}
+            onClick={() => startTour()}
+          >
+            <Compass size={14} />
+          </IconButton>
           <AboutModal />
           <Badge colorPalette="green" variant="subtle" fontSize="xs" borderRadius="full" px={2}>
             Live
@@ -527,7 +591,7 @@ export function Chat() {
           {/* Message thread */}
           <Box flex={1} overflowY="auto" px={5} py={6}>
             {messages.length === 0 ? (
-              <EmptyState />
+              <EmptyState onSelect={submit} />
             ) : (
               <VStack gap={5} align="stretch" maxW="3xl" mx="auto">
                 {messages.map((msg, i) => (
@@ -646,7 +710,9 @@ export function Chat() {
             flexShrink={0}
           >
             <VStack gap={2.5} align="stretch" maxW="3xl" mx="auto">
-              <QuerySuggestions suggestions={recommendations} onSelect={handleSuggestionSelect} disabled={loading} />
+              <Box data-tour="recommendations">
+                <QuerySuggestions suggestions={recommendations} onSelect={handleSuggestionSelect} disabled={loading} />
+              </Box>
               <HStack as="form" onSubmit={handleSubmit} gap={2} align="flex-end">
                 <Textarea
                   ref={inputRef}
@@ -693,6 +759,7 @@ export function Chat() {
 
         {/* ── Citation sidebar ───────────────────────────────────────────── */}
         <Box
+          data-tour="citation-sidebar"
           w="72"
           borderLeftWidth="1px"
           borderColor="gray.200"
