@@ -154,6 +154,17 @@ export interface ModelsResponse {
   default: string;
 }
 
+export async function fetchInitialSuggestions(): Promise<SuggestionItem[]> {
+  try {
+    const response = await fetch(`${AGENT_API_BASE}/suggestions/initial`);
+    if (!response.ok) return [];
+    const data: SuggestionsResponse = await response.json();
+    return data.suggestions ?? [];
+  } catch {
+    return [];
+  }
+}
+
 export async function fetchModels(): Promise<ModelsResponse> {
   try {
     const response = await fetch(`${AGENT_API_BASE}/models`);

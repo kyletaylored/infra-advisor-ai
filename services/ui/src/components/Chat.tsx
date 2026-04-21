@@ -17,9 +17,9 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import ReactMarkdown from "react-markdown";
-import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Landmark, CloudLightning, Zap, Droplets, Compass, ExternalLink, ChartNoAxesGantt, SquarePen } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Gauge, HardHat, ShieldCheck, Briefcase, Compass, ExternalLink, ChartNoAxesGantt, SquarePen } from "lucide-react";
 import { hasSeenTour, startTour } from "../lib/tour";
-import { ApiError, BridgeData, Citation, FeedbackRating, QueryResponse, SuggestionItem, extractBridgeData, fetchModels, fetchSuggestions, newConversation, sendQuery, submitFeedback } from "../lib/api";
+import { ApiError, BridgeData, Citation, FeedbackRating, QueryResponse, SuggestionItem, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, newConversation, sendQuery, submitFeedback } from "../lib/api";
 import {
   trackBridgeCardRendered,
   trackMessageCopied,
@@ -116,24 +116,24 @@ const TOOL_META: Record<string, { label: string; document_type: string; descript
   },
 };
 
-// ── Initial suggestion pills (shown before first message) ─────────────────────
+// ── Static fallback suggestions (used when API is unavailable) ───────────────
 
 const INITIAL_SUGGESTIONS: Suggestion[] = [
   {
-    label: "Deficient Texas bridges",
-    query: "List structurally deficient bridges in Texas with ADT over 10,000 — sort by sufficiency rating lowest first.",
+    label: "Deficient bridges",
+    query: "List structurally deficient bridges in Texas with ADT over 10,000, sorted by sufficiency rating.",
   },
   {
     label: "SDWA violations",
     query: "Which Texas community water systems have open Safe Drinking Water Act violations serving more than 10,000 people?",
   },
   {
-    label: "Corpus Christi water plan",
-    query: "What water supply projects are recommended for the Corpus Christi region in the TWDB 2026 State Water Plan?",
+    label: "Infrastructure opportunities",
+    query: "What active federal infrastructure procurement opportunities are open on SAM.gov for civil engineering NAICS codes?",
   },
   {
-    label: "Texas renewable capacity",
-    query: "Show the breakdown of Texas electricity generation capacity by fuel type using EIA data and highlight renewable trends.",
+    label: "Disaster risk counties",
+    query: "Which Texas counties have received 5 or more FEMA disaster declarations since 2010?",
   },
 ];
 
@@ -176,6 +176,24 @@ const FOLLOW_UPS_BY_TOOL: Record<string, Suggestion[]> = {
     { label: "Funding memo", query: "Create a federal funding positioning memo for this project." },
     { label: "Scope of work", query: "Draft a scope of work document for this infrastructure improvement project." },
   ],
+  get_procurement_opportunities: [
+    { label: "Award benchmarks", query: "Who are the incumbent contractors and what are the pricing benchmarks for similar federal infrastructure awards in this NAICS code?" },
+    { label: "Grant deadlines", query: "What infrastructure grant programs have upcoming application deadlines in the next 90 days?" },
+    { label: "Agency spend profile", query: "Which federal agencies have spent the most on civil infrastructure contracts in the past 12 months?" },
+    { label: "Win positioning", query: "Draft a capture strategy memo positioning our firm for this opportunity based on the competitive landscape." },
+  ],
+  get_contract_awards: [
+    { label: "Competitor analysis", query: "Which firms are winning the most federal infrastructure awards in this NAICS code and what are their average contract sizes?" },
+    { label: "Price benchmarks", query: "What is the price range for similar scope infrastructure awards from this agency in the last 2 years?" },
+    { label: "Open opportunities", query: "What active federal solicitations exist for similar infrastructure work that we could pursue?" },
+    { label: "BD memo", query: "Draft a competitive intelligence memo summarizing the market landscape for this project type." },
+  ],
+  search_web_procurement: [
+    { label: "Bond elections", query: "What infrastructure bond elections are scheduled in Texas in the next 6 months?" },
+    { label: "State RFPs", query: "What state agency RFPs are currently open for engineering or construction services?" },
+    { label: "Similar projects", query: "Find recent local government RFPs for similar infrastructure rehabilitation work." },
+    { label: "Pursuit memo", query: "Draft a go/no-go recommendation memo for pursuing this procurement opportunity." },
+  ],
 };
 
 /** Derive 4 follow-up suggestions from the MCP tools used in a response. */
@@ -202,32 +220,32 @@ function sourceToCitation(tool: string): Citation {
 
 const DOMAINS = [
   {
-    Icon: Landmark,
-    label: "Bridges",
-    sub: "NBI structural conditions",
-    query: "List structurally deficient bridges in Texas with ADT over 10,000 — sort by sufficiency rating lowest first.",
+    Icon: Gauge,
+    label: "Engineering",
+    sub: "Infrastructure assessment",
+    query: "List structurally deficient bridges in Texas with ADT over 10,000, sorted by sufficiency rating — include scour-critical flags.",
     color: "blue",
   },
   {
-    Icon: CloudLightning,
-    label: "Disasters",
-    sub: "FEMA declarations & risk",
-    query: "What major disaster declarations have occurred in Texas in the last 3 years?",
+    Icon: HardHat,
+    label: "Construction",
+    sub: "Procurement & project data",
+    query: "What active federal infrastructure construction opportunities are open on SAM.gov in Texas for highway and bridge NAICS codes?",
     color: "orange",
   },
   {
-    Icon: Zap,
-    label: "Energy",
-    sub: "EIA grid & generation",
-    query: "Show the breakdown of Texas electricity generation capacity by fuel type using EIA data and highlight renewable trends.",
-    color: "yellow",
+    Icon: ShieldCheck,
+    label: "Resilience",
+    sub: "Risk & disaster analysis",
+    query: "Which Texas counties have received 5 or more FEMA disaster declarations since 2010, and what hazard types are most frequent?",
+    color: "red",
   },
   {
-    Icon: Droplets,
-    label: "Water",
-    sub: "TWDB supply plans",
-    query: "Which Texas community water systems have open Safe Drinking Water Act violations serving more than 10,000 people?",
-    color: "cyan",
+    Icon: Briefcase,
+    label: "Advisory",
+    sub: "Docs, BD & firm knowledge",
+    query: "Search our knowledge base for risk assessment frameworks and case studies relevant to aging infrastructure rehabilitation projects.",
+    color: "purple",
   },
 ] as const;
 
@@ -237,10 +255,10 @@ function EmptyState({ onSelect }: { onSelect: (query: string) => void }) {
       <VStack gap={8} maxW="lg" w="full" textAlign="center">
         <VStack gap={2}>
           <Text fontSize="xl" fontWeight="semibold" color="gray.700">
-            Ask about US infrastructure
+            Infrastructure advisory at your fingertips
           </Text>
           <Text fontSize="sm" color="gray.400">
-            Live government data · Azure AI Search · GPT-4.1
+            Architecture · Engineering · Construction · Operations · Management
           </Text>
         </VStack>
 
@@ -455,7 +473,7 @@ export function Chat() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<{ message: string; traceId: string | null } | null>(null);
   const [activeCitations, setActiveCitations] = useState<Citation[]>([]);
-  const [recommendations, setRecommendations] = useState<Suggestion[]>(INITIAL_SUGGESTIONS);
+  const [recommendations, setRecommendations] = useState<Suggestion[]>([]);
   const [availableModels, setAvailableModels] = useState<string[]>(["gpt-4.1-mini"]);
   const [selectedModel, setSelectedModel] = useState<string>("gpt-4.1-mini");
 
@@ -478,6 +496,13 @@ export function Chat() {
     fetchModels().then((data) => {
       setAvailableModels(data.models);
       setSelectedModel(data.default);
+    });
+  }, []);
+
+  // Fetch LLM-generated initial suggestions spanning AECOM practice areas
+  useEffect(() => {
+    fetchInitialSuggestions().then((items) => {
+      setRecommendations(items.length > 0 ? items : INITIAL_SUGGESTIONS);
     });
   }, []);
 

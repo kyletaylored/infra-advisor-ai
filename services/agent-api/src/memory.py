@@ -26,6 +26,9 @@ def _redis_client() -> redis.Redis:
     return redis.Redis(host=host, port=port, decode_responses=True)
 
 
+get_redis = _redis_client  # public alias for use outside this module
+
+
 def _memory_key(session_id: str) -> str:
     return f"{_SESSION_PREFIX}:{session_id}:{_MEMORY_SUFFIX}"
 

@@ -1,9 +1,11 @@
 # must be first import — monkey-patches httpx, openai, langchain at import time
 import ddtrace.auto
 
+import asyncio
 import json
 import logging
 import os
+import random
 import re
 import time
 import uuid
@@ -17,7 +19,7 @@ from pydantic import BaseModel
 
 from agent import build_llm, build_mcp_client, run_agent
 from kafka_consumer import start_consumer_thread
-from memory import append_exchange, clear_session, get_session_model, set_session_model
+from memory import append_exchange, clear_session, get_redis, get_session_model, set_session_model
 from observability.llm_obs import enable_llm_obs, submit_user_feedback
 from observability.tracing import current_span_id, current_trace_id
 
@@ -80,6 +82,10 @@ async def lifespan(app: FastAPI):
         except Exception as exc:
             logger.warning(
                 "Kafka consumer thread failed to start (non-fatal): %s", exc)
+
+    # Seed suggestion pool and start background top-up loop
+    if _llm:
+        asyncio.create_task(_pool_maintenance_loop(_llm))
 
     yield
 
@@ -155,18 +161,19 @@ _ALL_TOOLS = (
 )
 
 _FALLBACK_SUGGESTIONS: list[SuggestionItem] = [
-    SuggestionItem(label="🌉 Deficient Texas bridges",
-                   query="Pull all structurally deficient bridges in Texas with ADT over 10,000 and last inspection before 2022."),
-    SuggestionItem(label="⚡ ERCOT storage trends",
-                   query="What are current energy storage resource charging patterns in the ERCOT Texas grid?"),
-    SuggestionItem(label="💧 SDWA violations",
+    SuggestionItem(label="Deficient bridges",
+                   query="List structurally deficient bridges in Texas with ADT over 10,000, sorted by sufficiency rating lowest first."),
+    SuggestionItem(label="SDWA violations",
                    query="Which Texas community water systems have open Safe Drinking Water Act violations serving more than 10,000 people?"),
-    SuggestionItem(label="🌊 Recent FEMA declarations",
-                   query="What major disaster declarations have occurred in Texas in the last 3 years?"),
+    SuggestionItem(label="Infrastructure opportunities",
+                   query="What active federal procurement opportunities exist for infrastructure engineering services on SAM.gov with NAICS codes for civil or environmental work?"),
+    SuggestionItem(label="Disaster risk counties",
+                   query="Which Texas counties have received 5 or more FEMA disaster declarations since 2010, and what hazard types are most frequent?"),
 ]
 
 _SUGGESTIONS_PROMPT = """\
-You are generating follow-up question suggestions for an infrastructure consulting AI assistant.
+You are generating follow-up question suggestions for an AI assistant serving consultants at an \
+Architecture, Engineering, Construction, Operations, and Management (AECOM) firm.
 
 The user just asked:
 {query}
@@ -180,11 +187,125 @@ Available tools the user can query next:
 {tools}
 
 Generate exactly 4 concise follow-up questions that are natural next steps given this conversation. \
-Each should explore a different angle — risk, cost, comparison, or document drafting. \
-Keep labels short (2-5 words with a relevant emoji). Keep queries specific and actionable.
+Each should explore a different AECOM practice area angle — engineering risk, construction delivery, \
+operational resilience, management/BD, or document drafting. \
+Keep labels short (2-5 words, no emojis). Keep queries specific, data-grounded, and immediately actionable.
 
 Return ONLY valid JSON, no markdown fences, no explanation:
 {{"suggestions": [{{"label": "...", "query": "..."}}, {{"label": "...", "query": "..."}}, {{"label": "...", "query": "..."}}, {{"label": "...", "query": "..."}}]}}"""
+
+# ─── Suggestion pool (Redis-backed, grows over time) ──────────────────────────
+
+_POOL_KEY = "infra-advisor:suggestions:pool"
+_POOL_MAX = 80   # max items retained in pool
+_POOL_MIN = 20   # trigger async refill below this count
+_POOL_REFILL_INTERVAL = 1800  # seconds between background top-ups (30 min)
+
+# Four rotating prompts — one per AECOM practice area focus — so the pool
+# accumulates diverse content across disciplines over time.
+_POOL_BATCH_PROMPTS = [
+    # Engineering: structural, civil, environmental
+    """\
+Generate exactly 10 specific opening questions an infrastructure engineer at an AECOM-style consulting \
+firm would ask an AI assistant backed by FHWA NBI, EPA SDWIS, EIA, ERCOT, TxDOT, and FEMA data.
+Focus on: structural condition rankings, sufficiency ratings, scour risk, water system violations, \
+energy grid capacity by fuel type, traffic volume thresholds, and cross-hazard exposure.
+Every question must cite a specific threshold, data field, geography, or time window. No generic questions. \
+No emojis in labels. Labels 2-5 words.
+Return ONLY valid JSON, no markdown:
+{{"suggestions": [{{"label": "...", "query": "..."}}, ... 10 items ...]}}""",
+
+    # Construction: procurement, delivery, project data
+    """\
+Generate exactly 10 specific opening questions a construction project manager or BD director at an \
+AECOM-style consulting firm would ask an AI assistant backed by SAM.gov, USASpending.gov, and state \
+procurement portals.
+Focus on: active federal solicitations, contract award benchmarks by NAICS code, incumbent contractor \
+analysis, grant program deadlines, bond election schedules, and price-per-unit benchmarks.
+Every question must reference a specific NAICS code, agency, dollar threshold, or geography. No emojis in labels. Labels 2-5 words.
+Return ONLY valid JSON, no markdown:
+{{"suggestions": [{{"label": "...", "query": "..."}}, ... 10 items ...]}}""",
+
+    # Operations: resilience, risk, asset lifecycle
+    """\
+Generate exactly 10 specific opening questions an asset manager or resilience planner at an AECOM-style \
+consulting firm would ask an AI assistant backed by FEMA OpenFEMA, FHWA NBI, EPA SDWIS, and EIA data.
+Focus on: repeat disaster declarations by county and hazard type, flood and scour risk to bridge assets, \
+water system outage history, grid stress events, multi-hazard exposure scoring, and infrastructure age profiles.
+Every question must reference a specific hazard type, county, time range, or asset class. No emojis in labels. Labels 2-5 words.
+Return ONLY valid JSON, no markdown:
+{{"suggestions": [{{"label": "...", "query": "..."}}, ... 10 items ...]}}""",
+
+    # Management/Advisory: documents, BD, firm knowledge
+    """\
+Generate exactly 10 specific opening questions a program manager or practice leader at an AECOM-style \
+consulting firm would ask an AI assistant with access to a firm knowledge base, document drafting tools, \
+and procurement intelligence.
+Focus on: SOW scaffolds for specific project types, risk framework selection, funding memo positioning, \
+order-of-magnitude cost estimates, competitive intelligence summaries, and similar prior project retrieval.
+Every question must describe a concrete deliverable, project type, or decision context. No emojis in labels. Labels 2-5 words.
+Return ONLY valid JSON, no markdown:
+{{"suggestions": [{{"label": "...", "query": "..."}}, ... 10 items ...]}}""",
+]
+
+
+def _pool_size() -> int:
+    try:
+        return get_redis().llen(_POOL_KEY)
+    except Exception:
+        return 0
+
+
+def _pool_get_random(n: int) -> list[SuggestionItem]:
+    """Return n random items from the pool without removing them."""
+    try:
+        all_raw: list[str] = get_redis().lrange(_POOL_KEY, 0, -1)
+        if len(all_raw) < n:
+            return []
+        return [SuggestionItem(**json.loads(r)) for r in random.sample(all_raw, n)]
+    except Exception:
+        return []
+
+
+def _pool_add(items: list[SuggestionItem]) -> None:
+    """Append items to the pool and trim to _POOL_MAX."""
+    if not items:
+        return
+    try:
+        client = get_redis()
+        client.rpush(_POOL_KEY, *[json.dumps({"label": i.label, "query": i.query}) for i in items])
+        size = client.llen(_POOL_KEY)
+        if size > _POOL_MAX:
+            client.ltrim(_POOL_KEY, size - _POOL_MAX, -1)
+    except Exception as exc:
+        logger.warning("pool_add failed: %s", exc)
+
+
+async def _fill_pool(llm: Any) -> None:
+    """Generate one batch of suggestions and append to the pool."""
+    prompt = random.choice(_POOL_BATCH_PROMPTS)
+    try:
+        response = await llm.ainvoke([HumanMessage(content=prompt)])
+        content = response.content if isinstance(response.content, str) else str(response.content)
+        items = _parse_suggestions(content)
+        if items:
+            _pool_add(items)
+            logger.info("suggestion pool refilled: +%d items (pool=%d)", len(items), _pool_size())
+    except Exception as exc:
+        logger.warning("_fill_pool failed: %s", exc)
+
+
+async def _pool_maintenance_loop(llm: Any) -> None:
+    """Background task: seed pool on startup, then top it up every 30 minutes."""
+    if _pool_size() < 4:
+        await _fill_pool(llm)
+    while True:
+        await asyncio.sleep(_POOL_REFILL_INTERVAL)
+        try:
+            if _pool_size() < _POOL_MIN:
+                await _fill_pool(llm)
+        except Exception as exc:
+            logger.warning("pool maintenance iteration failed: %s", exc)
 
 
 def _parse_suggestions(text: str) -> list[SuggestionItem]:
@@ -287,6 +408,32 @@ async def suggestions(body: SuggestionsRequest) -> SuggestionsResponse:
     except Exception as exc:
         logger.warning("Suggestions LLM call failed: %s", exc)
 
+    return SuggestionsResponse(suggestions=_FALLBACK_SUGGESTIONS)
+
+
+@app.get("/suggestions/initial", response_model=SuggestionsResponse)
+async def initial_suggestions() -> SuggestionsResponse:
+    """Return 4 random suggestions from the Redis pool; fall back to LLM if pool is empty."""
+    picked = _pool_get_random(4)
+    if picked:
+        # Async top-up if pool is running low — doesn't block the response
+        if _pool_size() < _POOL_MIN and _llm:
+            asyncio.create_task(_fill_pool(_llm))
+        return SuggestionsResponse(suggestions=picked)
+
+    # Pool empty (first boot or Redis unavailable) — call LLM directly and seed pool
+    if not _llm:
+        return SuggestionsResponse(suggestions=_FALLBACK_SUGGESTIONS)
+    try:
+        prompt = random.choice(_POOL_BATCH_PROMPTS)
+        response = await _llm.ainvoke([HumanMessage(content=prompt)])
+        content = response.content if isinstance(response.content, str) else str(response.content)
+        parsed = _parse_suggestions(content)
+        if parsed:
+            _pool_add(parsed)
+            return SuggestionsResponse(suggestions=parsed[:4])
+    except Exception as exc:
+        logger.warning("initial_suggestions fallback LLM call failed: %s", exc)
     return SuggestionsResponse(suggestions=_FALLBACK_SUGGESTIONS)
 
 
