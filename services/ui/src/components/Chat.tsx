@@ -19,7 +19,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Landmark, CloudLightning, Zap, Droplets, Compass } from "lucide-react";
 import { hasSeenTour, startTour } from "../lib/tour";
-import { BridgeData, Citation, FeedbackRating, ModelsResponse, QueryResponse, SuggestionItem, extractBridgeData, fetchModels, fetchSuggestions, sendQuery, submitFeedback } from "../lib/api";
+import { ApiError, BridgeData, Citation, FeedbackRating, ModelsResponse, QueryResponse, SuggestionItem, extractBridgeData, fetchModels, fetchSuggestions, sendQuery, submitFeedback } from "../lib/api";
 import {
   trackBridgeCardRendered,
   trackMessageCopied,
@@ -378,7 +378,7 @@ export function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; traceId: string | null } | null>(null);
   const [activeCitations, setActiveCitations] = useState<Citation[]>([]);
   const [recommendations, setRecommendations] = useState<Suggestion[]>(INITIAL_SUGGESTIONS);
   const [availableModels, setAvailableModels] = useState<string[]>(["gpt-4.1-mini"]);
@@ -443,7 +443,10 @@ export function Chat() {
         .then((items) => { if (items.length > 0) setRecommendations(items); })
         .catch(() => { /* keep static fallback already shown */ });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Unknown error");
+      setError({
+        message: err instanceof Error ? err.message : "Unknown error",
+        traceId: err instanceof ApiError ? err.traceId : null,
+      });
     } finally {
       setLoading(false);
     }
@@ -717,7 +720,21 @@ export function Chat() {
                 {error && (
                   <Alert.Root status="error" borderRadius="xl" fontSize="sm">
                     <Alert.Indicator />
-                    <Alert.Description>{error}</Alert.Description>
+                    <Alert.Description>
+                      {error.message}
+                      {error.traceId && (
+                        <Link
+                          href={`https://${import.meta.env.VITE_DD_RUM_SITE || "us3.datadoghq.com"}/apm/trace/${error.traceId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          ml={2}
+                          fontWeight="medium"
+                          textDecoration="underline"
+                        >
+                          View trace →
+                        </Link>
+                      )}
+                    </Alert.Description>
                   </Alert.Root>
                 )}
 

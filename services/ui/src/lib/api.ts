@@ -1,5 +1,16 @@
 const AGENT_API_BASE = import.meta.env.VITE_AGENT_API_URL || "/api";
 
+export class ApiError extends Error {
+  status: number;
+  traceId: string | null;
+  constructor(message: string, status: number, traceId: string | null) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.traceId = traceId;
+  }
+}
+
 export interface QueryResponse {
   answer: string;
   sources: string[];
@@ -50,8 +61,16 @@ export async function sendQuery(query: string, model?: string): Promise<QueryRes
   });
 
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Agent API error ${response.status}: ${text}`);
+    let detail: string;
+    let traceId: string | null = null;
+    try {
+      const body = await response.json();
+      detail = body.detail ?? JSON.stringify(body);
+      traceId = body.trace_id ?? null;
+    } catch {
+      detail = await response.text();
+    }
+    throw new ApiError(`Agent API error ${response.status}: ${detail}`, response.status, traceId);
   }
 
   const data: QueryResponse = await response.json();
