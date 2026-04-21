@@ -222,6 +222,7 @@ async def list_models() -> dict:
 async def query(
     body: QueryRequest,
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
+    x_dd_rum_session_id: str | None = Header(default=None, alias="X-DD-RUM-Session-ID"),
 ) -> QueryResponse:
     """Run the InfraAdvisor agent against a user query."""
     session_id = x_session_id or body.session_id or str(uuid.uuid4())
@@ -245,6 +246,7 @@ async def query(
         session_id=session_id,
         mcp_client=_mcp_client,
         deployment=deployment,
+        rum_session_id=x_dd_rum_session_id,
     )
 
     append_exchange(session_id, body.query, result["answer"])

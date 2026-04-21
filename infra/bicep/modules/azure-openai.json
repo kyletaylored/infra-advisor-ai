@@ -1,0 +1,148 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.42.1.51946",
+      "templateHash": "15485663887817073576"
+    }
+  },
+  "parameters": {
+    "location": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure region for the OpenAI account"
+      }
+    },
+    "environment": {
+      "type": "string",
+      "metadata": {
+        "description": "Environment tag value (e.g. dev, staging, prod)"
+      }
+    }
+  },
+  "variables": {
+    "openAiAccountName": "[format('oai-infra-advisor-{0}', parameters('environment'))]"
+  },
+  "resources": [
+    {
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2024-04-01-preview",
+      "name": "[variables('openAiAccountName')]",
+      "location": "[parameters('location')]",
+      "tags": {
+        "environment": "[parameters('environment')]",
+        "project": "infra-advisor-ai"
+      },
+      "kind": "OpenAI",
+      "sku": {
+        "name": "S0"
+      },
+      "properties": {
+        "customSubDomainName": "[variables('openAiAccountName')]",
+        "publicNetworkAccess": "Enabled",
+        "restore": false
+      }
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2024-04-01-preview",
+      "name": "[format('{0}/{1}', variables('openAiAccountName'), 'gpt-4.1-mini')]",
+      "sku": {
+        "name": "Standard",
+        "capacity": 10
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "gpt-4.1-mini",
+          "version": "2025-04-14"
+        },
+        "versionUpgradeOption": "OnceNewDefaultVersionAvailable"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('openAiAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2024-04-01-preview",
+      "name": "[format('{0}/{1}', variables('openAiAccountName'), 'text-embedding-3-small')]",
+      "sku": {
+        "name": "Standard",
+        "capacity": 10
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "text-embedding-3-small",
+          "version": "1"
+        },
+        "versionUpgradeOption": "OnceNewDefaultVersionAvailable"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('openAiAccountName'), 'gpt-4.1-mini')]",
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('openAiAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2024-04-01-preview",
+      "name": "[format('{0}/{1}', variables('openAiAccountName'), 'gpt-4.1')]",
+      "sku": {
+        "name": "Standard",
+        "capacity": 10
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "gpt-4.1",
+          "version": "2025-04-14"
+        },
+        "versionUpgradeOption": "OnceNewDefaultVersionAvailable"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('openAiAccountName'), 'text-embedding-3-small')]",
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('openAiAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2024-04-01-preview",
+      "name": "[format('{0}/{1}', variables('openAiAccountName'), 'gpt-5.4-mini')]",
+      "sku": {
+        "name": "GlobalStandard",
+        "capacity": 250
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "gpt-5.4-mini",
+          "version": "2026-03-17"
+        },
+        "versionUpgradeOption": "OnceNewDefaultVersionAvailable"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('openAiAccountName'), 'gpt-4.1')]",
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('openAiAccountName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+    "openAiName": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure OpenAI account name"
+      },
+      "value": "[variables('openAiAccountName')]"
+    },
+    "endpoint": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure OpenAI HTTPS endpoint"
+      },
+      "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', variables('openAiAccountName')), '2024-04-01-preview').endpoint]"
+    }
+  }
+}

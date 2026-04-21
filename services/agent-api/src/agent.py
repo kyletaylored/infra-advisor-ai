@@ -270,6 +270,7 @@ async def run_agent(
     session_id: str,
     mcp_client: MultiServerMCPClient,
     deployment: str,
+    rum_session_id: str | None = None,
 ) -> dict[str, Any]:
     """Execute a multi-agent query pipeline with specialist routing.
 
@@ -289,11 +290,20 @@ async def run_agent(
     query_domain = _classify_domain(query)
     all_tools = await mcp_client.get_tools()
 
+    # session.id drives RUM↔LLM Obs correlation in Datadog — prefer the RUM session ID
+    # when available so "View session replay" links work from LLM Obs traces.
+    obs_session_id = rum_session_id or session_id
+
     with LLMObs.workflow("query-processing") as workflow_span:
         LLMObs.annotate(
             span=workflow_span,
             input_data={"content": query, "role": "user"},
-            tags={"query.domain": query_domain, "session.id": session_id},
+            tags={
+                "query.domain": query_domain,
+                "session.id": obs_session_id,
+                "session.chat_id": session_id,
+                **({"session.rum_id": rum_session_id} if rum_session_id else {}),
+            },
         )
 
         # ── Task: load session history ────────────────────────────────────────
@@ -301,7 +311,11 @@ async def run_agent(
             raw_history = load_history(session_id)
             LLMObs.annotate(
                 span=history_span,
-                tags={"history.turns": str(len(raw_history)), "session.id": session_id},
+                tags={
+                    "history.turns": str(len(raw_history)),
+                    "session.id": obs_session_id,
+                    "session.chat_id": session_id,
+                },
             )
 
         # Build conversation history messages
@@ -325,6 +339,7 @@ async def run_agent(
                     "router.specialist": decision.specialist,
                     "router.handoff_context": decision.handoff_context[:200],
                     "query.domain": query_domain,
+                    "session.id": obs_session_id,
                 },
             )
 
@@ -387,6 +402,7 @@ async def run_agent(
                 tags={
                     "specialist": specialist_name,
                     "specialist.tools_available": str(len(specialist_tools)),
+                    "session.id": obs_session_id,
                 },
             )
 
@@ -454,7 +470,7 @@ async def run_agent(
         query=query,
         context_chunks=context_chunks,
         answer=answer,
-        session_id=session_id,
+        session_id=obs_session_id,
         query_domain=query_domain,
     )
 

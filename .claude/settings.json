@@ -41,7 +41,7 @@
         "hooks": [
           {
             "type": "prompt",
-            "prompt": "Review claude-progress.txt. Has the agent completed all tasks for the current phase and verified all acceptance criteria? Answer only: YES or NO followed by one sentence."
+            "prompt": "Review claude-progress.txt. Has the agent completed all tasks for the current phase and verified all acceptance criteria? Treat [x] as verified and [~] as accepted-pending-live-deployment (not a gap). Only answer NO if there are unchecked [ ] items representing incomplete code work. Answer only: YES or NO followed by one sentence."
           }
         ]
       }

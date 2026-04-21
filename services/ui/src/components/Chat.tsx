@@ -17,9 +17,9 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import ReactMarkdown from "react-markdown";
-import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Landmark, CloudLightning, Zap, Droplets, Compass, ExternalLink, ChartNoAxesGantt } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Landmark, CloudLightning, Zap, Droplets, Compass, ExternalLink, ChartNoAxesGantt, SquarePen } from "lucide-react";
 import { hasSeenTour, startTour } from "../lib/tour";
-import { ApiError, BridgeData, Citation, FeedbackRating, QueryResponse, SuggestionItem, extractBridgeData, fetchModels, fetchSuggestions, sendQuery, submitFeedback } from "../lib/api";
+import { ApiError, BridgeData, Citation, FeedbackRating, QueryResponse, SuggestionItem, extractBridgeData, fetchModels, fetchSuggestions, newConversation, sendQuery, submitFeedback } from "../lib/api";
 import {
   trackBridgeCardRendered,
   trackMessageCopied,
@@ -50,18 +50,70 @@ interface Message {
   spanId?: string | null;
 }
 
-const TOOL_META: Record<string, { label: string; document_type: string; description: string }> = {
-  get_bridge_condition: { label: "Bridge Condition", document_type: "Bridge", description: "FHWA National Bridge Inventory" },
-  get_disaster_history: { label: "Disaster History", document_type: "Disaster", description: "OpenFEMA disaster declarations" },
-  get_energy_infrastructure: { label: "Energy Infrastructure", document_type: "Energy", description: "EIA energy infrastructure data" },
-  get_water_infrastructure: { label: "Water Infrastructure", document_type: "Water", description: "Texas Water Development Board plans" },
-  get_ercot_energy_storage: { label: "ERCOT Storage", document_type: "Energy", description: "ERCOT Texas grid energy storage data" },
-  search_txdot_open_data: { label: "TxDOT Open Data", document_type: "Transportation", description: "TxDOT traffic counts and construction projects" },
-  search_project_knowledge: { label: "Knowledge Base", document_type: "Document", description: "Azure AI Search hybrid index" },
-  draft_document: { label: "Draft Document", document_type: "Document", description: "Jinja2 consulting document template" },
-  get_procurement_opportunities: { label: "Federal Opportunities", document_type: "Procurement", description: "SAM.gov and grants.gov active opportunities" },
-  get_contract_awards: { label: "Contract Awards", document_type: "Procurement", description: "USASpending.gov competitive intelligence" },
-  search_web_procurement: { label: "Web Procurement", document_type: "Procurement", description: "State/local RFPs via Brave Search" },
+const TOOL_META: Record<string, { label: string; document_type: string; description: string; source_url?: string; data_notes?: string }> = {
+  get_bridge_condition: {
+    label: "Bridge Condition", document_type: "Bridge",
+    description: "FHWA National Bridge Inventory — structural ratings, sufficiency scores, scour flags, ADT",
+    source_url: "https://www.fhwa.dot.gov/bridge/nbi.cfm",
+    data_notes: "Coverage: all US public bridges. Key fields: sufficiency rating (0–100), deck/superstructure/substructure condition (0–9), scour critical flag.",
+  },
+  get_disaster_history: {
+    label: "Disaster History", document_type: "Disaster",
+    description: "OpenFEMA disaster declarations and public assistance data",
+    source_url: "https://www.fema.gov/openfema-data-page/disaster-declarations-summaries-v2",
+    data_notes: "Coverage: all US FEMA major disaster declarations. Filterable by state, county, incident type, and date range.",
+  },
+  get_energy_infrastructure: {
+    label: "Energy Infrastructure", document_type: "Energy",
+    description: "EIA electricity generation and capacity by state, fuel type, and year",
+    source_url: "https://www.eia.gov/electricity/data.php",
+    data_notes: "Coverage: all US states. Returns generation (MWh) and capacity (MW) by fuel type. Does not include cost, age, or investment data.",
+  },
+  get_water_infrastructure: {
+    label: "Water Infrastructure", document_type: "Water",
+    description: "EPA SDWIS drinking water compliance + TWDB 2026 State Water Plan projects",
+    source_url: "https://www.epa.gov/enviro/sdwis-search",
+    data_notes: "SDWIS coverage: all US public water systems. TWDB coverage: Texas only — requires knowledge_base_init DAG to be run.",
+  },
+  get_ercot_energy_storage: {
+    label: "ERCOT Storage", document_type: "Energy",
+    description: "ERCOT Texas grid energy storage resource (ESR) charging data",
+    source_url: "https://www.ercot.com/gridinfo/resource",
+    data_notes: "Coverage: Texas ERCOT grid only (~90% of Texas). Returns 4-second interval ESR charging/discharging data.",
+  },
+  search_txdot_open_data: {
+    label: "TxDOT Open Data", document_type: "Transportation",
+    description: "TxDOT Open Data portal — AADT traffic counts, construction projects, highway datasets",
+    source_url: "https://gis-txdot.opendata.arcgis.com/",
+    data_notes: "Coverage: Texas only. Datasets include annual average daily traffic (AADT), active construction projects, and highway geometry.",
+  },
+  search_project_knowledge: {
+    label: "Knowledge Base", document_type: "Document",
+    description: "Firm internal knowledge base — case studies, risk frameworks, templates (Azure AI Search)",
+    data_notes: "Requires knowledge_base_init Airflow DAG to be run. Scope depends on indexed documents.",
+  },
+  draft_document: {
+    label: "Draft Document", document_type: "Document",
+    description: "Generate structured consulting document scaffolds (SOW, risk summary, cost estimate, funding memo)",
+    data_notes: "Templates are generated by the LLM using firm knowledge base context. Always review before client delivery.",
+  },
+  get_procurement_opportunities: {
+    label: "Federal Opportunities", document_type: "Procurement",
+    description: "SAM.gov and grants.gov — active federal contract opportunities and open grant programs",
+    source_url: "https://sam.gov/content/opportunities",
+    data_notes: "SAM.gov: active solicitations. grants.gov: open grant programs. Results merged and sorted by deadline. Requires SAMGOV_API_KEY.",
+  },
+  get_contract_awards: {
+    label: "Contract Awards", document_type: "Procurement",
+    description: "USASpending.gov — historical federal contract awards for competitive intelligence",
+    source_url: "https://www.usaspending.gov/search",
+    data_notes: "Coverage: all federal contract awards. Returns recipient, award amount, agency, NAICS code. No auth required.",
+  },
+  search_web_procurement: {
+    label: "Web Procurement", document_type: "Procurement",
+    description: "State and local RFPs, bond elections, and government budget announcements via Tavily search",
+    data_notes: "Searches .gov and .us domains plus procurement portals. Confidence field indicates extraction reliability — flag medium-confidence results to users.",
+  },
 };
 
 // ── Initial suggestion pills (shown before first message) ─────────────────────
@@ -138,8 +190,11 @@ function getFollowUpSuggestions(sources: string[]): Suggestion[] {
 function sourceToCitation(tool: string): Citation {
   const meta = TOOL_META[tool];
   return {
+    tool_name: tool,
     content: meta ? meta.description : tool,
     document_type: meta ? meta.document_type : "Tool",
+    source_url: meta?.source_url,
+    data_notes: meta?.data_notes,
   };
 }
 
@@ -555,6 +610,29 @@ export function Chat() {
         </HStack>
 
         <HStack gap={2}>
+          <IconButton
+            aria-label="New conversation"
+            title="New conversation"
+            size="xs"
+            variant="ghost"
+            colorPalette="gray"
+            borderRadius="md"
+            h="24px"
+            w="24px"
+            minW="24px"
+            color="gray.400"
+            _hover={{ color: "green.600", bg: "green.50" }}
+            onClick={() => {
+              newConversation();
+              setMessages([]);
+              setActiveCitations([]);
+              setRecommendations(INITIAL_SUGGESTIONS);
+              setError(null);
+              setInput("");
+            }}
+          >
+            <SquarePen size={14} />
+          </IconButton>
           <IconButton
             data-tour="tour-button"
             aria-label="Take product tour"

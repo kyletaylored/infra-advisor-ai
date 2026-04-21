@@ -1,3 +1,5 @@
+import { getRumSessionId } from "./datadog-rum";
+
 const AGENT_API_BASE = import.meta.env.VITE_AGENT_API_URL || "/api";
 
 export class ApiError extends Error {
@@ -25,6 +27,8 @@ export interface Citation {
   document_type: string;
   score?: number;
   source_url?: string;
+  tool_name?: string;
+  data_notes?: string;
 }
 
 export interface BridgeData {
@@ -41,13 +45,28 @@ export interface BridgeData {
   _source: string;
 }
 
+const SESSION_STORAGE_KEY = "infra_advisor_session_id";
+
 let _sessionId: string | null = null;
 
 function getSessionId(): string {
   if (!_sessionId) {
-    _sessionId = crypto.randomUUID();
+    _sessionId = localStorage.getItem(SESSION_STORAGE_KEY) ?? crypto.randomUUID();
+    localStorage.setItem(SESSION_STORAGE_KEY, _sessionId);
   }
   return _sessionId;
+}
+
+/** Start a new conversation — clears memory, generates a fresh session ID. */
+export function newConversation(): string {
+  _sessionId = crypto.randomUUID();
+  localStorage.setItem(SESSION_STORAGE_KEY, _sessionId);
+  return _sessionId;
+}
+
+function rumHeaders(): Record<string, string> {
+  const rumSessionId = getRumSessionId();
+  return rumSessionId ? { "X-DD-RUM-Session-ID": rumSessionId } : {};
 }
 
 export async function sendQuery(query: string, model?: string): Promise<QueryResponse> {
@@ -56,6 +75,7 @@ export async function sendQuery(query: string, model?: string): Promise<QueryRes
     headers: {
       "Content-Type": "application/json",
       "X-Session-ID": getSessionId(),
+      ...rumHeaders(),
     },
     body: JSON.stringify({ query, ...(model ? { model } : {}) }),
   });
@@ -102,6 +122,7 @@ export async function fetchSuggestions(
     headers: {
       "Content-Type": "application/json",
       "X-Session-ID": getSessionId(),
+      ...rumHeaders(),
     },
     body: JSON.stringify({ query, answer, sources }),
   });
@@ -116,6 +137,7 @@ export async function clearSession(): Promise<void> {
   if (!_sessionId) return;
   await fetch(`${AGENT_API_BASE}/session/${_sessionId}`, { method: "DELETE" });
   _sessionId = null;
+  localStorage.removeItem(SESSION_STORAGE_KEY);
 }
 
 /**

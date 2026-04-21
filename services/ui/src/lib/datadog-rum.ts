@@ -31,6 +31,17 @@ export function initDatadogRum(): void {
   datadogRum.startSessionReplayRecording();
 }
 
+// ─── Session ID ─────────────────────────────────────────────────────────────
+
+/** Returns the active Datadog RUM session ID, or undefined if RUM is not initialised. */
+export function getRumSessionId(): string | undefined {
+  try {
+    return datadogRum.getInternalContext()?.session_id;
+  } catch {
+    return undefined;
+  }
+}
+
 // ─── Custom RUM actions ─────────────────────────────────────────────────────
 
 export function trackQuerySubmitted(queryLength: number, domain?: string): void {
