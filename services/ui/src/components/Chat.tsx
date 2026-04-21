@@ -59,6 +59,9 @@ const TOOL_META: Record<string, { label: string; document_type: string; descript
   search_txdot_open_data:     { label: "TxDOT Open Data",       document_type: "Transportation",  description: "TxDOT traffic counts and construction projects" },
   search_project_knowledge:   { label: "Knowledge Base",        document_type: "Document",        description: "Azure AI Search hybrid index" },
   draft_document:             { label: "Draft Document",        document_type: "Document", description: "Jinja2 consulting document template" },
+  get_procurement_opportunities: { label: "Federal Opportunities", document_type: "Procurement", description: "SAM.gov and grants.gov active opportunities" },
+  get_contract_awards:           { label: "Contract Awards",       document_type: "Procurement", description: "USASpending.gov competitive intelligence" },
+  search_web_procurement:        { label: "Web Procurement",       document_type: "Procurement", description: "State/local RFPs via Brave Search" },
 };
 
 // ── Initial suggestion pills (shown before first message) ─────────────────────

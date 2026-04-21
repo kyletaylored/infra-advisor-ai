@@ -45,3 +45,15 @@ queries:
     domain: "water"
     expected_tools: ["get_water_infrastructure"]
     expected_behavior: "agent returns 'no records found' for implausible population threshold in low-population state"
+
+  - id: "no-open-opps-001"
+    query: "Find federal RFPs for nuclear power plant decommissioning services in Wyoming."
+    domain: "business_development"
+    expected_tools: ["get_procurement_opportunities"]
+    expected_behavior: "agent returns no results found without hallucinating opportunities; suggests broadening geography or sector"
+
+  - id: "web-search-partial-001"
+    query: "Find any recent RFPs from small Texas border counties for water well drilling or groundwater studies."
+    domain: "business_development"
+    expected_tools: ["search_web_procurement"]
+    expected_behavior: "agent returns whatever results exist, notes if partial_results flag is set, and explicitly flags any medium-confidence extractions"

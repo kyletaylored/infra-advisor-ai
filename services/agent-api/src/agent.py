@@ -33,6 +33,9 @@ You have access to the following tools:
 - search_txdot_open_data: Search the TxDOT Open Data portal for Texas transportation datasets (AADT traffic counts, construction projects, highway data)
 - search_project_knowledge: Search the firm's internal knowledge base
 - draft_document: Generate structured document scaffolds (SOW, risk summaries, cost estimates)
+- get_procurement_opportunities: Search SAM.gov and grants.gov for active federal contract opportunities and grant programs open for application
+- get_contract_awards: Search USASpending.gov for historical federal contract awards to understand the competitive landscape, pricing benchmarks, and agency spending patterns
+- search_web_procurement: Search government websites for state and local RFPs, bond elections, and infrastructure budget announcements not covered by federal APIs
 
 Guidelines:
 1. Always cite the data source for factual claims (NBI structure number, FEMA declaration ID, PWSID, TWDB project ID, etc.)
@@ -42,7 +45,9 @@ Guidelines:
 5. For draft documents, call search_project_knowledge first to retrieve relevant templates and context
 6. Do not speculate about asset conditions not in the data — say "not available in the dataset"
 7. Respond in the same language the user writes in
-8. Keep responses concise for factual lookups; detailed for document drafts"""
+8. Keep responses concise for factual lookups; detailed for document drafts
+9. For business development queries, always call get_contract_awards before get_procurement_opportunities — understanding who has already won similar work informs how to position for open opportunities
+10. When search_web_procurement returns results, always note the confidence field and flag any medium-confidence extractions explicitly to the user so they can verify before acting on the information"""
 
 
 # ─── Domain classifier ─────────────────────────────────────────────────────────
@@ -52,6 +57,7 @@ _DOMAIN_KEYWORDS: dict[str, list[str]] = {
     "water": ["water", "sdwis", "twdb", "pwsid", "violation", "desalination", "aquifer"],
     "energy": ["energy", "eia", "grid", "generation", "fuel", "solar", "wind", "ercot", "storage", "esr"],
     "document": ["draft", "scope of work", "sow", "risk summary", "cost estimate", "funding"],
+    "business_development": ["rfp", "solicitation", "contract award", "procurement", "bid", "grant", "sam.gov", "usaspending", "competitive", "proposal"],
 }
 
 

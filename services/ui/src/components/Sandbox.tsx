@@ -141,6 +141,33 @@ const ENDPOINTS: EndpointDef[] = [
       context: { location: "Austin, TX", structure_count: 3 },
     },
   },
+  {
+    id: "get_procurement_opportunities",
+    group: "MCP Tools",
+    label: "get_procurement_opportunities",
+    method: "POST",
+    path: "/tools/get_procurement_opportunities",
+    description: "Search SAM.gov and grants.gov for active federal contract opportunities and open grant programs.",
+    example: { query: "water treatment engineering services", geography: "TX", limit: 10 },
+  },
+  {
+    id: "get_contract_awards",
+    group: "MCP Tools",
+    label: "get_contract_awards",
+    method: "POST",
+    path: "/tools/get_contract_awards",
+    description: "Search USASpending.gov for historical federal contract awards. Competitive intelligence on pricing and agency spending.",
+    example: { query: "bridge inspection rehabilitation", geography: "TX", limit: 15 },
+  },
+  {
+    id: "search_web_procurement",
+    group: "MCP Tools",
+    label: "search_web_procurement",
+    method: "POST",
+    path: "/tools/search_web_procurement",
+    description: "Search government websites for state/local RFPs, bond elections, and infrastructure budget announcements via Brave Search.",
+    example: { query: "water treatment RFP feasibility study", geography: "Texas", sector: "water", result_type: "rfp", limit: 5 },
+  },
 ];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

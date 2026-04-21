@@ -71,9 +71,9 @@ async def lifespan(app: FastAPI):
         _AVAILABLE_MODELS.append("gpt-4.1-mini")
 
     # Start Kafka consumer background thread (non-fatal if Kafka unavailable)
-    if _mcp_client and _llm:
+    if _mcp_client:
         try:
-            start_consumer_thread(_mcp_client, _llm)
+            start_consumer_thread(_mcp_client)
         except Exception as exc:
             logger.warning("Kafka consumer thread failed to start (non-fatal): %s", exc)
 
@@ -133,7 +133,10 @@ _ALL_TOOLS = (
     "get_ercot_energy_storage (ERCOT Texas grid energy storage resource 4-second charging data), "
     "search_txdot_open_data (TxDOT Open Data portal — AADT traffic counts, construction projects, highway datasets), "
     "search_project_knowledge (firm knowledge base — case studies, risk frameworks, templates), "
-    "draft_document (generate SOW, risk summary, cost estimate, or funding memo)"
+    "draft_document (generate SOW, risk summary, cost estimate, or funding memo), "
+    "get_procurement_opportunities (SAM.gov and grants.gov — active federal contract opportunities and open grant programs), "
+    "get_contract_awards (USASpending.gov — historical federal contract awards for competitive intelligence and pricing benchmarks), "
+    "search_web_procurement (Brave Search — state and local RFPs, bond elections, and government budget announcements)"
 )
 
 _FALLBACK_SUGGESTIONS: list[SuggestionItem] = [

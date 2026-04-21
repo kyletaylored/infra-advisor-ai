@@ -277,6 +277,7 @@ with DAG(
 
         blob_service = BlobServiceClient.from_connection_string(conn_str)
         container_client = blob_service.get_container_client(PROCESSED_CONTAINER)
+        from _dd_blob import dd_upload_blob
 
         # Ensure container exists
         try:
@@ -295,7 +296,7 @@ with DAG(
             blob_name = f"{blob_prefix}{fname}"
 
             with open(local_fp, "rb") as data:
-                container_client.upload_blob(name=blob_name, data=data, overwrite=True)
+                dd_upload_blob(container_client, blob_name, data, dag_id="spark_feature_engineering")
             log.info("Uploaded %s → %s/%s", fname, PROCESSED_CONTAINER, blob_name)
             uploaded += 1
 

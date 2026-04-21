@@ -1,0 +1,137 @@
+{
+  "title": "InfraAdvisor — Azure Blob Storage",
+  "description": "APM spans for azure.blob.upload across all Airflow ingestion DAGs. Tracks throughput, latency, size, and errors by DAG and container.",
+  "layout_type": "ordered",
+  "tags": ["team:infra-advisor", "env:dev"],
+  "widgets": [
+    {
+      "id": 1,
+      "definition": {
+        "type": "timeseries",
+        "title": "Blob Upload Throughput (spans/min) by DAG",
+        "requests": [
+          {
+            "q": "sum:trace.azure.blob.upload.hits{env:dev} by {resource_name,dag_id}.as_rate()",
+            "display_type": "bars",
+            "style": {"palette": "dog_classic"}
+          }
+        ],
+        "yaxis": {"include_zero": true},
+        "markers": [],
+        "time": {}
+      }
+    },
+    {
+      "id": 2,
+      "definition": {
+        "type": "timeseries",
+        "title": "Blob Upload p95 Latency (ms) by DAG",
+        "requests": [
+          {
+            "q": "p95:trace.azure.blob.upload.duration{env:dev} by {dag_id} * 1000",
+            "display_type": "line",
+            "style": {"palette": "purple"}
+          }
+        ],
+        "yaxis": {"include_zero": true},
+        "time": {}
+      }
+    },
+    {
+      "id": 3,
+      "definition": {
+        "type": "timeseries",
+        "title": "Blob Upload Error Rate by DAG",
+        "requests": [
+          {
+            "q": "sum:trace.azure.blob.upload.errors{env:dev} by {dag_id}.as_rate()",
+            "display_type": "bars",
+            "style": {"palette": "warm"}
+          }
+        ],
+        "yaxis": {"include_zero": true},
+        "time": {}
+      }
+    },
+    {
+      "id": 4,
+      "definition": {
+        "type": "timeseries",
+        "title": "Blob Upload Size (bytes) by DAG",
+        "requests": [
+          {
+            "q": "avg:trace.azure.blob.upload{env:dev,@blob.size_bytes:*} by {dag_id}.rollup(avg, 300)",
+            "display_type": "line",
+            "style": {"palette": "green"}
+          }
+        ],
+        "yaxis": {"include_zero": true},
+        "time": {}
+      }
+    },
+    {
+      "id": 5,
+      "definition": {
+        "type": "query_value",
+        "title": "Total Blobs Uploaded (last 24h)",
+        "requests": [
+          {
+            "q": "sum:trace.azure.blob.upload.hits{env:dev}.as_count()",
+            "aggregator": "sum"
+          }
+        ],
+        "time": {"live_span": "1d"},
+        "precision": 0
+      }
+    },
+    {
+      "id": 6,
+      "definition": {
+        "type": "query_value",
+        "title": "Upload Error Count (last 24h)",
+        "requests": [
+          {
+            "q": "sum:trace.azure.blob.upload.errors{env:dev}.as_count()",
+            "aggregator": "sum",
+            "conditional_formats": [
+              {"comparator": ">", "value": 0, "palette": "white_on_red"},
+              {"comparator": "<=", "value": 0, "palette": "white_on_green"}
+            ]
+          }
+        ],
+        "time": {"live_span": "1d"},
+        "precision": 0
+      }
+    },
+    {
+      "id": 7,
+      "definition": {
+        "type": "toplist",
+        "title": "Top Upload Paths by Count (last 1h)",
+        "requests": [
+          {
+            "q": "sum:trace.azure.blob.upload.hits{env:dev} by {resource_name}.as_count()",
+            "style": {"palette": "dog_classic"}
+          }
+        ],
+        "time": {"live_span": "1h"}
+      }
+    },
+    {
+      "id": 8,
+      "definition": {
+        "type": "timeseries",
+        "title": "Uploads by Container",
+        "requests": [
+          {
+            "q": "sum:trace.azure.blob.upload.hits{env:dev} by {blob.container}.as_rate()",
+            "display_type": "bars",
+            "style": {"palette": "cool"}
+          }
+        ],
+        "yaxis": {"include_zero": true},
+        "time": {}
+      }
+    }
+  ]
+}

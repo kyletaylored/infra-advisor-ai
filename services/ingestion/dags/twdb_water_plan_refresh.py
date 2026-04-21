@@ -14,6 +14,7 @@ import tiktoken
 from azure.core.credentials import AzureKeyCredential
 from azure.search.documents import SearchClient
 from azure.storage.blob import BlobServiceClient
+from _dd_blob import dd_upload_blob
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
@@ -105,8 +106,7 @@ with DAG(
             container.create_container()
         except Exception:
             pass
-        blob = container.get_blob_client(blob_path)
-        blob.upload_blob(BytesIO(workbook_bytes), overwrite=True)
+        dd_upload_blob(container, blob_path, BytesIO(workbook_bytes), dag_id="twdb_water_plan_refresh")
         log.info("Stored raw TWDB workbook at: %s/%s", RAW_CONTAINER, blob_path)
 
         # Parse using openpyxl via pandas
@@ -196,8 +196,7 @@ with DAG(
             container.create_container()
         except Exception:
             pass
-        blob = container.get_blob_client(blob_path)
-        blob.upload_blob(parquet_buf, overwrite=True)
+        dd_upload_blob(container, blob_path, parquet_buf, dag_id="twdb_water_plan_refresh")
         log.info("Stored raw EPA SDWIS Parquet at: %s/%s", RAW_CONTAINER, blob_path)
 
         context["ti"].xcom_push(key="sdwis_records", value=records)

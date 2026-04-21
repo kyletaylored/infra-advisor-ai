@@ -24,7 +24,7 @@ from confluent_kafka import Consumer, KafkaError, Producer
 logger = logging.getLogger(__name__)
 
 KAFKA_BOOTSTRAP = os.environ.get(
-    "KAFKA_BOOTSTRAP_SERVERS", "kafka-broker.kafka.svc.cluster.local:9092"
+    "KAFKA_BOOTSTRAP_SERVERS", "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
 )
 TOPIC_QUERIES = "infra.query.events"
 TOPIC_RESULTS = "infra.eval.results"
@@ -46,9 +46,10 @@ def _build_producer() -> Producer:
     return Producer({"bootstrap.servers": KAFKA_BOOTSTRAP})
 
 
-def _run_consumer_loop(mcp_client, llm) -> None:
+def _run_consumer_loop(mcp_client) -> None:
     """Blocking consumer loop — runs in a background thread."""
     from agent import run_agent
+    from memory import get_session_model
 
     consumer = _build_consumer()
     producer = _build_producer()
@@ -91,12 +92,13 @@ def _run_consumer_loop(mcp_client, llm) -> None:
 
             start_ms = time.monotonic() * 1000
             try:
+                deployment = loop.run_until_complete(get_session_model(session_id))
                 result = loop.run_until_complete(
                     run_agent(
                         query=query,
                         session_id=session_id,
                         mcp_client=mcp_client,
-                        llm=llm,
+                        deployment=deployment,
                     )
                 )
                 latency_ms = time.monotonic() * 1000 - start_ms
@@ -138,14 +140,14 @@ def _run_consumer_loop(mcp_client, llm) -> None:
         logger.info("Kafka consumer thread stopped")
 
 
-def start_consumer_thread(mcp_client, llm) -> threading.Thread:
+def start_consumer_thread(mcp_client) -> threading.Thread:
     """Start the Kafka consumer in a background daemon thread.
 
     Returns the thread object (already started).
     """
     thread = threading.Thread(
         target=_run_consumer_loop,
-        args=(mcp_client, llm),
+        args=(mcp_client,),
         daemon=True,
         name="kafka-consumer",
     )

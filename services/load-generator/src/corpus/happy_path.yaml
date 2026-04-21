@@ -68,3 +68,23 @@ queries:
     query: "What is the solar energy generation trend in Texas over the last 5 years?"
     domain: "energy"
     expected_tools: ["get_energy_infrastructure"]
+
+  - id: "fed-opportunities-001"
+    query: "What federal contract opportunities are currently open for water infrastructure engineering services in Texas? Show me anything with a deadline in the next 60 days."
+    domain: "business_development"
+    expected_tools: ["get_procurement_opportunities"]
+
+  - id: "competitive-intel-001"
+    query: "Who has been winning federal bridge inspection contracts in the Gulf Coast region over the past two years and at what contract values? We are preparing a proposal and need to understand the competitive landscape."
+    domain: "business_development"
+    expected_tools: ["get_contract_awards", "search_project_knowledge"]
+
+  - id: "local-rfp-001"
+    query: "Are there any open RFPs from Texas municipalities or counties for water treatment or desalination feasibility studies? Check state and local sources, not just federal."
+    domain: "business_development"
+    expected_tools: ["search_web_procurement", "get_procurement_opportunities"]
+
+  - id: "market-sizing-001"
+    query: "Which Texas counties have grown more than 5 percent since 2020 and may need expanded water infrastructure? Cross-reference with the TWDB water plan to see if those counties appear in recommended projects."
+    domain: "business_development"
+    expected_tools: ["search_project_knowledge", "get_water_infrastructure"]

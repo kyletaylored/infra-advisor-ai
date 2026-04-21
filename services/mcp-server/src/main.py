@@ -25,6 +25,12 @@ from tools.ercot_energy import ERCOTEnergyStorageInput
 from tools.ercot_energy import get_ercot_energy_storage as _get_ercot_energy_storage
 from tools.txdot_open_data import TxDOTOpenDataInput
 from tools.txdot_open_data import search_txdot_open_data as _search_txdot_open_data
+from tools.procurement_opportunities import ProcurementOpportunitiesInput
+from tools.procurement_opportunities import get_procurement_opportunities as _get_procurement_opportunities
+from tools.contract_awards import ContractAwardsInput
+from tools.contract_awards import get_contract_awards as _get_contract_awards
+from tools.web_procurement_search import WebProcurementSearchInput
+from tools.web_procurement_search import search_web_procurement as _search_web_procurement
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -43,6 +49,9 @@ mcp = FastMCP(
         "TxDOT Open Data (traffic counts, construction projects), "
         "EPA SDWIS water system compliance data, "
         "TWDB 2026 State Water Plan projects, "
+        "SAM.gov and grants.gov federal procurement opportunities, "
+        "USASpending.gov contract award intelligence, "
+        "Brave-powered web search for state/local government RFPs, "
         "the firm's internal knowledge base, and document drafting."
     ),
     # Disable DNS rebinding protection — running inside K8s cluster, all hostnames are trusted
@@ -253,6 +262,95 @@ async def search_txdot_open_data(
 
 
 @mcp.tool()
+async def get_procurement_opportunities(
+    query: str,
+    geography: str | None = None,
+    naics_codes: list[str] | None = None,
+    min_value_usd: int | None = None,
+    max_value_usd: int | None = None,
+    opportunity_types: list[str] | None = None,
+    limit: int = 20,
+) -> list | dict:
+    """Search SAM.gov and grants.gov for active federal contract opportunities and grants.
+
+    Merges results from both sources sorted by deadline (soonest first).
+    Each result is tagged with _source: "SAM.gov" or "grants.gov".
+    Requires SAMGOV_API_KEY env var (free at api.sam.gov — key includes SAM- prefix).
+    opportunity_types: filter to "contract", "grant", or omit for both.
+    """
+    return await _get_procurement_opportunities(
+        ProcurementOpportunitiesInput(
+            query=query,
+            geography=geography,
+            naics_codes=naics_codes,
+            min_value_usd=min_value_usd,
+            max_value_usd=max_value_usd,
+            opportunity_types=opportunity_types,
+            limit=limit,
+        )
+    )
+
+
+@mcp.tool()
+async def get_contract_awards(
+    query: str,
+    geography: str | None = None,
+    naics_codes: list[str] | None = None,
+    agency_names: list[str] | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    min_award_usd: int | None = None,
+    limit: int = 25,
+) -> list | dict:
+    """Search USASpending.gov for historical federal contract awards.
+
+    Returns competitive intelligence: who won similar work, at what price, and for which agencies.
+    Each result tagged _source: "USASpending.gov". No API key required.
+    date_from / date_to: ISO date strings (default: past 2 years through today).
+    """
+    return await _get_contract_awards(
+        ContractAwardsInput(
+            query=query,
+            geography=geography,
+            naics_codes=naics_codes,
+            agency_names=agency_names,
+            date_from=date_from,
+            date_to=date_to,
+            min_award_usd=min_award_usd,
+            limit=limit,
+        )
+    )
+
+
+@mcp.tool()
+async def search_web_procurement(
+    query: str,
+    geography: str | None = None,
+    sector: str | None = None,
+    result_type: str | None = None,
+    limit: int = 8,
+) -> list | dict:
+    """Search government websites for state/local RFPs, bond elections, and budget announcements.
+
+    Uses Brave Search to find .gov and .us procurement pages, then extracts structured
+    data using gpt-4.1-nano. Each result has a confidence field ("high" or "medium").
+    Requires BRAVE_SEARCH_API_KEY env var.
+    sector: "transportation" | "water" | "energy" | "buildings" | "environmental"
+    result_type: "rfp" | "bond" | "budget" | "award" | "any"
+    Returns _partial_results: true if some page fetches timed out.
+    """
+    return await _search_web_procurement(
+        WebProcurementSearchInput(
+            query=query,
+            geography=geography,
+            sector=sector,
+            result_type=result_type,
+            limit=limit,
+        )
+    )
+
+
+@mcp.tool()
 async def draft_document(
     document_type: str,
     context: dict,
@@ -283,16 +381,25 @@ TOOL_NAMES = [
     "search_txdot_open_data",
     "search_project_knowledge",
     "draft_document",
+    "get_procurement_opportunities",
+    "get_contract_awards",
+    "search_web_procurement",
 ]
 
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health(request: Request) -> JSONResponse:
-    """Liveness probe — returns service status and available tool names."""
+    """Liveness probe — returns service status, available tool names, and API key status."""
+    samgov_key = os.environ.get("SAMGOV_API_KEY", "")
+    tavily_key = os.environ.get("TAVILY_API_KEY", "")
     return JSONResponse({
         "status": "ok",
         "service": os.environ.get("DD_SERVICE", "infratools-mcp"),
         "tools": TOOL_NAMES,
+        "keys_configured": {
+            "samgov": bool(samgov_key),
+            "tavily": bool(tavily_key),
+        },
     })
 
 

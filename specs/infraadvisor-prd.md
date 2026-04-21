@@ -1676,6 +1676,10 @@ LOAD_GEN_ADVERSARIAL_PCT=10
 # External data sources
 TWDB_WATER_PLAN_WORKBOOK_URL=https://www.twdb.texas.gov/waterplanning/data/rwp-database/index.asp
 EPA_SDWIS_BASE_URL=https://enviro.epa.gov/enviro/efservice
+
+# Business development APIs
+SAMGOV_API_KEY=                        # Free at api.sam.gov — full key including SAM- prefix
+TAVILY_API_KEY=                        # Free at tavily.com — 1,000 searches/month, no card required
 ```
 
 ---
