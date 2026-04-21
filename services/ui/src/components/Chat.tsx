@@ -69,7 +69,7 @@ const TOOL_META: Record<string, { label: string; document_type: string; descript
 const INITIAL_SUGGESTIONS: Suggestion[] = [
   {
     label: "Deficient Texas bridges",
-    query: "Pull all structurally deficient bridges in Texas with ADT over 10,000 and last inspection before 2022.",
+    query: "List structurally deficient bridges in Texas with ADT over 10,000 — sort by sufficiency rating lowest first.",
   },
   {
     label: "SDWA violations",
@@ -80,8 +80,8 @@ const INITIAL_SUGGESTIONS: Suggestion[] = [
     query: "What water supply projects are recommended for the Corpus Christi region in the TWDB 2026 State Water Plan?",
   },
   {
-    label: "Southeast grid resilience",
-    query: "Compare grid resilience investment patterns across southeastern states since 2018 using EIA data.",
+    label: "Texas renewable capacity",
+    query: "Show the breakdown of Texas electricity generation capacity by fuel type using EIA data and highlight renewable trends.",
   },
 ];
 
@@ -89,22 +89,22 @@ const INITIAL_SUGGESTIONS: Suggestion[] = [
 
 const FOLLOW_UPS_BY_TOOL: Record<string, Suggestion[]> = {
   get_bridge_condition: [
-    { label: "Poor-rated bridges", query: "Show all Texas bridges rated poor or below on the NBI structural evaluation scale." },
-    { label: "High-traffic deficient", query: "List structurally deficient Texas bridges with ADT over 20,000 vehicles per day." },
-    { label: "Inspection backlog", query: "Which Texas bridges have not been inspected in more than 4 years per NBI records?" },
-    { label: "Rehab cost estimate", query: "What is the estimated cost to rehabilitate all structurally deficient bridges in Texas?" },
+    { label: "Poor-rated bridges", query: "Show all Texas bridges rated poor or below on the NBI structural evaluation scale, sorted by sufficiency rating." },
+    { label: "High-traffic deficient", query: "List structurally deficient Texas bridges with ADT over 20,000 vehicles per day and flag any scour-critical ones." },
+    { label: "Scour-critical bridges", query: "Which Texas bridges are flagged as scour-critical in NBI records and what are their sufficiency ratings?" },
+    { label: "Lowest sufficiency ratings", query: "What are the 10 Texas bridges with the lowest NBI sufficiency ratings and what condition scores do they have?" },
   ],
   get_disaster_history: [
     { label: "Recent declarations", query: "What major disaster declarations have occurred in Texas in the last 3 years?" },
     { label: "Hurricane risk zones", query: "Which Texas counties have the highest frequency of hurricane disaster declarations?" },
     { label: "Flood damage history", query: "Summarize FEMA flood disaster declarations in Texas since 2015 by county." },
-    { label: "Mitigation grants", query: "What FEMA hazard mitigation grants are available for Texas infrastructure projects?" },
+    { label: "Repeat disaster counties", query: "Which Texas counties have received 5 or more FEMA disaster declarations since 2010?" },
   ],
   get_energy_infrastructure: [
-    { label: "Grid vulnerabilities", query: "What are the key grid vulnerability points identified in EIA data for Texas?" },
-    { label: "Renewable capacity", query: "What is the current renewable energy generation capacity in Texas according to EIA?" },
-    { label: "Post-2021 resilience", query: "How has Texas improved grid resilience since the 2021 winter storm based on EIA data?" },
-    { label: "Aging power plants", query: "What percentage of Texas power plants are more than 30 years old per EIA records?" },
+    { label: "Renewable capacity", query: "What is the current renewable energy generation capacity in Texas according to EIA — break down by wind, solar, and hydro." },
+    { label: "Fuel mix trends", query: "How has Texas electricity generation shifted between natural gas, wind, and solar since 2018 based on EIA data?" },
+    { label: "Post-2021 generation", query: "How did Texas natural gas and wind generation capacity change between 2020 and 2023 in EIA data?" },
+    { label: "State capacity comparison", query: "Compare total electricity generation capacity across Texas, Louisiana, and Oklahoma by fuel type using EIA data." },
   ],
   get_water_infrastructure: [
     { label: "Supply gap projections", query: "What water supply gaps are projected for Texas in the 2026 State Water Plan?" },
@@ -150,7 +150,7 @@ const DOMAINS = [
     Icon: Landmark,
     label: "Bridges",
     sub: "NBI structural conditions",
-    query: "Pull all structurally deficient bridges in Texas with ADT over 10,000 and last inspection before 2022.",
+    query: "List structurally deficient bridges in Texas with ADT over 10,000 — sort by sufficiency rating lowest first.",
     color: "blue",
   },
   {
@@ -164,7 +164,7 @@ const DOMAINS = [
     Icon: Zap,
     label: "Energy",
     sub: "EIA grid & generation",
-    query: "Compare grid resilience investment patterns across southeastern states since 2018 using EIA data.",
+    query: "Show the breakdown of Texas electricity generation capacity by fuel type using EIA data and highlight renewable trends.",
     color: "yellow",
   },
   {
