@@ -6,9 +6,17 @@
 # ── API server (Airflow 3.x) ──────────────────────────────────────────────────
 # Serve the UI at /airflow so it's accessible via the existing nginx reverse proxy.
 apiServer:
+  # --proxy-headers: trust X-Forwarded-Proto/Host/Prefix from nginx
+  args: ["bash", "-c", "exec airflow api-server --proxy-headers"]
   env:
     - name: AIRFLOW__API_SERVER__BASE_URL
       value: "https://infra-advisor-ai.kyletaylor.dev/airflow"
+    - name: AIRFLOW__API__BASE_URL
+      value: "https://infra-advisor-ai.kyletaylor.dev/airflow"
+    - name: AIRFLOW__WEBSERVER__BASE_URL
+      value: "https://infra-advisor-ai.kyletaylor.dev/airflow"
+    - name: AIRFLOW__API_SERVER__FORWARDED_ALLOW_IPS
+      value: "*"
 
 # ── Executor ───────────────────────────────────────────────────────────────────
 # LocalExecutor — runs tasks inside scheduler process.
