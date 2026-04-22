@@ -1,31 +1,31 @@
 # Helm values for apache-airflow/airflow chart
 # Deploy to namespace: airflow
-# helm upgrade --install airflow apache-airflow/airflow \
-#   --namespace airflow --values k8s/airflow/values.yaml --timeout 10m --wait
+# Fresh install: make install-airflow
+# Upgrade only:  make upgrade-airflow
 
-# Static API secret key — prevents unnecessary pod restarts on helm upgrade.
-# Key stored in airflow-azure-secret under key webserver-secret-key.
-# Generate with: python -c "import secrets; print(secrets.token_hex(32))"
-webserverSecretKeySecretName: airflow-azure-secret
-
-# Executor: LocalExecutor — runs tasks inside scheduler process.
+# ── Executor ───────────────────────────────────────────────────────────────────
+# LocalExecutor — runs tasks inside scheduler process.
 # Eliminates separate worker pods; appropriate for lab scale with 5 DAGs.
 # At 3× Standard_D2s_v3 (24 GB total cluster RAM), this avoids OOM pressure.
 executor: LocalExecutor
 
-# Explicitly enable DB migration Job (correct key for airflow-1.x chart)
+# ── Database migration ─────────────────────────────────────────────────────────
 migrateDatabaseJob:
   enabled: true
+  ttlSecondsAfterFinished: 300
 
-# Increase wait timeout — default 60s too short when PostgreSQL cold-starts
+# ── Images ────────────────────────────────────────────────────────────────────
+# migrationsWaitTimeout must live here (not under migrateDatabaseJob)
 images:
   migrationsWaitTimeout: 300
 
-# Metadata DB — built-in Postgres sidecar via Helm
+# ── Metadata DB ───────────────────────────────────────────────────────────────
+# Built-in Postgres sidecar via Helm — uses postgres:postgres credentials.
+# Do NOT override the password here; the chart manages it via its own secret.
 postgresql:
   enabled: true
 
-# DAG persistence via PVC (git-sync or PVC; using PVC for simplicity)
+# ── DAG persistence ───────────────────────────────────────────────────────────
 dags:
   persistence:
     enabled: true
@@ -34,14 +34,14 @@ dags:
     size: 1Gi
   gitSync:
     enabled: false
-    recommendedProbeSetting: true
 
-# Extra pip packages for all Airflow pods (scheduler + webserver).
-# With LocalExecutor, tasks run in the scheduler — packages are needed there.
+# ── Extra pip packages ────────────────────────────────────────────────────────
+# Installed on every pod start. With LocalExecutor, tasks run in the scheduler
+# so packages are needed there. Keep this list stable — pip runs on every start.
 #
-# DJM requirements (Kubernetes / Datadog Transport):
-#   apache-airflow-providers-openlineage >= 2.7.3  (Datadog transport support)
-#   openlineage-python >= 1.37.0                   (Datadog transport support)
+# DJM requirements:
+#   apache-airflow-providers-openlineage >= 2.7.3  (Datadog transport)
+#   openlineage-python >= 1.37.0                   (Datadog transport)
 _pip_additional_requirements: >-
   apache-airflow-providers-openlineage>=2.7.3 openlineage-python>=1.37.0
   apache-airflow-providers-http>=6.0.0 azure-storage-blob>=12.28.0
@@ -49,29 +49,20 @@ _pip_additional_requirements: >-
   openpyxl>=3.1.5 pandas>=3.0.0 openai>=2.32.0 pyspark==4.1.1 ddtrace>=4.7.1
   httpx>=0.28.1 pypdf>=5.0.0 beautifulsoup4>=4.12.3 lxml>=5.3.0
 
-# ── Scheduler ──────────────────────────────────────────────────────────────────
-
+# ── Scheduler ─────────────────────────────────────────────────────────────────
 scheduler:
-  # Log collection annotation — lets the Datadog Agent correlate task logs with
-  # DJM run executions.  The Agent DaemonSet must also mount the logs PVC.
-  # See: https://docs.datadoghq.com/containers/kubernetes/log/
   podAnnotations:
+    # Lets the Datadog Agent correlate task logs with DJM run executions.
+    # The Agent DaemonSet must also mount the logs PVC.
     ad.datadoghq.com/scheduler.logs: >-
       [{"type": "file", "path": "/opt/airflow/logs/*/*/*/*.log", "source":
       "airflow"}]
 
   env:
-    # ── Datadog Data Jobs Monitoring — OpenLineage Datadog Transport (Option 1) ──
-    # Recommended for Kubernetes. Requires:
-    #   apache-airflow-providers-openlineage >= 2.7.3
-    #   openlineage-python >= 1.37.0
+    # ── Datadog Data Jobs Monitoring (OpenLineage Datadog Transport) ────────────
     # Docs: https://docs.datadoghq.com/data_observability/jobs_monitoring/airflow/
-    - name: DD_DATA_JOBS_ENABLED
-      value: "true"
     - name: OPENLINEAGE__TRANSPORT__TYPE
       value: "datadog"
-    # OPENLINEAGE_NAMESPACE sets the 'env' tag on all DJM runs in Datadog.
-    # Keep in sync with DD_ENV so runs are grouped with other dev telemetry.
     - name: OPENLINEAGE_NAMESPACE
       value: "dev"
     - name: DD_SITE
@@ -82,14 +73,13 @@ scheduler:
           name: airflow-azure-secret
           key: DD_API_KEY
 
-    # ── Airflow + Spark parent job linking ──────────────────────────────────────
-    # Injects Airflow task context into PySpark applications so DJM shows the
-    # parent Airflow task alongside each Spark job.
-    # Requires: apache-airflow-providers-openlineage >= 2.1.0, Airflow >= 2.9
-    - name: AIRFLOW__OPENLINEAGE__SPARK_INJECT_PARENT_JOB_INFO
-      value: "true"
+    # ── Airflow lineage backend — required for OpenLineage to emit events ───────
     - name: AIRFLOW__LINEAGE__BACKEND
       value: "openlineage.lineage_backend.OpenLineageBackend"
+
+    # ── Spark parent job linking ────────────────────────────────────────────────
+    - name: AIRFLOW__OPENLINEAGE__SPARK_INJECT_PARENT_JOB_INFO
+      value: "true"
 
     # ── Datadog APM ─────────────────────────────────────────────────────────────
     - name: DD_ENV
@@ -149,17 +139,15 @@ scheduler:
     - name: EPA_SDWIS_BASE_URL
       value: "https://enviro.epa.gov/enviro/efservice"
 
-# ── Triggerer ──────────────────────────────────────────────────────────────────
-
+# ── Triggerer ─────────────────────────────────────────────────────────────────
 triggerer:
   env:
-    # OpenLineage must also be configured on the triggerer (deferred tasks)
-    - name: DD_DATA_JOBS_ENABLED
-      value: "true"
     - name: OPENLINEAGE__TRANSPORT__TYPE
       value: "datadog"
     - name: OPENLINEAGE_NAMESPACE
       value: "dev"
+    - name: AIRFLOW__LINEAGE__BACKEND
+      value: "openlineage.lineage_backend.OpenLineageBackend"
     - name: DD_SITE
       value: "us3.datadoghq.com"
     - name: DD_API_KEY
@@ -173,14 +161,10 @@ triggerer:
       value: "airflow-triggerer"
     - name: DD_AGENT_HOST
       value: "datadog-agent.datadog.svc.cluster.local"
-    - name: AIRFLOW__LINEAGE__BACKEND
-      value: "openlineage.lineage_backend.OpenLineageBackend"
 
-# ── dagProcessor ──────────────────────────────────────────────────────────────────
+# ── DAG Processor (Airflow 3 only) ────────────────────────────────────────────
 dagProcessor:
   env:
-    - name: DD_DATA_JOBS_ENABLED
-      value: "true"
     - name: OPENLINEAGE__TRANSPORT__TYPE
       value: "datadog"
     - name: OPENLINEAGE_NAMESPACE
@@ -201,9 +185,7 @@ dagProcessor:
     - name: DD_AGENT_HOST
       value: "datadog-agent.datadog.svc.cluster.local"
 
-# ── User creation ──────────────────────────────────────────────────────────────
-
-# User creation job (AF3: moved from webserver.defaultUser)
+# ── User creation ─────────────────────────────────────────────────────────────
 createUserJob:
   defaultUser:
     role: Admin
@@ -211,11 +193,10 @@ createUserJob:
     email: admin@infra-advisor.local
     firstName: Admin
     lastName: User
-    password: admin # Change in production
+    password: admin
 
 # ── Resources ─────────────────────────────────────────────────────────────────
-
-# Resource limits — conservative for Standard_D2s_v3 lab cluster
+# Conservative for Standard_D2s_v3 lab cluster (3 nodes, 24 GB total RAM)
 resources:
   requests:
     memory: "512Mi"
@@ -224,9 +205,7 @@ resources:
     memory: "1Gi"
     cpu: "500m"
 
-# ── Logs ──────────────────────────────────────────────────────────────────────
-
-# Logs — use PVC for local log storage
+# ── Log persistence ───────────────────────────────────────────────────────────
 logs:
   persistence:
     enabled: true
@@ -234,8 +213,6 @@ logs:
     size: 2Gi
 
 # ── Labels ────────────────────────────────────────────────────────────────────
-
-# Labels for Datadog log collection autodiscovery
 labels:
   app: airflow
   tags.datadoghq.com/env: dev

@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent upgrade-airflow help
+.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags help
 
 # Load .env if present (for local dev)
 -include .env
@@ -191,7 +191,7 @@ deploy-k8s: check-env ## Apply all Kubernetes manifests
 	@echo "→ Deploying Airflow..."
 	helm repo add apache-airflow https://airflow.apache.org || true
 	helm repo update
-	$(MAKE) upgrade-airflow
+	$(MAKE) install-airflow
 
 	@echo "→ Creating GHCR pull secret..."
 	$(MAKE) create-ghcr-secret
@@ -244,22 +244,77 @@ apply-datadog-agent: ## Apply DatadogAgent CR from datadog/datadog-agent.yaml
 	kubectl apply -f datadog/datadog-agent.yaml
 	@echo "✓ DatadogAgent CR applied"
 
+install-airflow: ## Fresh install of Airflow (nukes existing release)
+	helm repo add apache-airflow https://airflow.apache.org || true
+	helm repo update
+	-helm uninstall airflow -n airflow --no-hooks 2>/dev/null || true
+	kubectl delete namespace airflow 2>/dev/null || true
+	kubectl create namespace airflow
+	$(MAKE) create-airflow-secret
+	@echo "→ Installing Airflow (no wait — avoids post-install hook deadlock)..."
+	helm install airflow apache-airflow/airflow \
+		--namespace airflow \
+		--values k8s/airflow/values.yaml \
+		--timeout 20m
+	@echo "→ Waiting for PostgreSQL to be ready..."
+	kubectl wait --for=condition=ready pod \
+		-l app.kubernetes.io/name=postgresql \
+		-n airflow --timeout=3m
+	@echo "→ Running DB migration manually (chart hook unreliable on fresh install)..."
+	kubectl run airflow-migrate \
+		--image=apache/airflow:3.1.8 \
+		--restart=Never \
+		--namespace=airflow \
+		--env="AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:postgres@airflow-postgresql:5432/postgres" \
+		--env="AIRFLOW__CORE__FERNET_KEY=$$(kubectl get secret airflow-fernet-key -n airflow -o jsonpath='{.data.fernet-key}' | base64 -d)" \
+		--env="AIRFLOW__API__SECRET_KEY=$$(kubectl get secret airflow-api-secret-key -n airflow -o jsonpath='{.data.api-secret-key}' | base64 -d)" \
+		-- airflow db migrate
+	@echo "→ Waiting for migration to complete..."
+	kubectl wait --for=condition=ready pod/airflow-migrate \
+		-n airflow --timeout=5m
+	kubectl logs -n airflow airflow-migrate --follow
+	kubectl delete pod airflow-migrate -n airflow
+	@echo "→ Waiting for all Airflow pods to be ready..."
+	kubectl wait --for=condition=ready pod \
+		-l tier=airflow -n airflow \
+		--timeout=15m \
+		--field-selector=status.phase!=Succeeded
+	@echo "✓ Airflow installed and ready"
+	@echo "→ Creating admin user..."
+	kubectl exec -n airflow airflow-scheduler-0 -- \
+		airflow users create \
+		--role Admin --username admin \
+		--email admin@infra-advisor.local \
+		--firstname Admin --lastname User \
+		--password admin 2>/dev/null || true
+
 upgrade-airflow: ## Upgrade Airflow Helm release from k8s/airflow/values.yaml
 	helm repo add apache-airflow https://airflow.apache.org || true
 	helm repo update
 	@STATUS=$$(helm status airflow -n airflow -o json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)['info']['status'])" 2>/dev/null || echo "not-found"); \
-	if [ "$$STATUS" = "pending-install" ] || [ "$$STATUS" = "pending-upgrade" ] || [ "$$STATUS" = "pending-rollback" ]; then \
-		echo "Release stuck in $$STATUS — rolling back to clear the lock"; \
-		helm rollback airflow 0 --namespace airflow || true; \
+	if [ "$$STATUS" = "pending-install" ] || [ "$$STATUS" = "pending-upgrade" ] || [ "$$STATUS" = "pending-rollback" ] || [ "$$STATUS" = "failed" ]; then \
+		echo "Release in $$STATUS — rolling back to clear the lock"; \
+		helm rollback airflow 0 --namespace airflow 2>/dev/null || helm uninstall airflow -n airflow --no-hooks 2>/dev/null || true; \
 	fi
 	helm upgrade airflow apache-airflow/airflow \
 		--namespace airflow \
 		--values k8s/airflow/values.yaml \
-		--timeout 15m \
-		--wait \
-		--cleanup-on-fail \
-		--rollback-on-failure
+		--timeout 20m \
+		--cleanup-on-fail
+	@echo "→ Waiting for migration job..."
+	kubectl wait --for=condition=complete job/airflow-run-airflow-migrations \
+		-n airflow --timeout=10m
+	@echo "→ Waiting for pods..."
+	kubectl wait --for=condition=ready pod \
+		-l tier=airflow -n airflow --timeout=15m
 	@echo "✓ Airflow upgraded"
+
+sync-dags: ## Copy DAGs from repo to airflow-scheduler PVC
+	@echo "→ Syncing DAGs to airflow PVC..."
+	kubectl cp services/ingestion/dags/. \
+		airflow/airflow-scheduler-0:/opt/airflow/dags/ \
+		-c scheduler
+	@echo "✓ DAGs synced — dag-processor will pick them up within 30s"
 
 # ─── Tests ────────────────────────────────────────────────────────────────────
 

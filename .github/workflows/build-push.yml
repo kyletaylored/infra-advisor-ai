@@ -267,7 +267,13 @@ jobs:
             --timeout 10m \
             --wait \
             --cleanup-on-fail \
-            --atomic
+            --rollback-on-failure
+      
+      - name: Sync DAGs to PVC
+        run: |
+          kubectl cp services/ingestion/dags/. \
+            airflow/airflow-scheduler-0:/opt/airflow/dags/ \
+            -c scheduler
 
   # ── Apply DatadogAgent CR (datadog/datadog-agent.yaml changes) ─────────────
   apply-datadog-agent:
