@@ -3,6 +3,13 @@
 # Fresh install: make install-airflow
 # Upgrade only:  make upgrade-airflow
 
+# ── API server (Airflow 3.x) ──────────────────────────────────────────────────
+# Serve the UI at /airflow so it's accessible via the existing nginx reverse proxy.
+apiServer:
+  env:
+    - name: AIRFLOW__API_SERVER__BASE_URL
+      value: "https://infra-advisor-ai.kyletaylor.dev/airflow"
+
 # ── Executor ───────────────────────────────────────────────────────────────────
 # LocalExecutor — runs tasks inside scheduler process.
 # Eliminates separate worker pods; appropriate for lab scale with 5 DAGs.

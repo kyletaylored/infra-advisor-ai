@@ -226,16 +226,16 @@ rollout-status: ## Check rollout status for all infra-advisor deployments
 
 run-dags: ## Manually trigger all 5 Airflow DAGs
 	@echo "→ Triggering knowledge_base_init DAG..."
-	kubectl exec -n airflow deploy/airflow-scheduler -- airflow dags trigger knowledge_base_init
+	kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger knowledge_base_init
 	@echo "→ Triggering nbi_refresh DAG..."
-	kubectl exec -n airflow deploy/airflow-scheduler -- airflow dags trigger nbi_refresh
+	kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger nbi_refresh
 	@echo "→ Triggering fema_refresh DAG..."
-	kubectl exec -n airflow deploy/airflow-scheduler -- airflow dags trigger fema_refresh
+	kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger fema_refresh
 	@echo "→ Triggering eia_refresh DAG..."
-	kubectl exec -n airflow deploy/airflow-scheduler -- airflow dags trigger eia_refresh
+	kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger eia_refresh
 	@echo "→ Triggering twdb_water_plan_refresh DAG..."
-	kubectl exec -n airflow deploy/airflow-scheduler -- airflow dags trigger twdb_water_plan_refresh
-	@echo "✓ All DAGs triggered — check Airflow UI at http://localhost:8080 (after port-forward)"
+	kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger twdb_water_plan_refresh
+	@echo "✓ All DAGs triggered — check Airflow UI at https://infra-advisor-ai.kyletaylor.dev/airflow"
 
 airflow-ui: ## Port-forward Airflow web UI to localhost:8080
 	kubectl port-forward -n airflow svc/airflow-api-server 8080:8080
