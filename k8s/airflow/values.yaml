@@ -185,6 +185,21 @@ dagProcessor:
     - name: DD_AGENT_HOST
       value: "datadog-agent.datadog.svc.cluster.local"
 
+  dags:
+    persistence:
+      enabled: false # disable PVC
+    gitSync:
+      enabled: true
+      repo: https://github.com/kyletaylored/infra-advisor-ai
+      branch: main
+      subPath: services/ingestion/dags
+      depth: 1
+      wait: 60
+      containerName: git-sync
+      # If private repo, add credentialsSecret pointing to a secret with
+      # username and password (GitHub PAT)
+      credentialsSecret: ghcr-pull-secret # or a dedicated git secret
+
 # ── User creation ─────────────────────────────────────────────────────────────
 createUserJob:
   defaultUser:
