@@ -1,13 +1,9 @@
-import ddtrace.auto  # must be first import — enables DJM + APM auto-instrumentation
-# DD_DATA_JOBS_ENABLED=true must be set on the Airflow scheduler pod environment
-
 import logging
 import os
 import shutil
 from datetime import datetime, timezone
 from io import BytesIO
 
-import requests
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
@@ -39,7 +35,7 @@ KEY_COLUMNS = [
 # ---------------------------------------------------------------------------
 with DAG(
     dag_id="spark_feature_engineering",
-    schedule_interval="@daily",
+    schedule="@daily",
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
     tags=["feature-engineering", "spark", "transportation"],
@@ -311,6 +307,8 @@ with DAG(
         Calls POST .../indexers/{indexer}/run if the indexer exists.
         Logs a warning and exits cleanly if the indexer is not found (idempotent).
         """
+        import requests
+
         search_endpoint = os.environ.get("AZURE_SEARCH_ENDPOINT")
         search_api_key = os.environ.get("AZURE_SEARCH_API_KEY")
 

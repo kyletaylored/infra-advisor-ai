@@ -1,6 +1,3 @@
-import ddtrace.auto  # must be first import — enables DJM + APM auto-instrumentation
-# DD_DATA_JOBS_ENABLED=true must be set on the Airflow scheduler pod environment
-
 # Run manually once at initial deployment and after corpus refresh.
 # This DAG has no cron schedule (schedule_interval=None) — trigger via Airflow UI or CLI:
 #   airflow dags trigger knowledge_base_init
@@ -18,7 +15,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 with DAG(
     dag_id="knowledge_base_init",
-    schedule_interval=None,  # manual trigger only
+    schedule=None,  # manual trigger only
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
     tags=["init", "knowledge-base", "synthetic"],

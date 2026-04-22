@@ -1,18 +1,8 @@
-import ddtrace.auto  # must be first import — enables DJM + APM auto-instrumentation
-# DD_DATA_JOBS_ENABLED=true must be set on the Airflow scheduler pod environment
-
 import logging
 import os
 from datetime import datetime, timezone, timedelta
 from io import BytesIO
 
-import pandas as pd
-import requests
-import tiktoken
-from azure.core.credentials import AzureKeyCredential
-from azure.search.documents import SearchClient
-from azure.storage.blob import BlobServiceClient
-from _dd_blob import dd_upload_blob
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
@@ -41,7 +31,7 @@ AWARD_TYPE_LABELS = {
 # ---------------------------------------------------------------------------
 with DAG(
     dag_id="samgov_awards_refresh",
-    schedule_interval="0 6 * * 0",  # weekly Sunday 06:00 UTC
+    schedule="0 6 * * 0",  # weekly Sunday 06:00 UTC
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
     tags=["ingestion", "business_development", "usaspending"],
@@ -68,6 +58,8 @@ with DAG(
     # -----------------------------------------------------------------------
     def fetch_usaspending_awards(**context):
         """Fetch recent infrastructure contract awards from USASpending.gov."""
+        import requests
+
         today = datetime.now(timezone.utc).date()
         date_from = (today - timedelta(days=365)).isoformat()
         date_to = today.isoformat()
@@ -133,6 +125,10 @@ with DAG(
     # -----------------------------------------------------------------------
     def store_raw_parquet(**context):
         """Persist raw award records as Parquet in Azure Blob Storage."""
+        import pandas as pd
+        from azure.storage.blob import BlobServiceClient
+        from _dd_blob import dd_upload_blob
+
         awards = context["ti"].xcom_pull(key="awards", task_ids="fetch_usaspending_awards")
         if not awards:
             log.warning("No award records to store.")
@@ -163,6 +159,11 @@ with DAG(
     # -----------------------------------------------------------------------
     def index_to_search(**context):
         """Build narrative text for each award, embed, and upsert into Azure AI Search."""
+        import tiktoken
+        from azure.core.credentials import AzureKeyCredential
+        from azure.search.documents import SearchClient
+        from openai import AzureOpenAI
+
         awards = context["ti"].xcom_pull(key="awards", task_ids="fetch_usaspending_awards")
         if not awards:
             log.warning("No award records to index.")
@@ -174,8 +175,6 @@ with DAG(
         openai_endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
         openai_api_key = os.environ["AZURE_OPENAI_API_KEY"]
         embedding_deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small")
-
-        from openai import AzureOpenAI
 
         oai_client = AzureOpenAI(
             azure_endpoint=openai_endpoint,

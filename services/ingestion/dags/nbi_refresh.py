@@ -1,19 +1,9 @@
-import ddtrace.auto  # must be first import — enables DJM + APM auto-instrumentation
-# DD_DATA_JOBS_ENABLED=true must be set on the Airflow scheduler pod environment
-
 import json
 import logging
 import os
 from datetime import datetime, timezone
 from io import BytesIO
 
-import pandas as pd
-import requests
-import tiktoken
-from azure.core.credentials import AzureKeyCredential
-from azure.search.documents import SearchClient
-from azure.storage.blob import BlobServiceClient
-from _dd_blob import dd_upload_blob
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
@@ -60,7 +50,7 @@ CONDITION_LABELS = {
 # ---------------------------------------------------------------------------
 with DAG(
     dag_id="nbi_refresh",
-    schedule_interval="0 3 * * 0",  # weekly Sunday 03:00 UTC
+    schedule="0 3 * * 0",  # weekly Sunday 03:00 UTC
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
     tags=["ingestion", "transportation", "nbi"],
@@ -82,6 +72,8 @@ with DAG(
     # -----------------------------------------------------------------------
     def fetch_nbi_data(**context):
         """Paginate the BTS ArcGIS feature server and pull all TX NBI records."""
+        import requests
+
         all_features = []
         offset = 0
 
@@ -121,6 +113,10 @@ with DAG(
     # -----------------------------------------------------------------------
     def store_raw_parquet(**context):
         """Persist raw NBI records as Parquet in Azure Blob Storage."""
+        import pandas as pd
+        from azure.storage.blob import BlobServiceClient
+        from _dd_blob import dd_upload_blob
+
         records = context["ti"].xcom_pull(key="nbi_records", task_ids="fetch_nbi_data")
         if not records:
             raise ValueError("No NBI records received from fetch step.")
@@ -152,6 +148,11 @@ with DAG(
     # -----------------------------------------------------------------------
     def index_to_search(**context):
         """Chunk each bridge record into 500-char text chunks and upsert into Azure AI Search."""
+        import tiktoken
+        from azure.core.credentials import AzureKeyCredential
+        from azure.search.documents import SearchClient
+        from openai import AzureOpenAI
+
         records = context["ti"].xcom_pull(key="nbi_records", task_ids="fetch_nbi_data")
         if not records:
             raise ValueError("No NBI records to index.")
@@ -161,8 +162,6 @@ with DAG(
         index_name = os.environ["AZURE_SEARCH_INDEX_NAME"]
         openai_endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
         openai_api_key = os.environ["AZURE_OPENAI_API_KEY"]
-
-        from openai import AzureOpenAI
 
         oai_client = AzureOpenAI(
             azure_endpoint=openai_endpoint,

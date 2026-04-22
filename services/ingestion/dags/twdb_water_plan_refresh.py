@@ -1,6 +1,3 @@
-import ddtrace.auto  # must be first import — enables DJM + APM auto-instrumentation
-# DD_DATA_JOBS_ENABLED=true must be set on the Airflow scheduler pod environment
-
 import io
 import logging
 import os
@@ -8,13 +5,6 @@ import re
 from datetime import datetime, timezone
 from io import BytesIO
 
-import pandas as pd
-import requests
-import tiktoken
-from azure.core.credentials import AzureKeyCredential
-from azure.search.documents import SearchClient
-from azure.storage.blob import BlobServiceClient
-from _dd_blob import dd_upload_blob
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
@@ -52,7 +42,7 @@ TWDB_COLUMN_MAP = {
 # ---------------------------------------------------------------------------
 with DAG(
     dag_id="twdb_water_plan_refresh",
-    schedule_interval="0 5 1 * *",  # monthly — 1st of month at 05:00 UTC
+    schedule="0 5 1 * *",  # monthly — 1st of month at 05:00 UTC
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
     tags=["ingestion", "water", "twdb", "epa"],
@@ -87,6 +77,11 @@ with DAG(
     # -----------------------------------------------------------------------
     def fetch_twdb_workbook(**context):
         """Download and parse the TWDB 2026 State Water Plan Excel workbook."""
+        import pandas as pd
+        import requests
+        from azure.storage.blob import BlobServiceClient
+        from _dd_blob import dd_upload_blob
+
         workbook_url = os.environ["TWDB_WATER_PLAN_WORKBOOK_URL"]
 
         log.info("Downloading TWDB workbook from: %s", workbook_url)
@@ -171,6 +166,11 @@ with DAG(
     # -----------------------------------------------------------------------
     def fetch_epa_sdwis(**context):
         """Pull EPA SDWIS Texas community water system records from Envirofacts."""
+        import pandas as pd
+        import requests
+        from azure.storage.blob import BlobServiceClient
+        from _dd_blob import dd_upload_blob
+
         sdwis_base = os.environ["EPA_SDWIS_BASE_URL"]
         url = f"{sdwis_base}/WATER_SYSTEM/STATE_CODE/TX/PWS_TYPE_CODE/CWS/JSON"
 
@@ -207,6 +207,11 @@ with DAG(
     # -----------------------------------------------------------------------
     def index_twdb_projects(**context):
         """Convert TWDB project records to text narratives and upsert into Azure AI Search."""
+        import tiktoken
+        from azure.core.credentials import AzureKeyCredential
+        from azure.search.documents import SearchClient
+        from openai import AzureOpenAI
+
         projects = context["ti"].xcom_pull(key="twdb_projects", task_ids="fetch_twdb_workbook")
         if not projects:
             log.warning("No TWDB projects to index — skipping.")
@@ -217,8 +222,6 @@ with DAG(
         index_name = os.environ["AZURE_SEARCH_INDEX_NAME"]
         openai_endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
         openai_api_key = os.environ["AZURE_OPENAI_API_KEY"]
-
-        from openai import AzureOpenAI
 
         oai_client = AzureOpenAI(
             azure_endpoint=openai_endpoint,
@@ -315,6 +318,11 @@ with DAG(
     # -----------------------------------------------------------------------
     def index_sdwis_records(**context):
         """Convert EPA SDWIS water system records to text chunks and upsert into Azure AI Search."""
+        import tiktoken
+        from azure.core.credentials import AzureKeyCredential
+        from azure.search.documents import SearchClient
+        from openai import AzureOpenAI
+
         records = context["ti"].xcom_pull(key="sdwis_records", task_ids="fetch_epa_sdwis")
         if not records:
             log.warning("No EPA SDWIS records to index — skipping.")
@@ -326,8 +334,6 @@ with DAG(
         openai_endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
         openai_api_key = os.environ["AZURE_OPENAI_API_KEY"]
         sdwis_base = os.environ["EPA_SDWIS_BASE_URL"]
-
-        from openai import AzureOpenAI
 
         oai_client = AzureOpenAI(
             azure_endpoint=openai_endpoint,

@@ -1,18 +1,8 @@
-import ddtrace.auto  # must be first import — enables DJM + APM auto-instrumentation
-# DD_DATA_JOBS_ENABLED=true must be set on the Airflow scheduler pod environment
-
 import logging
 import os
 from datetime import datetime, timezone
 from io import BytesIO
 
-import pandas as pd
-import requests
-import tiktoken
-from azure.core.credentials import AzureKeyCredential
-from azure.search.documents import SearchClient
-from azure.storage.blob import BlobServiceClient
-from _dd_blob import dd_upload_blob
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
@@ -47,7 +37,7 @@ def _demand_indicator(growth_pct: float) -> str:
 # ---------------------------------------------------------------------------
 with DAG(
     dag_id="census_market_intelligence_refresh",
-    schedule_interval="0 7 1 * *",  # monthly, 1st of month 07:00 UTC
+    schedule="0 7 1 * *",  # monthly, 1st of month 07:00 UTC
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
     tags=["ingestion", "business_development", "census"],
@@ -75,6 +65,8 @@ with DAG(
     # -----------------------------------------------------------------------
     def fetch_population_data(**context):
         """Fetch county-level population estimates for high-growth states."""
+        import requests
+
         all_counties = []
 
         for state_fips in HIGH_GROWTH_STATES:
@@ -112,6 +104,8 @@ with DAG(
     # -----------------------------------------------------------------------
     def fetch_permit_data(**context):
         """Fetch county-level building permit data for high-growth states."""
+        import requests
+
         all_permits = []
 
         for state_fips in HIGH_GROWTH_STATES:
@@ -149,6 +143,10 @@ with DAG(
     # -----------------------------------------------------------------------
     def store_raw_parquet(**context):
         """Persist raw census records as Parquet in Azure Blob Storage."""
+        import pandas as pd
+        from azure.storage.blob import BlobServiceClient
+        from _dd_blob import dd_upload_blob
+
         population_data = context["ti"].xcom_pull(key="population_data", task_ids="fetch_population_data")
         permit_data = context["ti"].xcom_pull(key="permit_data", task_ids="fetch_permit_data")
 
@@ -178,6 +176,10 @@ with DAG(
     # -----------------------------------------------------------------------
     def index_to_search(**context):
         """Build market intelligence narratives per county and upsert into Azure AI Search."""
+        from azure.core.credentials import AzureKeyCredential
+        from azure.search.documents import SearchClient
+        from openai import AzureOpenAI
+
         population_data = context["ti"].xcom_pull(key="population_data", task_ids="fetch_population_data")
         permit_data = context["ti"].xcom_pull(key="permit_data", task_ids="fetch_permit_data")
 
@@ -191,8 +193,6 @@ with DAG(
         openai_endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
         openai_api_key = os.environ["AZURE_OPENAI_API_KEY"]
         embedding_deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small")
-
-        from openai import AzureOpenAI
 
         oai_client = AzureOpenAI(
             azure_endpoint=openai_endpoint,

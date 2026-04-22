@@ -1,6 +1,3 @@
-import ddtrace.auto  # must be first import — enables DJM + APM auto-instrumentation
-# DD_DATA_JOBS_ENABLED=true must be set on the Airflow scheduler pod environment
-
 # Weekly DAG that fetches real public infrastructure documents and indexes
 # them into Azure AI Search. Supplements the synthetic knowledge base with
 # live data from OpenFEMA, EIA, and FHWA NBI public APIs.
@@ -19,7 +16,7 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 with DAG(
     dag_id="public_docs_ingestion",
-    schedule_interval="0 2 * * 0",  # weekly Sunday 02:00 UTC
+    schedule="0 2 * * 0",  # weekly Sunday 02:00 UTC
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
     tags=["public-data", "knowledge-base", "weekly"],

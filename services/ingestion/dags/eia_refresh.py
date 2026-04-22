@@ -1,17 +1,8 @@
-import ddtrace.auto  # must be first import — enables DJM + APM auto-instrumentation
-
 import logging
 import os
 from datetime import datetime, timezone
 from io import BytesIO
 
-import pandas as pd
-import requests
-import tiktoken
-from azure.core.credentials import AzureKeyCredential
-from azure.search.documents import SearchClient
-from azure.storage.blob import BlobServiceClient
-from _dd_blob import dd_upload_blob
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
@@ -30,7 +21,7 @@ PAGE_SIZE = 5000
 # ---------------------------------------------------------------------------
 with DAG(
     dag_id="eia_refresh",
-    schedule_interval="0 4 * * 0",  # weekly Sunday 04:00 UTC
+    schedule="0 4 * * 0",  # weekly Sunday 04:00 UTC
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
     tags=["ingestion", "energy", "eia"],
@@ -52,6 +43,8 @@ with DAG(
     # -----------------------------------------------------------------------
     def fetch_eia_data(**context):
         """Pull EIA electric power operational data for southeastern states."""
+        import requests
+
         eia_api_key = os.environ["EIA_API_KEY"]
         all_records = []
 
@@ -95,6 +88,10 @@ with DAG(
     # -----------------------------------------------------------------------
     def store_raw_parquet(**context):
         """Persist raw EIA records as Parquet in Azure Blob Storage."""
+        import pandas as pd
+        from azure.storage.blob import BlobServiceClient
+        from _dd_blob import dd_upload_blob
+
         records = context["ti"].xcom_pull(key="eia_records", task_ids="fetch_eia_data")
         if not records:
             raise ValueError("No EIA records received from fetch step.")
@@ -125,6 +122,11 @@ with DAG(
     # -----------------------------------------------------------------------
     def index_to_search(**context):
         """Chunk each EIA record into text and upsert into Azure AI Search."""
+        import tiktoken
+        from azure.core.credentials import AzureKeyCredential
+        from azure.search.documents import SearchClient
+        from openai import AzureOpenAI
+
         records = context["ti"].xcom_pull(key="eia_records", task_ids="fetch_eia_data")
         if not records:
             raise ValueError("No EIA records to index.")
@@ -134,8 +136,6 @@ with DAG(
         index_name = os.environ["AZURE_SEARCH_INDEX_NAME"]
         openai_endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
         openai_api_key = os.environ["AZURE_OPENAI_API_KEY"]
-
-        from openai import AzureOpenAI
 
         oai_client = AzureOpenAI(
             azure_endpoint=openai_endpoint,

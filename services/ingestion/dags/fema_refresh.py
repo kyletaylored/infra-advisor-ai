@@ -1,17 +1,8 @@
-import ddtrace.auto  # must be first import — enables DJM + APM auto-instrumentation
-
 import logging
 import os
 from datetime import datetime, timezone
 from io import BytesIO
 
-import pandas as pd
-import requests
-import tiktoken
-from azure.core.credentials import AzureKeyCredential
-from azure.search.documents import SearchClient
-from azure.storage.blob import BlobServiceClient
-from _dd_blob import dd_upload_blob
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 
@@ -30,7 +21,7 @@ RAW_CONTAINER = "raw-data"
 # ---------------------------------------------------------------------------
 with DAG(
     dag_id="fema_refresh",
-    schedule_interval="0 2 * * *",  # daily 02:00 UTC
+    schedule="0 2 * * *",  # daily 02:00 UTC
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
     tags=["ingestion", "fema", "environmental"],
@@ -51,6 +42,8 @@ with DAG(
     # -----------------------------------------------------------------------
     def fetch_fema_data(**context):
         """Paginate the OpenFEMA API and pull all disaster declarations since 2010."""
+        import requests
+
         all_records = []
         skip = 0
 
@@ -84,6 +77,10 @@ with DAG(
     # -----------------------------------------------------------------------
     def store_raw_parquet(**context):
         """Persist raw FEMA records as Parquet in Azure Blob Storage."""
+        import pandas as pd
+        from azure.storage.blob import BlobServiceClient
+        from _dd_blob import dd_upload_blob
+
         records = context["ti"].xcom_pull(key="fema_records", task_ids="fetch_fema_data")
         if not records:
             raise ValueError("No FEMA records received from fetch step.")
@@ -114,6 +111,11 @@ with DAG(
     # -----------------------------------------------------------------------
     def index_to_search(**context):
         """Chunk each FEMA declaration and upsert into Azure AI Search."""
+        import tiktoken
+        from azure.core.credentials import AzureKeyCredential
+        from azure.search.documents import SearchClient
+        from openai import AzureOpenAI
+
         records = context["ti"].xcom_pull(key="fema_records", task_ids="fetch_fema_data")
         if not records:
             raise ValueError("No FEMA records to index.")
@@ -123,8 +125,6 @@ with DAG(
         index_name = os.environ["AZURE_SEARCH_INDEX_NAME"]
         openai_endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
         openai_api_key = os.environ["AZURE_OPENAI_API_KEY"]
-
-        from openai import AzureOpenAI
 
         oai_client = AzureOpenAI(
             azure_endpoint=openai_endpoint,
