@@ -80,11 +80,13 @@ with DAG(
                 resp.raise_for_status()
                 rows = resp.json()
             except Exception as exc:
-                log.warning("Census population fetch failed for state %s: %s", state_fips, exc)
+                log.warning(
+                    "Census population fetch failed for state %s: %s", state_fips, exc)
                 continue
 
             if not rows or len(rows) < 2:
-                log.warning("No population data returned for state %s", state_fips)
+                log.warning(
+                    "No population data returned for state %s", state_fips)
                 continue
 
             headers = rows[0]
@@ -93,7 +95,8 @@ with DAG(
                 record["_state_fips"] = state_fips
                 all_counties.append(record)
 
-            log.info("Fetched %d counties for state %s", len(rows) - 1, state_fips)
+            log.info("Fetched %d counties for state %s",
+                     len(rows) - 1, state_fips)
 
         log.info("Total county population records fetched: %d", len(all_counties))
         context["ti"].xcom_push(key="population_data", value=all_counties)
@@ -115,11 +118,13 @@ with DAG(
                 "in": f"state:{state_fips}",
             }
             try:
-                resp = requests.get(CENSUS_PERMITS_BASE, params=params, timeout=60)
+                resp = requests.get(CENSUS_PERMITS_BASE,
+                                    params=params, timeout=60)
                 resp.raise_for_status()
                 rows = resp.json()
             except Exception as exc:
-                log.warning("Census permits fetch failed for state %s: %s", state_fips, exc)
+                log.warning(
+                    "Census permits fetch failed for state %s: %s", state_fips, exc)
                 continue
 
             if not rows or len(rows) < 2:
@@ -132,7 +137,8 @@ with DAG(
                 record["_state_fips"] = state_fips
                 all_permits.append(record)
 
-            log.info("Fetched %d permit records for state %s", len(rows) - 1, state_fips)
+            log.info("Fetched %d permit records for state %s",
+                     len(rows) - 1, state_fips)
 
         log.info("Total building permit records fetched: %d", len(all_permits))
         context["ti"].xcom_push(key="permit_data", value=all_permits)
@@ -147,8 +153,10 @@ with DAG(
         from azure.storage.blob import BlobServiceClient
         from _dd_blob import dd_upload_blob
 
-        population_data = context["ti"].xcom_pull(key="population_data", task_ids="fetch_population_data")
-        permit_data = context["ti"].xcom_pull(key="permit_data", task_ids="fetch_permit_data")
+        population_data = context["ti"].xcom_pull(
+            key="population_data", task_ids="fetch_population_data")
+        permit_data = context["ti"].xcom_pull(
+            key="permit_data", task_ids="fetch_permit_data")
 
         run_date = context["ds"]
         conn_str = os.environ["AZURE_STORAGE_CONNECTION_STRING"]
@@ -168,8 +176,10 @@ with DAG(
             buf = BytesIO()
             df.to_parquet(buf, index=False)
             buf.seek(0)
-            dd_upload_blob(container, blob_path, buf, dag_id="census_market_intelligence_refresh")
-            log.info("Stored %s Parquet at: %s/%s", dataset_name, RAW_CONTAINER, blob_path)
+            dd_upload_blob(container, blob_path, buf,
+                           dag_id="census_market_intelligence_refresh")
+            log.info("Stored %s Parquet at: %s/%s",
+                     dataset_name, RAW_CONTAINER, blob_path)
 
     # -----------------------------------------------------------------------
     # Task 4 — index_to_search
@@ -180,8 +190,10 @@ with DAG(
         from azure.search.documents import SearchClient
         from openai import AzureOpenAI
 
-        population_data = context["ti"].xcom_pull(key="population_data", task_ids="fetch_population_data")
-        permit_data = context["ti"].xcom_pull(key="permit_data", task_ids="fetch_permit_data")
+        population_data = context["ti"].xcom_pull(
+            key="population_data", task_ids="fetch_population_data")
+        permit_data = context["ti"].xcom_pull(
+            key="permit_data", task_ids="fetch_permit_data")
 
         if not population_data:
             log.warning("No population data to index.")
@@ -192,7 +204,8 @@ with DAG(
         index_name = os.environ["AZURE_SEARCH_INDEX_NAME"]
         openai_endpoint = os.environ["AZURE_OPENAI_ENDPOINT"]
         openai_api_key = os.environ["AZURE_OPENAI_API_KEY"]
-        embedding_deployment = os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small")
+        embedding_deployment = os.environ.get(
+            "AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small")
 
         oai_client = AzureOpenAI(
             azure_endpoint=openai_endpoint,
@@ -225,7 +238,8 @@ with DAG(
             county_name = rec.get("NAME", "Unknown County")
             state_fips = rec.get("_state_fips", "")
             county_fips = rec.get("county", "")
-            state_name = STATE_FIPS_TO_NAME.get(state_fips, f"State {state_fips}")
+            state_name = STATE_FIPS_TO_NAME.get(
+                state_fips, f"State {state_fips}")
 
             try:
                 pop_2020 = int(rec.get("POP_2020") or 0)
@@ -249,7 +263,8 @@ with DAG(
                 f"Infrastructure demand indicator: {demand} based on growth rate."
             )
 
-            safe_county = county_name.replace(" ", "_").replace(",", "").replace("/", "-")
+            safe_county = county_name.replace(
+                " ", "_").replace(",", "").replace("/", "-")
             doc_id = f"census_{state_fips}_{county_fips}_{safe_county}"
 
             try:
@@ -276,14 +291,17 @@ with DAG(
 
             if len(docs_to_upsert) >= 100:
                 search_client.upsert_documents(documents=docs_to_upsert)
-                log.info("Upserted batch of %d market intelligence documents", len(docs_to_upsert))
+                log.info("Upserted batch of %d market intelligence documents", len(
+                    docs_to_upsert))
                 docs_to_upsert = []
 
         if docs_to_upsert:
             search_client.upsert_documents(documents=docs_to_upsert)
-            log.info("Upserted final batch of %d market intelligence documents", len(docs_to_upsert))
+            log.info("Upserted final batch of %d market intelligence documents", len(
+                docs_to_upsert))
 
-        log.info("Census market intelligence indexing complete for %d counties.", len(population_data))
+        log.info("Census market intelligence indexing complete for %d counties.", len(
+            population_data))
 
     # -----------------------------------------------------------------------
     # Wire up operators
