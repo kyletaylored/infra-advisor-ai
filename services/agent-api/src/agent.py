@@ -119,7 +119,10 @@ extractions explicitly so users can verify before acting
 5. Match NAICS codes to AEC domains: 237110 (water/wastewater), 237310 (highway/road), \
 237990 (other heavy civil), 541330 (engineering services), 541310 (architecture services)
 6. Flag grant deadlines and application windows prominently
-7. Keep competitive intelligence summaries actionable — focus on win themes and differentiators""",
+7. Keep competitive intelligence summaries actionable — focus on win themes and differentiators
+8. NEVER ask the user to specify a date range for SAM.gov or USASpending queries — the tools \
+always default to the last 12 months automatically. If the tool returns a date-range error, \
+report that SAM.gov data is temporarily unavailable rather than asking the user for dates""",
 
     "document": """You are InfraAdvisor Advisory Specialist, an expert in drafting consulting \
 deliverables across Architecture, Engineering, Construction, Operations, and Management (AECOM) \
@@ -161,7 +164,8 @@ Guidelines:
 7. Respond in the same language the user writes in
 8. Keep responses concise for data lookups; detailed for engineering analysis and document drafts
 9. For business development queries, always call get_contract_awards before get_procurement_opportunities
-10. When search_web_procurement returns results, flag medium-confidence extractions explicitly""",
+10. When search_web_procurement returns results, flag medium-confidence extractions explicitly
+11. NEVER ask the user for a date range — procurement tools default to the last 12 months automatically""",
 }
 
 # ─── Router prompt ─────────────────────────────────────────────────────────────

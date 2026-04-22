@@ -124,7 +124,7 @@ async def _fetch_samgov(
     if not api_key:
         return {"error": "SAMGOV_API_KEY not configured", "retriable": False}
 
-    posted_from, posted_to, clamped = _build_date_range(days_back=365)
+    posted_from, posted_to, clamped = _build_date_range(days_back=364)
 
     # Build params as list of tuples so httpx sends multiple ptype values
     params: list[tuple[str, str]] = [
