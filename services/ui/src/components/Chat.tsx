@@ -397,7 +397,7 @@ function MessageActions({ content, domain, traceId, spanId }: MessageActionsProp
       </IconButton>
       {traceId && (
         <Link
-          href={`https://us3.datadoghq.com/apm/trace/${traceId}`}
+          href={`https://us3.datadoghq.com/apm/trace/${traceId}${spanId ? `?spanID=${spanId}` : ""}`}
           target="_blank"
           rel="noopener noreferrer"
           aria-label="View APM trace in Datadog"
