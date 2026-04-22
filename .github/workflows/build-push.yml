@@ -267,8 +267,8 @@ jobs:
             --timeout 10m \
             --wait \
             --cleanup-on-fail \
-            --rollback-on-failure
-      
+            --atomic
+
       - name: Sync DAGs to PVC
         run: |
           kubectl cp services/ingestion/dags/. \
