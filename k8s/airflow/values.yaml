@@ -14,6 +14,70 @@ apiServer:
     - name: FORWARDED_ALLOW_IPS
       value: "*"
 
+# ── Datadog JSON logging — loaded via Airflow's official custom settings mechanism
+# $AIRFLOW_HOME/config/ is added to sys.path before configure_logging() runs,
+# so airflow_local_settings is importable when LOGGING_CONFIG_CLASS is resolved.
+# DDJsonFormatter emits one JSON line per record with dd.trace_id/span_id for
+# Datadog log-trace correlation.  The try/except guards dag-processor where
+# ddtrace is not installed.
+airflowLocalSettings: |-
+  import json
+  import logging
+  import os
+  from copy import deepcopy
+
+  try:
+      import ddtrace.auto  # noqa: F401 — patches LogRecord with dd.trace_id/span_id
+  except ImportError:
+      pass
+
+  try:
+      from airflow.config_templates.airflow_local_settings import DEFAULT_LOGGING_CONFIG as _BASE
+      _BASE_LOADED = True
+  except Exception:
+      _BASE_LOADED = False
+
+
+  class DDJsonFormatter(logging.Formatter):
+      def format(self, record: logging.LogRecord) -> str:
+          record.message = record.getMessage()
+          entry: dict = {
+              "timestamp": self.formatTime(record),
+              "level": record.levelname,
+              "logger": record.name,
+              "message": record.message,
+              "dd.trace_id": str(getattr(record, "dd.trace_id", "0") or "0"),
+              "dd.span_id": str(getattr(record, "dd.span_id", "0") or "0"),
+              "dd.env": os.environ.get("DD_ENV", ""),
+              "dd.service": os.environ.get("DD_SERVICE", "airflow-scheduler"),
+              "dd.version": os.environ.get("DD_VERSION", ""),
+          }
+          if record.exc_info and not record.exc_text:
+              record.exc_text = self.formatException(record.exc_info)
+          if record.exc_text:
+              entry["exception"] = record.exc_text
+          for _ctx in ("dag_id", "task_id", "run_id", "try_number"):
+              val = record.__dict__.get(_ctx)
+              if val is not None:
+                  entry[_ctx] = val
+          return json.dumps(entry, default=str)
+
+
+  def _build_config() -> dict:
+      if not _BASE_LOADED:
+          return {}
+      config = deepcopy(_BASE)
+      config.setdefault("formatters", {})["dd_json"] = {
+          "()": "airflow_local_settings.DDJsonFormatter",
+      }
+      for _h in ("task", "console", "processor_to_stdout"):
+          if _h in config.get("handlers", {}):
+              config["handlers"][_h]["formatter"] = "dd_json"
+      return config
+
+
+  LOGGING_CONFIG = _build_config()
+
 # ── Executor ───────────────────────────────────────────────────────────────────
 # LocalExecutor — runs tasks inside scheduler process.
 # Eliminates separate worker pods; appropriate for lab scale with 5 DAGs.
@@ -62,6 +126,11 @@ _pip_additional_requirements: >-
 
 # ── Scheduler ─────────────────────────────────────────────────────────────────
 scheduler:
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 0
+      maxUnavailable: 1
   livenessProbe:
     initialDelaySeconds: 120
   startupProbe:
@@ -75,6 +144,19 @@ scheduler:
       "airflow"}]
 
   env:
+    # ── Datadog trace-log correlation ───────────────────────────────────────────
+    # _dd_logging.py in the DAGs folder imports ddtrace.auto in every process
+    # (scheduler main + LocalExecutor task subprocesses) so task logs include
+    # dd.trace_id / dd.span_id that Datadog uses for log-trace correlation.
+    # airflow_local_settings.py (mounted from airflowLocalSettings above) is in
+    # $AIRFLOW_HOME/config/ which Airflow adds to sys.path before configure_logging().
+    # PYTHONPATH includes dags/ so sitecustomize.py also auto-inits ddtrace in
+    # LocalExecutor task subprocesses (which don't go through the scheduler entrypoint).
+    - name: PYTHONPATH
+      value: "/opt/airflow/dags"
+    - name: AIRFLOW__LOGGING__LOGGING_CONFIG_CLASS
+      value: "airflow_local_settings.LOGGING_CONFIG"
+
     # ── Datadog Data Jobs Monitoring (OpenLineage Datadog Transport) ────────────
     # Docs: https://docs.datadoghq.com/data_observability/jobs_monitoring/airflow/
     - name: OPENLINEAGE__TRANSPORT__TYPE
@@ -158,6 +240,8 @@ scheduler:
 # ── Triggerer ─────────────────────────────────────────────────────────────────
 triggerer:
   env:
+    - name: PYTHONPATH
+      value: "/opt/airflow/dags"
     - name: OPENLINEAGE__TRANSPORT__TYPE
       value: "datadog"
     - name: OPENLINEAGE_NAMESPACE
@@ -181,6 +265,8 @@ triggerer:
 # ── DAG Processor (Airflow 3 only) ────────────────────────────────────────────
 dagProcessor:
   env:
+    - name: PYTHONPATH
+      value: "/opt/airflow/dags"
     - name: OPENLINEAGE__TRANSPORT__TYPE
       value: "datadog"
     - name: OPENLINEAGE_NAMESPACE
