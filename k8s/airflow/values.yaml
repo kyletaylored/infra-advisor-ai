@@ -90,6 +90,14 @@ airflowLocalSettings: |-
 
   LOGGING_CONFIG = _build_config()
 
+  # Required by airflow.logging_config.load_logging_config() — it does
+  # getattr(airflow_local_settings, "REMOTE_TASK_LOG"); without this the
+  # attribute lookup fails silently, leaving REMOTE_TASK_LOG unset as a global,
+  # and the subsequent "return REMOTE_TASK_LOG" in __getattr__ raises NameError.
+  # None = no remote log handler (tasks write to local PVC only).
+  REMOTE_TASK_LOG = None
+  DEFAULT_REMOTE_CONN_ID = None
+
 # ── Executor ───────────────────────────────────────────────────────────────────
 # LocalExecutor — runs tasks inside scheduler process.
 # Eliminates separate worker pods; appropriate for lab scale with 5 DAGs.
@@ -145,9 +153,13 @@ scheduler:
       maxUnavailable: 1
   livenessProbe:
     initialDelaySeconds: 120
+    timeoutSeconds: 60
+    failureThreshold: 20
+    periodSeconds: 60
   startupProbe:
     failureThreshold: 60
     periodSeconds: 10
+    timeoutSeconds: 60
   podAnnotations:
     # Lets the Datadog Agent correlate task logs with DJM run executions.
     # The Agent DaemonSet must also mount the logs PVC.
@@ -156,6 +168,15 @@ scheduler:
       "airflow"}]
 
   env:
+    # ── Pip packages — LocalExecutor mode only sets _PIP_ADDITIONAL_REQUIREMENTS on workers,
+    # not on the scheduler, so we inject it explicitly here to trigger the entrypoint install.
+    - name: _PIP_ADDITIONAL_REQUIREMENTS
+      value: >-
+        apache-airflow-providers-openlineage>=2.7.3 openlineage-python>=1.37.0
+        apache-airflow-providers-http>=6.0.0 azure-storage-blob>=12.28.0
+        azure-search-documents>=11.6.0 azure-identity>=1.25.3 tiktoken>=0.12.0
+        openpyxl>=3.1.5 pandas>=3.0.0 openai>=2.32.0 ddtrace>=4.7.1
+        httpx>=0.28.1 pypdf>=5.0.0 beautifulsoup4>=4.12.3 lxml>=5.3.0
     # ── Datadog trace-log correlation ───────────────────────────────────────────
     # _dd_logging.py in the DAGs folder imports ddtrace.auto in every process
     # (scheduler main + LocalExecutor task subprocesses) so task logs include
