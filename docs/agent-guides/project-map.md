@@ -1,3 +1,9 @@
+---
+title: Project Map
+parent: Development
+nav_order: 4
+---
+
 # InfraAdvisor AI — Project Map
 
 ## Services

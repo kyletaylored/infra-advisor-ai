@@ -63,6 +63,12 @@ airflowLocalSettings: |-
           return json.dumps(entry, default=str)
 
 
+  class _SuppressDeprecated(logging.Filter):
+      """Drop the airflow.security.permissions deprecation noise from Airflow 3.x internals."""
+      def filter(self, record: logging.LogRecord) -> bool:
+          return "airflow.security.permissions" not in record.getMessage()
+
+
   def _build_config() -> dict:
       if not _BASE_LOADED:
           return {}
@@ -70,9 +76,15 @@ airflowLocalSettings: |-
       config.setdefault("formatters", {})["dd_json"] = {
           "()": "airflow_local_settings.DDJsonFormatter",
       }
+      config.setdefault("filters", {})["suppress_deprecated_permissions"] = {
+          "()": "airflow_local_settings._SuppressDeprecated",
+      }
       for _h in ("task", "console", "processor_to_stdout"):
           if _h in config.get("handlers", {}):
               config["handlers"][_h]["formatter"] = "dd_json"
+              config["handlers"][_h].setdefault("filters", []).append(
+                  "suppress_deprecated_permissions"
+              )
       return config
 
 

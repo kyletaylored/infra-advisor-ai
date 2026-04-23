@@ -1,3 +1,9 @@
+---
+title: Core Conventions (Agent Guide)
+parent: Development
+nav_order: 5
+---
+
 # InfraAdvisor AI — Core Conventions
 
 ## Python style rules

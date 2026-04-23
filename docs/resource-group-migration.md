@@ -1,3 +1,9 @@
+---
+title: Resource Group Notes
+parent: Deployment
+nav_order: 4
+---
+
 # Resource Group Migration Plan
 
 ## Why there will always be two resource groups

@@ -1,3 +1,9 @@
+---
+title: Build, Test, Verify (Agent Guide)
+parent: Development
+nav_order: 6
+---
+
 # InfraAdvisor AI — Build, Test, and Verify Commands
 
 ## Prerequisites
