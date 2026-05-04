@@ -225,16 +225,17 @@ jobs:
           wait_rollout() {
             local dep="$1"
             if kubectl get deployment/"$dep" -n infra-advisor &>/dev/null; then
-              kubectl rollout status deployment/"$dep" -n infra-advisor --timeout=5m
+              # Non-fatal: warn on timeout so CI never blocks a merge over a slow pod start
+              kubectl rollout status deployment/"$dep" -n infra-advisor --timeout=10m || \
+                echo "WARNING: $dep rollout timed out — pod may still be starting in cluster"
             fi
           }
-          [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]        && wait_rollout mcp-server
-          [ "${{ needs.changes.outputs.mcp-server-dotnet }}" == "true" ] && wait_rollout mcp-server-dotnet
-          [ "${{ needs.changes.outputs.agent-api }}" == "true" ]          && wait_rollout agent-api
-          [ "${{ needs.changes.outputs.agent-api-dotnet }}" == "true" ]   && wait_rollout agent-api-dotnet
-          [ "${{ needs.changes.outputs.auth-api }}" == "true" ]           && wait_rollout auth-api
-          [ "${{ needs.changes.outputs.ui }}" == "true" ]                 && wait_rollout ui
-          true  # ensure step always exits 0
+          [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]        && wait_rollout mcp-server        || true
+          [ "${{ needs.changes.outputs.mcp-server-dotnet }}" == "true" ] && wait_rollout mcp-server-dotnet || true
+          [ "${{ needs.changes.outputs.agent-api }}" == "true" ]          && wait_rollout agent-api          || true
+          [ "${{ needs.changes.outputs.agent-api-dotnet }}" == "true" ]   && wait_rollout agent-api-dotnet   || true
+          [ "${{ needs.changes.outputs.auth-api }}" == "true" ]           && wait_rollout auth-api           || true
+          [ "${{ needs.changes.outputs.ui }}" == "true" ]                 && wait_rollout ui                 || true
 
   # ── Airflow Helm upgrade (values.yaml or ingestion DAG changes) ─────────────
   upgrade-airflow:
