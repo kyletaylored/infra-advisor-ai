@@ -17,9 +17,9 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import ReactMarkdown from "react-markdown";
-import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Gauge, HardHat, ShieldCheck, Briefcase, Compass, ExternalLink, ChartNoAxesGantt, SquarePen } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Gauge, HardHat, ShieldCheck, Briefcase, Compass, ExternalLink, ChartNoAxesGantt, SquarePen, ChevronLeft } from "lucide-react";
 import { hasSeenTour, startTour } from "../lib/tour";
-import { ApiError, BackendType, BridgeData, Citation, FeedbackRating, QueryResponse, SuggestionItem, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, getBackend, newConversation, sendQuery, setBackend, submitFeedback } from "../lib/api";
+import { ApiError, BackendType, BridgeData, Citation, ConversationDetail, ConversationSummary, FeedbackRating, QueryResponse, SuggestionItem, createConversation, deleteConversation, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, getBackend, getConversation, getModel, newConversation, sendQuery, setBackend, setModel, submitFeedback } from "../lib/api";
 import {
   trackBridgeCardRendered,
   trackMessageCopied,
@@ -31,6 +31,7 @@ import { AboutModal } from "./AboutModal";
 import { AdminTab } from "./AdminTab";
 import { BridgeCard } from "./BridgeCard";
 import { CitationPanel } from "./CitationPanel";
+import { ConversationSidebar } from "./ConversationSidebar";
 import { QuerySuggestions } from "./QuerySuggestions";
 import { Sandbox } from "./Sandbox";
 import { useAuth } from "../hooks/useAuth";
@@ -475,8 +476,11 @@ export function Chat() {
   const [activeCitations, setActiveCitations] = useState<Citation[]>([]);
   const [recommendations, setRecommendations] = useState<Suggestion[]>([]);
   const [availableModels, setAvailableModels] = useState<string[]>(["gpt-4.1-mini"]);
-  const [selectedModel, setSelectedModel] = useState<string>("gpt-4.1-mini");
+  const [selectedModel, setSelectedModel] = useState<string>(getModel());
   const [selectedBackend, setSelectedBackend] = useState<BackendType>(getBackend());
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [sidebarRefresh, setSidebarRefresh] = useState(0);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -496,7 +500,8 @@ export function Chat() {
   useEffect(() => {
     fetchModels().then((data) => {
       setAvailableModels(data.models);
-      setSelectedModel(data.default);
+      const stored = getModel();
+      setSelectedModel(data.models.includes(stored) ? stored : data.default);
     });
   }, []);
 
@@ -521,7 +526,19 @@ export function Chat() {
     trackQuerySubmitted(query.length);
 
     try {
-      const resp: QueryResponse = await sendQuery(query, selectedModel);
+      // Ensure a conversation exists before sending the query
+      let convId = conversationId;
+      if (!convId && user?.id) {
+        const shortTitle = query.length > 60 ? query.slice(0, 57) + "…" : query;
+        const conv = await createConversation(user.id, shortTitle, selectedModel, selectedBackend);
+        if (conv) {
+          convId = conv.id;
+          setConversationId(conv.id);
+          setSidebarRefresh((n) => n + 1);
+        }
+      }
+
+      const resp: QueryResponse = await sendQuery(query, selectedModel, convId ?? undefined, user?.id ?? undefined);
       const bridges = extractBridgeData(resp.answer);
       if (bridges.length > 0) trackBridgeCardRendered(bridges.length);
 
@@ -568,6 +585,38 @@ export function Chat() {
       e.preventDefault();
       handleSubmit();
     }
+  }
+
+  async function handleSelectConversation(conv: ConversationSummary) {
+    if (!user?.id) return;
+    const detail: ConversationDetail | null = await getConversation(conv.id, user.id);
+    if (!detail) return;
+
+    setConversationId(conv.id);
+    setActiveCitations([]);
+    setError(null);
+    setInput("");
+
+    const loaded: Message[] = detail.messages.map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+      sources: m.sources,
+      citations: m.sources.map(sourceToCitation),
+      bridges: [],
+      traceId: m.trace_id,
+      spanId: m.span_id,
+    }));
+    setMessages(loaded);
+
+    // Show citations from the last assistant message
+    const lastAi = [...loaded].reverse().find((m) => m.role === "assistant");
+    if (lastAi) setActiveCitations(lastAi.citations);
+
+    // Restore model/backend from conversation metadata
+    if (detail.model && availableModels.includes(detail.model)) setSelectedModel(detail.model);
+    if (detail.backend) setSelectedBackend(detail.backend as BackendType);
+
+    setRecommendations(getFollowUpSuggestions(lastAi?.sources ?? []));
   }
 
   const shortSha = VERSION && VERSION !== "local" ? VERSION.slice(0, 7) : null;
@@ -655,6 +704,8 @@ export function Chat() {
               setRecommendations(INITIAL_SUGGESTIONS);
               setError(null);
               setInput("");
+              setConversationId(null);
+              setSidebarRefresh((n) => n + 1);
             }}
           >
             <SquarePen size={14} />
@@ -736,7 +787,26 @@ export function Chat() {
       {activeView === "sandbox" && <Sandbox />}
       {activeView === "admin" && <AdminTab />}
       <Flex flex={1} minH={0} overflow="hidden" display={activeView === "chat" ? "flex" : "none"}>
-        {/* Chat column */}
+        {/* LEFT: conversation history sidebar */}
+        {user && sidebarOpen && (
+          <ConversationSidebar
+            userId={user.id}
+            activeId={conversationId}
+            onSelect={handleSelectConversation}
+            onNew={() => {
+              newConversation();
+              setMessages([]);
+              setActiveCitations([]);
+              setRecommendations(INITIAL_SUGGESTIONS);
+              setError(null);
+              setInput("");
+              setConversationId(null);
+              setSidebarRefresh((n) => n + 1);
+            }}
+            refreshTrigger={sidebarRefresh}
+          />
+        )}
+        {/* CENTER: chat column */}
         <Flex direction="column" flex={1} minW={0}>
           {/* Message thread */}
           <Box flex={1} overflowY="auto" px={5} py={6}>
@@ -913,7 +983,7 @@ export function Chat() {
                         fontSize="10px"
                         fontFamily="mono"
                         fontWeight={selectedModel === m ? "semibold" : "normal"}
-                        onClick={() => setSelectedModel(m)}
+                        onClick={() => { setSelectedModel(m); setModel(m); }}
                         disabled={loading}
                       >
                         {m}

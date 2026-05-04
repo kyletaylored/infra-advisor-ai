@@ -18,6 +18,14 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 
 from agent import build_llm, build_mcp_client, run_agent
+from conversations import (
+    create_conversation,
+    delete_conversation,
+    get_conversation,
+    init_db,
+    list_conversations,
+    save_messages,
+)
 from kafka_consumer import start_consumer_thread
 from memory import append_exchange, clear_session, get_redis, get_session_model, set_session_model
 from observability.llm_obs import enable_llm_obs, submit_user_feedback
@@ -46,6 +54,12 @@ async def lifespan(app: FastAPI):
     enable_llm_obs()
 
     logger.info("agent-api starting up")
+
+    # Bootstrap conversation DB schema (no-op if DATABASE_URL unset)
+    try:
+        init_db()
+    except Exception as exc:
+        logger.warning("conversation DB init failed (non-fatal): %s", exc)
 
     # Build MCP client
     try:
@@ -344,6 +358,8 @@ async def query(
     body: QueryRequest,
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
     x_dd_rum_session_id: str | None = Header(default=None, alias="X-DD-RUM-Session-ID"),
+    x_conversation_id: str | None = Header(default=None, alias="X-Conversation-ID"),
+    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
 ) -> QueryResponse:
     """Run the InfraAdvisor agent against a user query."""
     session_id = x_session_id or body.session_id or str(uuid.uuid4())
@@ -373,11 +389,28 @@ async def query(
     append_exchange(session_id, body.query, result["answer"])
     set_session_model(session_id, deployment)
 
+    trace_id = current_trace_id()
+    span_id = current_span_id()
+
+    # Persist exchange to conversation DB (non-blocking, non-fatal)
+    if x_conversation_id and x_user_id:
+        try:
+            save_messages(
+                conv_id=x_conversation_id,
+                user_query=body.query,
+                ai_answer=result["answer"],
+                sources=result["tools_called"],
+                trace_id=trace_id,
+                span_id=span_id,
+            )
+        except Exception as exc:
+            logger.warning("save_messages failed (non-fatal): %s", exc)
+
     return QueryResponse(
         answer=result["answer"],
         sources=result["tools_called"],
-        trace_id=current_trace_id(),
-        span_id=current_span_id(),
+        trace_id=trace_id,
+        span_id=span_id,
         session_id=session_id,
         model=deployment,
     )
@@ -511,6 +544,71 @@ async def feedback(body: FeedbackRequest) -> None:
         rating=body.rating,
         session_id=body.session_id,
     )
+
+
+# ─── Conversation endpoints ───────────────────────────────────────────────────
+
+
+class ConversationCreateRequest(BaseModel):
+    title: str = "New Conversation"
+    model: str | None = None
+    backend: str = "python"
+
+
+@app.post("/conversations", status_code=201)
+async def create_conv(
+    body: ConversationCreateRequest,
+    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
+) -> dict:
+    """Create a new conversation record for the given user."""
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail="X-User-ID header required")
+    result = create_conversation(
+        user_id=x_user_id,
+        title=body.title,
+        model=body.model,
+        backend=body.backend,
+    )
+    if result is None:
+        raise HTTPException(status_code=503, detail="Conversation storage unavailable")
+    return result
+
+
+@app.get("/conversations")
+async def list_convs(
+    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
+) -> dict:
+    """List all conversations for the authenticated user."""
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail="X-User-ID header required")
+    return {"conversations": list_conversations(x_user_id)}
+
+
+@app.get("/conversations/{conversation_id}")
+async def get_conv(
+    conversation_id: str,
+    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
+) -> dict:
+    """Return a conversation and all its messages."""
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail="X-User-ID header required")
+    result = get_conversation(conversation_id, x_user_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return result
+
+
+@app.delete("/conversations/{conversation_id}", status_code=204)
+async def delete_conv(
+    conversation_id: str,
+    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
+) -> None:
+    """Delete a conversation and all its messages."""
+    if not x_user_id:
+        raise HTTPException(status_code=401, detail="X-User-ID header required")
+    deleted = delete_conversation(conversation_id, x_user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Conversation not found")
 
 
 @app.get("/health")

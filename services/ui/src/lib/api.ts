@@ -58,6 +58,16 @@ export interface BridgeData {
   _source: string;
 }
 
+const MODEL_STORAGE_KEY = "infra_advisor_model";
+
+export function getModel(): string {
+  return localStorage.getItem(MODEL_STORAGE_KEY) || "gpt-4.1-mini";
+}
+
+export function setModel(model: string): void {
+  localStorage.setItem(MODEL_STORAGE_KEY, model);
+}
+
 const SESSION_STORAGE_KEY = "infra_advisor_session_id";
 
 let _sessionId: string | null = null;
@@ -82,12 +92,19 @@ function rumHeaders(): Record<string, string> {
   return rumSessionId ? { "X-DD-RUM-Session-ID": rumSessionId } : {};
 }
 
-export async function sendQuery(query: string, model?: string): Promise<QueryResponse> {
+export async function sendQuery(
+  query: string,
+  model?: string,
+  conversationId?: string,
+  userId?: string,
+): Promise<QueryResponse> {
   const response = await fetch(`${getApiBase()}/query`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "X-Session-ID": getSessionId(),
+      ...(conversationId ? { "X-Conversation-ID": conversationId } : {}),
+      ...(userId ? { "X-User-ID": userId } : {}),
       ...rumHeaders(),
     },
     body: JSON.stringify({ query, ...(model ? { model } : {}) }),
@@ -209,4 +226,80 @@ export async function submitFeedback(
   } catch {
     // fire-and-forget — feedback failures are non-fatal
   }
+}
+
+// ── Conversation history ──────────────────────────────────────────────────────
+
+export interface ConversationMessage {
+  id: string;
+  conversation_id: string;
+  role: "user" | "assistant";
+  content: string;
+  sources: string[];
+  trace_id: string | null;
+  span_id: string | null;
+  created_at: string;
+}
+
+export interface ConversationSummary {
+  id: string;
+  user_id: string;
+  title: string;
+  model: string | null;
+  backend: string | null;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: ConversationMessage[];
+}
+
+export async function createConversation(
+  userId: string,
+  title: string,
+  model?: string,
+  backend?: string,
+): Promise<ConversationSummary | null> {
+  try {
+    const res = await fetch(`${getApiBase()}/conversations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-User-ID": userId },
+      body: JSON.stringify({ title, model, backend }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+export async function listConversations(userId: string): Promise<ConversationSummary[]> {
+  try {
+    const res = await fetch(`${getApiBase()}/conversations`, {
+      headers: { "X-User-ID": userId },
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    return data.conversations ?? [];
+  } catch { return []; }
+}
+
+export async function getConversation(id: string, userId: string): Promise<ConversationDetail | null> {
+  try {
+    const res = await fetch(`${getApiBase()}/conversations/${id}`, {
+      headers: { "X-User-ID": userId },
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+export async function deleteConversation(id: string, userId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${getApiBase()}/conversations/${id}`, {
+      method: "DELETE",
+      headers: { "X-User-ID": userId },
+    });
+    return res.ok;
+  } catch { return false; }
 }
