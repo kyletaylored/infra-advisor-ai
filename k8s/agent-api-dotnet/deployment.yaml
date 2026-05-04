@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-api-dotnet
+  namespace: infra-advisor
+  labels:
+    app: agent-api-dotnet
+    tags.datadoghq.com/env: dev
+    tags.datadoghq.com/service: infraadvisor-agent-api-dotnet
+    tags.datadoghq.com/version: latest
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: agent-api-dotnet
+  template:
+    metadata:
+      labels:
+        app: agent-api-dotnet
+        tags.datadoghq.com/env: dev
+        tags.datadoghq.com/service: infraadvisor-agent-api-dotnet
+        tags.datadoghq.com/version: latest
+      annotations:
+        ad.datadoghq.com/agent-api-dotnet.logs: "[{\"source\":\"dotnet\",\"service\":\"infraadvisor-agent-api-dotnet\"}]"
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: agent-api-dotnet
+          image: ghcr.io/kyletaylored/infra-advisor-ai/agent-api-dotnet:latest
+          ports:
+            - containerPort: 8001
+              name: http
+          envFrom:
+            - configMapRef:
+                name: agent-api-dotnet-config
+            - secretRef:
+                name: agent-api-dotnet-secret
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 15
+            periodSeconds: 15
+            timeoutSeconds: 5
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"

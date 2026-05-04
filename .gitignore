@@ -39,6 +39,18 @@ dist/
 *.csv
 *.xlsx
 
+# .NET build artifacts
+bin/
+obj/
+*.user
+*.suo
+.vs/
+TestResults/
+*.nupkg
+*.snupkg
+**/*.binlog
+publish/
+
 # Build artifacts
 *.tar.gz
 *.zip

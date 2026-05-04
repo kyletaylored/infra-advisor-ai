@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ddot-collector-config
+  namespace: datadog
+data:
+  # Enable OTLP ingestion in the Datadog agent.
+  # Traces, metrics, and logs sent via OTLP HTTP (4318) or gRPC (4317)
+  # are forwarded to the Datadog backend automatically.
+  DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_HTTP_ENDPOINT: "0.0.0.0:4318"
+  DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_GRPC_ENDPOINT: "0.0.0.0:4317"
+  DD_SITE: "us3.datadoghq.com"
+  DD_ENV: "dev"
+  DD_APM_ENABLED: "true"
+  DD_LOGS_ENABLED: "true"
+  DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL: "true"
+  DD_PROCESS_AGENT_ENABLED: "false"
+  DD_CLUSTER_AGENT_ENABLED: "false"

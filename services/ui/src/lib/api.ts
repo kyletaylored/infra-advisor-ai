@@ -1,6 +1,19 @@
 import { getRumSessionId } from "./datadog-rum";
 
-const AGENT_API_BASE = import.meta.env.VITE_AGENT_API_URL || "/api";
+const BACKEND_KEY = "infra_advisor_backend";
+export type BackendType = "python" | "dotnet";
+
+export function getBackend(): BackendType {
+  return (localStorage.getItem(BACKEND_KEY) as BackendType) || "python";
+}
+
+export function setBackend(backend: BackendType): void {
+  localStorage.setItem(BACKEND_KEY, backend);
+}
+
+function getApiBase(): string {
+  return getBackend() === "dotnet" ? "/api-dotnet" : (import.meta.env.VITE_AGENT_API_URL || "/api");
+}
 
 export class ApiError extends Error {
   status: number;
@@ -70,7 +83,7 @@ function rumHeaders(): Record<string, string> {
 }
 
 export async function sendQuery(query: string, model?: string): Promise<QueryResponse> {
-  const response = await fetch(`${AGENT_API_BASE}/query`, {
+  const response = await fetch(`${getApiBase()}/query`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -117,7 +130,7 @@ export async function fetchSuggestions(
   answer: string,
   sources: string[],
 ): Promise<SuggestionItem[]> {
-  const response = await fetch(`${AGENT_API_BASE}/suggestions`, {
+  const response = await fetch(`${getApiBase()}/suggestions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -135,7 +148,7 @@ export async function fetchSuggestions(
 
 export async function clearSession(): Promise<void> {
   if (!_sessionId) return;
-  await fetch(`${AGENT_API_BASE}/session/${_sessionId}`, { method: "DELETE" });
+  await fetch(`${getApiBase()}/session/${_sessionId}`, { method: "DELETE" });
   _sessionId = null;
   localStorage.removeItem(SESSION_STORAGE_KEY);
 }
@@ -156,7 +169,7 @@ export interface ModelsResponse {
 
 export async function fetchInitialSuggestions(): Promise<SuggestionItem[]> {
   try {
-    const response = await fetch(`${AGENT_API_BASE}/suggestions/initial`);
+    const response = await fetch(`${getApiBase()}/suggestions/initial`);
     if (!response.ok) return [];
     const data: SuggestionsResponse = await response.json();
     return data.suggestions ?? [];
@@ -167,7 +180,7 @@ export async function fetchInitialSuggestions(): Promise<SuggestionItem[]> {
 
 export async function fetchModels(): Promise<ModelsResponse> {
   try {
-    const response = await fetch(`${AGENT_API_BASE}/models`);
+    const response = await fetch(`${getApiBase()}/models`);
     if (!response.ok) return { models: ["gpt-4.1-mini"], default: "gpt-4.1-mini" };
     return await response.json();
   } catch {
@@ -183,7 +196,7 @@ export async function submitFeedback(
   rating: FeedbackRating,
 ): Promise<void> {
   try {
-    await fetch(`${AGENT_API_BASE}/feedback`, {
+    await fetch(`${getApiBase()}/feedback`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

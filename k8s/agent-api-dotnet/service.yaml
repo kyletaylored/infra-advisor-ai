@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-api-dotnet
+  namespace: infra-advisor
+  labels:
+    app: agent-api-dotnet
+spec:
+  type: ClusterIP
+  selector:
+    app: agent-api-dotnet
+  ports:
+    - name: http
+      port: 8001
+      targetPort: 8001
+      protocol: TCP

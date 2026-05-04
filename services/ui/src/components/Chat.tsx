@@ -19,7 +19,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Gauge, HardHat, ShieldCheck, Briefcase, Compass, ExternalLink, ChartNoAxesGantt, SquarePen } from "lucide-react";
 import { hasSeenTour, startTour } from "../lib/tour";
-import { ApiError, BridgeData, Citation, FeedbackRating, QueryResponse, SuggestionItem, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, newConversation, sendQuery, submitFeedback } from "../lib/api";
+import { ApiError, BackendType, BridgeData, Citation, FeedbackRating, QueryResponse, SuggestionItem, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, getBackend, newConversation, sendQuery, setBackend, submitFeedback } from "../lib/api";
 import {
   trackBridgeCardRendered,
   trackMessageCopied,
@@ -476,6 +476,7 @@ export function Chat() {
   const [recommendations, setRecommendations] = useState<Suggestion[]>([]);
   const [availableModels, setAvailableModels] = useState<string[]>(["gpt-4.1-mini"]);
   const [selectedModel, setSelectedModel] = useState<string>("gpt-4.1-mini");
+  const [selectedBackend, setSelectedBackend] = useState<BackendType>(getBackend());
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -870,27 +871,55 @@ export function Chat() {
               <Box data-tour="recommendations">
                 <QuerySuggestions suggestions={recommendations} onSelect={handleSuggestionSelect} disabled={loading} />
               </Box>
-              <HStack gap={2} justify="flex-end">
-                <Text fontSize="10px" color="gray.400" fontFamily="mono" letterSpacing="wide" textTransform="uppercase">Model</Text>
-                <HStack gap={0.5} bg="gray.100" borderRadius="md" p="2px">
-                  {availableModels.map((m) => (
-                    <Button
-                      key={m}
-                      size="xs"
-                      variant={selectedModel === m ? "solid" : "ghost"}
-                      colorPalette={selectedModel === m ? "blue" : "gray"}
-                      borderRadius="sm"
-                      h="20px"
-                      px={2}
-                      fontSize="10px"
-                      fontFamily="mono"
-                      fontWeight={selectedModel === m ? "semibold" : "normal"}
-                      onClick={() => setSelectedModel(m)}
-                      disabled={loading}
-                    >
-                      {m}
-                    </Button>
-                  ))}
+              <HStack gap={3} justify="flex-end" flexWrap="wrap">
+                <HStack gap={2}>
+                  <Text fontSize="10px" color="gray.400" fontFamily="mono" letterSpacing="wide" textTransform="uppercase">Backend</Text>
+                  <HStack gap={0.5} bg="gray.100" borderRadius="md" p="2px">
+                    {(["python", "dotnet"] as BackendType[]).map((b) => (
+                      <Button
+                        key={b}
+                        size="xs"
+                        variant={selectedBackend === b ? "solid" : "ghost"}
+                        colorPalette={selectedBackend === b ? "teal" : "gray"}
+                        borderRadius="sm"
+                        h="20px"
+                        px={2}
+                        fontSize="10px"
+                        fontFamily="mono"
+                        fontWeight={selectedBackend === b ? "semibold" : "normal"}
+                        onClick={() => {
+                          setBackend(b);
+                          setSelectedBackend(b);
+                        }}
+                        disabled={loading}
+                      >
+                        {b === "python" ? "Python" : ".NET"}
+                      </Button>
+                    ))}
+                  </HStack>
+                </HStack>
+                <HStack gap={2}>
+                  <Text fontSize="10px" color="gray.400" fontFamily="mono" letterSpacing="wide" textTransform="uppercase">Model</Text>
+                  <HStack gap={0.5} bg="gray.100" borderRadius="md" p="2px">
+                    {availableModels.map((m) => (
+                      <Button
+                        key={m}
+                        size="xs"
+                        variant={selectedModel === m ? "solid" : "ghost"}
+                        colorPalette={selectedModel === m ? "blue" : "gray"}
+                        borderRadius="sm"
+                        h="20px"
+                        px={2}
+                        fontSize="10px"
+                        fontFamily="mono"
+                        fontWeight={selectedModel === m ? "semibold" : "normal"}
+                        onClick={() => setSelectedModel(m)}
+                        disabled={loading}
+                      >
+                        {m}
+                      </Button>
+                    ))}
+                  </HStack>
                 </HStack>
               </HStack>
               <HStack as="form" onSubmit={handleSubmit} gap={2} align="flex-end">

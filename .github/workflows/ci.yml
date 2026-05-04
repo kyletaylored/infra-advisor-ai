@@ -6,7 +6,8 @@ on:
   pull_request:
 
 jobs:
-  test:
+  # ── Python services (uv + pytest) ──────────────────────────────────────────
+  test-python:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -31,3 +32,41 @@ jobs:
           DD_AGENT_HOST: localhost
           EIA_API_KEY: mock-key
           KAFKA_BOOTSTRAP_SERVERS: localhost:9092
+
+  # ── .NET service (dotnet build + test) ─────────────────────────────────────
+  test-dotnet:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/agent-api-dotnet
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore -c Release
+
+      - name: Test
+        run: |
+          if [ -d "tests" ]; then
+            dotnet test --no-build -c Release --logger "trx;LogFileName=results.trx" --results-directory TestResults/
+          else
+            echo "No test project found — skipping (build verified above)"
+          fi
+        env:
+          AZURE_OPENAI_ENDPOINT: https://mock.openai.azure.com
+          AZURE_OPENAI_API_KEY: mock-key
+
+      - name: Upload test results
+        if: always() && hashFiles('services/agent-api-dotnet/TestResults/**/*.trx') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-test-results
+          path: services/agent-api-dotnet/TestResults/
