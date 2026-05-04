@@ -19,14 +19,6 @@ public static class TelemetrySetup
         var ddEnv = Environment.GetEnvironmentVariable("DD_ENV") ?? "dev";
         var ddVersion = Environment.GetEnvironmentVariable("DD_VERSION") ?? "latest";
 
-        // OpenInference.NET DI registration — wires up LlmTelemetryHandler and LlmInstrumentation
-        services.AddOpenInferenceTelemetry(options =>
-        {
-            options.EmitTextContent = true;
-            options.RecordTokenUsage = true;
-            options.SanitizeSensitiveInfo = false;
-        });
-
         services.AddOpenTelemetry()
             .ConfigureResource(r => r
                 .AddService(ServiceName)

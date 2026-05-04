@@ -31,7 +31,7 @@ public class MemoryService
             var db = _redis.GetDatabase();
             var raw = await db.StringGetAsync($"{SessionPrefix}:{sessionId}:memory");
             if (raw.IsNullOrEmpty) return new();
-            var history = JsonSerializer.Deserialize<List<ConversationMessage>>(raw!, _jsonOptions) ?? new();
+            var history = JsonSerializer.Deserialize<List<ConversationMessage>>((string)raw!, _jsonOptions) ?? new();
             return history.TakeLast(WindowSize * 2).ToList();
         }
         catch (Exception ex)
