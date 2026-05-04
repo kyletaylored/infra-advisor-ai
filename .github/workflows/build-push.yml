@@ -202,45 +202,39 @@ jobs:
 
       - name: Rolling restart changed deployments
         run: |
-          if [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]; then
-            kubectl rollout restart deployment/mcp-server -n infra-advisor
-          fi
-          if [ "${{ needs.changes.outputs.mcp-server-dotnet }}" == "true" ]; then
-            kubectl rollout restart deployment/mcp-server-dotnet -n infra-advisor
-          fi
-          if [ "${{ needs.changes.outputs.agent-api }}" == "true" ]; then
-            kubectl rollout restart deployment/agent-api -n infra-advisor
-          fi
-          if [ "${{ needs.changes.outputs.agent-api-dotnet }}" == "true" ]; then
-            kubectl rollout restart deployment/agent-api-dotnet -n infra-advisor
-          fi
-          if [ "${{ needs.changes.outputs.auth-api }}" == "true" ]; then
-            kubectl rollout restart deployment/auth-api -n infra-advisor
-          fi
-          if [ "${{ needs.changes.outputs.ui }}" == "true" ]; then
-            kubectl rollout restart deployment/ui -n infra-advisor
-          fi
+          # Wrap each restart in an existence check so first-time deploys don't fail CI.
+          # Initial apply is done via `make deploy-k8s`; CI only restarts existing deployments.
+          restart() {
+            local dep="$1"
+            if kubectl get deployment/"$dep" -n infra-advisor &>/dev/null; then
+              kubectl rollout restart deployment/"$dep" -n infra-advisor
+            else
+              echo "deployment/$dep not found in cluster — skipping (will be applied by make deploy-k8s)"
+            fi
+          }
+          [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]        && restart mcp-server
+          [ "${{ needs.changes.outputs.mcp-server-dotnet }}" == "true" ] && restart mcp-server-dotnet
+          [ "${{ needs.changes.outputs.agent-api }}" == "true" ]          && restart agent-api
+          [ "${{ needs.changes.outputs.agent-api-dotnet }}" == "true" ]   && restart agent-api-dotnet
+          [ "${{ needs.changes.outputs.auth-api }}" == "true" ]           && restart auth-api
+          [ "${{ needs.changes.outputs.ui }}" == "true" ]                 && restart ui
+          true  # ensure step always exits 0
 
       - name: Wait for rollouts
         run: |
-          if [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]; then
-            kubectl rollout status deployment/mcp-server -n infra-advisor --timeout=5m
-          fi
-          if [ "${{ needs.changes.outputs.mcp-server-dotnet }}" == "true" ]; then
-            kubectl rollout status deployment/mcp-server-dotnet -n infra-advisor --timeout=5m
-          fi
-          if [ "${{ needs.changes.outputs.agent-api }}" == "true" ]; then
-            kubectl rollout status deployment/agent-api -n infra-advisor --timeout=5m
-          fi
-          if [ "${{ needs.changes.outputs.agent-api-dotnet }}" == "true" ]; then
-            kubectl rollout status deployment/agent-api-dotnet -n infra-advisor --timeout=5m
-          fi
-          if [ "${{ needs.changes.outputs.auth-api }}" == "true" ]; then
-            kubectl rollout status deployment/auth-api -n infra-advisor --timeout=5m
-          fi
-          if [ "${{ needs.changes.outputs.ui }}" == "true" ]; then
-            kubectl rollout status deployment/ui -n infra-advisor --timeout=5m
-          fi
+          wait_rollout() {
+            local dep="$1"
+            if kubectl get deployment/"$dep" -n infra-advisor &>/dev/null; then
+              kubectl rollout status deployment/"$dep" -n infra-advisor --timeout=5m
+            fi
+          }
+          [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]        && wait_rollout mcp-server
+          [ "${{ needs.changes.outputs.mcp-server-dotnet }}" == "true" ] && wait_rollout mcp-server-dotnet
+          [ "${{ needs.changes.outputs.agent-api }}" == "true" ]          && wait_rollout agent-api
+          [ "${{ needs.changes.outputs.agent-api-dotnet }}" == "true" ]   && wait_rollout agent-api-dotnet
+          [ "${{ needs.changes.outputs.auth-api }}" == "true" ]           && wait_rollout auth-api
+          [ "${{ needs.changes.outputs.ui }}" == "true" ]                 && wait_rollout ui
+          true  # ensure step always exits 0
 
   # ── Airflow Helm upgrade (values.yaml or ingestion DAG changes) ─────────────
   upgrade-airflow:
