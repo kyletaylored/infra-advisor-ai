@@ -21,14 +21,15 @@ jobs:
     permissions:
       contents: read
     outputs:
-      mcp-server:       ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.mcp-server == 'true' }}
-      agent-api:        ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.agent-api == 'true' }}
-      agent-api-dotnet: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.agent-api-dotnet == 'true' }}
-      auth-api:         ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.auth-api == 'true' }}
-      load-generator:   ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.load-generator == 'true' }}
-      ui:               ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.ui == 'true' }}
-      airflow:          ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.airflow == 'true' }}
-      datadog:          ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.datadog == 'true' }}
+      mcp-server:         ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.mcp-server == 'true' }}
+      mcp-server-dotnet:  ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.mcp-server-dotnet == 'true' }}
+      agent-api:          ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.agent-api == 'true' }}
+      agent-api-dotnet:   ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.agent-api-dotnet == 'true' }}
+      auth-api:           ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.auth-api == 'true' }}
+      load-generator:     ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.load-generator == 'true' }}
+      ui:                 ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.ui == 'true' }}
+      airflow:            ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.airflow == 'true' }}
+      datadog:            ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.datadog == 'true' }}
     steps:
       - uses: actions/checkout@v6
 
@@ -39,6 +40,8 @@ jobs:
           filters: |
             mcp-server:
               - 'services/mcp-server/**'
+            mcp-server-dotnet:
+              - 'services/mcp-server-dotnet/**'
             agent-api:
               - 'services/agent-api/**'
             agent-api-dotnet:
@@ -68,6 +71,8 @@ jobs:
         include:
           - service: mcp-server
             changed: ${{ needs.changes.outputs.mcp-server }}
+          - service: mcp-server-dotnet
+            changed: ${{ needs.changes.outputs.mcp-server-dotnet }}
           - service: agent-api
             changed: ${{ needs.changes.outputs.agent-api }}
           - service: agent-api-dotnet
@@ -167,11 +172,12 @@ jobs:
     # load-generator is a CronJob — it picks up :latest on its next scheduled run.
     if: |
       github.ref == 'refs/heads/main' && (
-        needs.changes.outputs.mcp-server       == 'true' ||
-        needs.changes.outputs.agent-api        == 'true' ||
-        needs.changes.outputs.agent-api-dotnet == 'true' ||
-        needs.changes.outputs.auth-api         == 'true' ||
-        needs.changes.outputs.ui               == 'true'
+        needs.changes.outputs.mcp-server        == 'true' ||
+        needs.changes.outputs.mcp-server-dotnet == 'true' ||
+        needs.changes.outputs.agent-api         == 'true' ||
+        needs.changes.outputs.agent-api-dotnet  == 'true' ||
+        needs.changes.outputs.auth-api          == 'true' ||
+        needs.changes.outputs.ui                == 'true'
       )
     permissions:
       contents: read
@@ -199,6 +205,9 @@ jobs:
           if [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]; then
             kubectl rollout restart deployment/mcp-server -n infra-advisor
           fi
+          if [ "${{ needs.changes.outputs.mcp-server-dotnet }}" == "true" ]; then
+            kubectl rollout restart deployment/mcp-server-dotnet -n infra-advisor
+          fi
           if [ "${{ needs.changes.outputs.agent-api }}" == "true" ]; then
             kubectl rollout restart deployment/agent-api -n infra-advisor
           fi
@@ -216,6 +225,9 @@ jobs:
         run: |
           if [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]; then
             kubectl rollout status deployment/mcp-server -n infra-advisor --timeout=5m
+          fi
+          if [ "${{ needs.changes.outputs.mcp-server-dotnet }}" == "true" ]; then
+            kubectl rollout status deployment/mcp-server-dotnet -n infra-advisor --timeout=5m
           fi
           if [ "${{ needs.changes.outputs.agent-api }}" == "true" ]; then
             kubectl rollout status deployment/agent-api -n infra-advisor --timeout=5m

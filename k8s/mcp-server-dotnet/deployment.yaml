@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server-dotnet
+  namespace: infra-advisor
+  labels:
+    app: mcp-server-dotnet
+    tags.datadoghq.com/env: dev
+    tags.datadoghq.com/service: infratools-mcp-dotnet
+    tags.datadoghq.com/version: latest
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mcp-server-dotnet
+  template:
+    metadata:
+      labels:
+        app: mcp-server-dotnet
+        tags.datadoghq.com/env: dev
+        tags.datadoghq.com/service: infratools-mcp-dotnet
+        tags.datadoghq.com/version: latest
+      annotations:
+        ad.datadoghq.com/mcp-server-dotnet.logs: '[{"source":"dotnet","service":"infratools-mcp-dotnet"}]'
+    spec:
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: mcp-server-dotnet
+          image: ghcr.io/kyletaylored/infra-advisor-ai/mcp-server-dotnet:latest
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - configMapRef:
+                name: mcp-server-dotnet-config
+            - secretRef:
+                name: mcp-server-dotnet-secret
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 5
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

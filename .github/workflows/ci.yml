@@ -33,17 +33,21 @@ jobs:
           EIA_API_KEY: mock-key
           KAFKA_BOOTSTRAP_SERVERS: localhost:9092
 
-  # ── .NET service (dotnet build + test) ─────────────────────────────────────
+  # ── .NET services (dotnet build + test) ────────────────────────────────────
   test-dotnet:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [agent-api-dotnet, mcp-server-dotnet]
     defaults:
       run:
-        working-directory: services/agent-api-dotnet
+        working-directory: services/${{ matrix.service }}
     steps:
       - uses: actions/checkout@v6
 
       - name: Set up .NET 10
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
@@ -65,8 +69,9 @@ jobs:
           AZURE_OPENAI_API_KEY: mock-key
 
       - name: Upload test results
-        if: always() && hashFiles('services/agent-api-dotnet/TestResults/**/*.trx') != ''
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dotnet-test-results
-          path: services/agent-api-dotnet/TestResults/
+          name: dotnet-test-results-${{ matrix.service }}
+          path: services/${{ matrix.service }}/TestResults/
+          if-no-files-found: ignore

@@ -4,20 +4,22 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <InvariantGlobalization>false</InvariantGlobalization>
+    <AssemblyName>InfraAdvisor.McpServer</AssemblyName>
+    <RootNamespace>InfraAdvisor.McpServer</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <!-- Must be >= 2.2.0-beta.4 to satisfy OpenInference.NET → SemanticKernel → Azure.AI.OpenAI transitive requirement -->
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="0.2.0-preview.3" />
+    <PackageReference Include="Azure.Search.Documents" Version="11.7.0" />
     <PackageReference Include="Azure.AI.OpenAI" Version="2.2.0-beta.4" />
-    <PackageReference Include="OpenInference.NET" Version="1.0.0" />
-    <!-- Override SemanticKernel.Core transitive dep to pick up GHSA-2ww3-72rp-wpp4 fix -->
-    <PackageReference Include="Microsoft.SemanticKernel.Core" Version="1.50.0" />
-
-    <!-- 1.10.0 addresses moderate vulns in 1.9.0 (GHSA-g94r-2vxg-569j, GHSA-4625-4j76-fww9) -->
+    <!-- 7.1.0 resolves all Scriban 5.x critical/high CVEs -->
+    <PackageReference Include="Scriban" Version="7.1.0" />
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.10.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.10.0" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.10.0" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.10.0" />
-    <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
-    <PackageReference Include="Confluent.Kafka" Version="2.6.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Embed Scriban templates as embedded resources -->
+    <EmbeddedResource Include="Templates\*.md" />
   </ItemGroup>
 </Project>

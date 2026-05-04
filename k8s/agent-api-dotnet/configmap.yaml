@@ -16,7 +16,7 @@ data:
   AZURE_OPENAI_DEPLOYMENT: "gpt-4.1-mini"
   AZURE_OPENAI_EVAL_DEPLOYMENT: "gpt-4.1-mini"
   AVAILABLE_MODELS: "gpt-4.1-mini,gpt-4.1,gpt-5.4-mini"
-  MCP_SERVER_URL: "http://mcp-server.infra-advisor.svc.cluster.local:8000/mcp"
+  MCP_SERVER_URL: "http://mcp-server-dotnet.infra-advisor.svc.cluster.local:8000/mcp"
   REDIS_HOST: "redis.infra-advisor.svc.cluster.local"
   REDIS_PORT: "6379"
   LOG_LEVEL: "Information"
