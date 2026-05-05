@@ -10,6 +10,7 @@ import {
   HStack,
   IconButton,
   Link,
+  NativeSelect,
   Separator,
   Spinner,
   Text,
@@ -942,54 +943,44 @@ export function Chat() {
                 <QuerySuggestions suggestions={recommendations} onSelect={handleSuggestionSelect} disabled={loading} />
               </Box>
               <HStack gap={3} justify="flex-end" flexWrap="wrap">
-                <HStack gap={2}>
+                <HStack gap={1.5} align="center">
                   <Text fontSize="10px" color="gray.400" fontFamily="mono" letterSpacing="wide" textTransform="uppercase">Backend</Text>
-                  <HStack gap={0.5} bg="gray.100" borderRadius="md" p="2px">
-                    {(["python", "dotnet"] as BackendType[]).map((b) => (
-                      <Button
-                        key={b}
-                        size="xs"
-                        variant={selectedBackend === b ? "solid" : "ghost"}
-                        colorPalette={selectedBackend === b ? "teal" : "gray"}
-                        borderRadius="sm"
-                        h="20px"
-                        px={2}
-                        fontSize="10px"
-                        fontFamily="mono"
-                        fontWeight={selectedBackend === b ? "semibold" : "normal"}
-                        onClick={() => {
-                          setBackend(b);
-                          setSelectedBackend(b);
-                        }}
-                        disabled={loading}
-                      >
-                        {b === "python" ? "Python" : ".NET"}
-                      </Button>
-                    ))}
-                  </HStack>
+                  <NativeSelect.Root size="xs" disabled={loading} data-dd-action-name="backend-select">
+                    <NativeSelect.Field
+                      id="backend-select"
+                      aria-label="Select backend"
+                      value={selectedBackend}
+                      onChange={(e) => {
+                        const b = e.target.value as BackendType;
+                        setBackend(b);
+                        setSelectedBackend(b);
+                      }}
+                      fontFamily="mono"
+                      fontSize="xs"
+                    >
+                      <option value="python">Python</option>
+                      <option value="dotnet">.NET</option>
+                    </NativeSelect.Field>
+                    <NativeSelect.Indicator />
+                  </NativeSelect.Root>
                 </HStack>
-                <HStack gap={2}>
+                <HStack gap={1.5} align="center">
                   <Text fontSize="10px" color="gray.400" fontFamily="mono" letterSpacing="wide" textTransform="uppercase">Model</Text>
-                  <HStack gap={0.5} bg="gray.100" borderRadius="md" p="2px">
-                    {availableModels.map((m) => (
-                      <Button
-                        key={m}
-                        size="xs"
-                        variant={selectedModel === m ? "solid" : "ghost"}
-                        colorPalette={selectedModel === m ? "blue" : "gray"}
-                        borderRadius="sm"
-                        h="20px"
-                        px={2}
-                        fontSize="10px"
-                        fontFamily="mono"
-                        fontWeight={selectedModel === m ? "semibold" : "normal"}
-                        onClick={() => { setSelectedModel(m); setModel(m); }}
-                        disabled={loading}
-                      >
-                        {m}
-                      </Button>
-                    ))}
-                  </HStack>
+                  <NativeSelect.Root size="xs" disabled={loading} data-dd-action-name="model-select">
+                    <NativeSelect.Field
+                      id="model-select"
+                      aria-label="Select model"
+                      value={selectedModel}
+                      onChange={(e) => { setSelectedModel(e.target.value); setModel(e.target.value); }}
+                      fontFamily="mono"
+                      fontSize="xs"
+                    >
+                      {availableModels.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </NativeSelect.Field>
+                    <NativeSelect.Indicator />
+                  </NativeSelect.Root>
                 </HStack>
               </HStack>
               <HStack as="form" onSubmit={handleSubmit} gap={2} align="flex-end">

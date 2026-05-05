@@ -129,11 +129,14 @@ export function LoginPage() {
             {/* Email — shown on login, register, forgot */}
             {mode !== "reset" && (
               <Box w="full">
-                <Text fontSize="xs" fontWeight="medium" color="gray.600" mb={1}>
+                <label htmlFor="email" style={{ fontSize: "0.75rem", fontWeight: 500, color: "var(--chakra-colors-gray-600)", display: "block", marginBottom: "4px" }}>
                   Email
-                </Text>
+                </label>
                 <Input
+                  id="email"
                   type="email"
+                  autoComplete="email"
+                  aria-label="Email address"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@datadoghq.com"
@@ -151,9 +154,9 @@ export function LoginPage() {
             {(mode === "login" || mode === "register") && (
               <Box w="full">
                 <Flex justify="space-between" align="center" mb={1}>
-                  <Text fontSize="xs" fontWeight="medium" color="gray.600">
+                  <label htmlFor="password" style={{ fontSize: "0.75rem", fontWeight: 500, color: "var(--chakra-colors-gray-600)" }}>
                     Password
-                  </Text>
+                  </label>
                   {mode === "login" && (
                     <button
                       type="button"
@@ -172,7 +175,10 @@ export function LoginPage() {
                   )}
                 </Flex>
                 <Input
+                  id="password"
                   type="password"
+                  autoComplete={mode === "login" ? "current-password" : "new-password"}
+                  aria-label="Password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
@@ -190,11 +196,14 @@ export function LoginPage() {
             {mode === "reset" && (
               <>
                 <Box w="full">
-                  <Text fontSize="xs" fontWeight="medium" color="gray.600" mb={1}>
+                  <label htmlFor="new-password" style={{ fontSize: "0.75rem", fontWeight: 500, color: "var(--chakra-colors-gray-600)", display: "block", marginBottom: "4px" }}>
                     New password
-                  </Text>
+                  </label>
                   <Input
+                    id="new-password"
                     type="password"
+                    autoComplete="new-password"
+                    aria-label="New password"
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     placeholder="••••••••"
@@ -207,11 +216,14 @@ export function LoginPage() {
                   />
                 </Box>
                 <Box w="full">
-                  <Text fontSize="xs" fontWeight="medium" color="gray.600" mb={1}>
+                  <label htmlFor="confirm-password" style={{ fontSize: "0.75rem", fontWeight: 500, color: "var(--chakra-colors-gray-600)", display: "block", marginBottom: "4px" }}>
                     Confirm new password
-                  </Text>
+                  </label>
                   <Input
+                    id="confirm-password"
                     type="password"
+                    autoComplete="new-password"
+                    aria-label="Confirm new password"
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="••••••••"
