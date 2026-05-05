@@ -92,6 +92,36 @@ function rumHeaders(): Record<string, string> {
   return rumSessionId ? { "X-DD-RUM-Session-ID": rumSessionId } : {};
 }
 
+/** Read a Response body once and return a user-friendly error string + optional trace ID. */
+async function extractErrorDetail(
+  response: Response,
+): Promise<{ detail: string; traceId: string | null }> {
+  // Read body as text first — body stream can only be consumed once.
+  // Then try to parse as JSON; fall back to raw text or a generic message.
+  let raw = "";
+  try {
+    raw = await response.text();
+  } catch (e) {
+    console.error("[api] Failed to read error response body:", e);
+  }
+  try {
+    const body = JSON.parse(raw);
+    return {
+      detail: body.detail ?? body.message ?? JSON.stringify(body),
+      traceId: body.trace_id ?? null,
+    };
+  } catch {
+    // Non-JSON body (nginx 502 HTML, Cloudflare error page, etc.)
+    const isHtml = raw.trimStart().startsWith("<");
+    return {
+      detail: isHtml
+        ? `Backend unavailable (HTTP ${response.status})`
+        : raw.trim() || `HTTP ${response.status}`,
+      traceId: null,
+    };
+  }
+}
+
 export async function sendQuery(
   query: string,
   model?: string,
@@ -111,16 +141,9 @@ export async function sendQuery(
   });
 
   if (!response.ok) {
-    let detail: string;
-    let traceId: string | null = null;
-    try {
-      const body = await response.json();
-      detail = body.detail ?? JSON.stringify(body);
-      traceId = body.trace_id ?? null;
-    } catch {
-      detail = await response.text();
-    }
-    throw new ApiError(`Agent API error ${response.status}: ${detail}`, response.status, traceId);
+    const { detail, traceId } = await extractErrorDetail(response);
+    console.error(`[api] sendQuery ${response.status}:`, detail);
+    throw new ApiError(detail, response.status, traceId);
   }
 
   const data: QueryResponse = await response.json();
@@ -147,20 +170,23 @@ export async function fetchSuggestions(
   answer: string,
   sources: string[],
 ): Promise<SuggestionItem[]> {
-  const response = await fetch(`${getApiBase()}/suggestions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-Session-ID": getSessionId(),
-      ...rumHeaders(),
-    },
-    body: JSON.stringify({ query, answer, sources }),
-  });
-
-  if (!response.ok) return [];
-
-  const data: SuggestionsResponse = await response.json();
-  return data.suggestions ?? [];
+  try {
+    const response = await fetch(`${getApiBase()}/suggestions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Session-ID": getSessionId(),
+        ...rumHeaders(),
+      },
+      body: JSON.stringify({ query, answer, sources }),
+    });
+    if (!response.ok) return [];
+    const data: SuggestionsResponse = await response.json();
+    return data.suggestions ?? [];
+  } catch (err) {
+    console.error("[api] fetchSuggestions failed:", err);
+    return [];
+  }
 }
 
 export async function clearSession(): Promise<void> {
@@ -190,7 +216,8 @@ export async function fetchInitialSuggestions(): Promise<SuggestionItem[]> {
     if (!response.ok) return [];
     const data: SuggestionsResponse = await response.json();
     return data.suggestions ?? [];
-  } catch {
+  } catch (err) {
+    console.error("[api] fetchInitialSuggestions failed:", err);
     return [];
   }
 }
@@ -200,7 +227,8 @@ export async function fetchModels(): Promise<ModelsResponse> {
     const response = await fetch(`${getApiBase()}/models`);
     if (!response.ok) return { models: ["gpt-4.1-mini"], default: "gpt-4.1-mini" };
     return await response.json();
-  } catch {
+  } catch (err) {
+    console.error("[api] fetchModels failed:", err);
     return { models: ["gpt-4.1-mini"], default: "gpt-4.1-mini" };
   }
 }
@@ -268,9 +296,16 @@ export async function createConversation(
       headers: { "Content-Type": "application/json", "X-User-ID": userId },
       body: JSON.stringify({ title, model, backend }),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const { detail } = await extractErrorDetail(res);
+      console.error(`[api] createConversation ${res.status}:`, detail);
+      return null;
+    }
     return await res.json();
-  } catch { return null; }
+  } catch (err) {
+    console.error("[api] createConversation failed:", err);
+    return null;
+  }
 }
 
 export async function listConversations(userId: string): Promise<ConversationSummary[]> {
@@ -278,10 +313,17 @@ export async function listConversations(userId: string): Promise<ConversationSum
     const res = await fetch(`${getApiBase()}/conversations`, {
       headers: { "X-User-ID": userId },
     });
-    if (!res.ok) return [];
+    if (!res.ok) {
+      const { detail } = await extractErrorDetail(res);
+      console.error(`[api] listConversations ${res.status}:`, detail);
+      return [];
+    }
     const data = await res.json();
     return data.conversations ?? [];
-  } catch { return []; }
+  } catch (err) {
+    console.error("[api] listConversations failed:", err);
+    return [];
+  }
 }
 
 export async function getConversation(id: string, userId: string): Promise<ConversationDetail | null> {
@@ -289,9 +331,16 @@ export async function getConversation(id: string, userId: string): Promise<Conve
     const res = await fetch(`${getApiBase()}/conversations/${id}`, {
       headers: { "X-User-ID": userId },
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      const { detail } = await extractErrorDetail(res);
+      console.error(`[api] getConversation ${res.status}:`, detail);
+      return null;
+    }
     return await res.json();
-  } catch { return null; }
+  } catch (err) {
+    console.error("[api] getConversation failed:", err);
+    return null;
+  }
 }
 
 export async function deleteConversation(id: string, userId: string): Promise<boolean> {
@@ -300,6 +349,13 @@ export async function deleteConversation(id: string, userId: string): Promise<bo
       method: "DELETE",
       headers: { "X-User-ID": userId },
     });
+    if (!res.ok) {
+      const { detail } = await extractErrorDetail(res);
+      console.error(`[api] deleteConversation ${res.status}:`, detail);
+    }
     return res.ok;
-  } catch { return false; }
+  } catch (err) {
+    console.error("[api] deleteConversation failed:", err);
+    return false;
+  }
 }

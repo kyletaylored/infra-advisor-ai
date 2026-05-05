@@ -51,8 +51,23 @@ public sealed class ConversationService
             _ds = null;
             return;
         }
-        var builder = new NpgsqlDataSourceBuilder(url);
+        // NpgsqlDataSourceBuilder expects ADO.NET key=value format; convert postgresql:// URIs.
+        var connStr = ToNpgsqlConnectionString(url);
+        var builder = new NpgsqlDataSourceBuilder(connStr);
         _ds = builder.Build();
+    }
+
+    private static string ToNpgsqlConnectionString(string url)
+    {
+        if (!url.StartsWith("postgresql://") && !url.StartsWith("postgres://"))
+            return url;
+        var uri = new Uri(url);
+        var parts = uri.UserInfo.Split(':', 2);
+        var user = Uri.UnescapeDataString(parts[0]);
+        var pass = parts.Length > 1 ? Uri.UnescapeDataString(parts[1]) : "";
+        var db = uri.AbsolutePath.TrimStart('/');
+        var port = uri.Port > 0 ? uri.Port : 5432;
+        return $"Host={uri.Host};Port={port};Database={db};Username={user};Password={pass}";
     }
 
     public async Task InitializeAsync()

@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags help
+.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags help
 
 # Load .env if present (for local dev)
 -include .env
@@ -94,6 +94,28 @@ create-mcp-server-secret: ## Create mcp-server-secret K8s Secret (Azure, EIA, ER
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ mcp-server-secret created in namespace $(NAMESPACE)"
 
+create-mcp-server-dotnet-secret: ## Create mcp-server-dotnet-secret K8s Secret (Azure Search + OpenAI + optional API keys)
+	@if [ -z "$(AZURE_SEARCH_ENDPOINT)" ];  then echo "ERROR: AZURE_SEARCH_ENDPOINT is not set";  exit 1; fi
+	@if [ -z "$(AZURE_SEARCH_API_KEY)" ];   then echo "ERROR: AZURE_SEARCH_API_KEY is not set";   exit 1; fi
+	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ];  then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set";  exit 1; fi
+	@if [ -z "$(AZURE_OPENAI_API_KEY)" ];   then echo "ERROR: AZURE_OPENAI_API_KEY is not set";   exit 1; fi
+	@if [ -z "$(EIA_API_KEY)" ];            then echo "WARN: EIA_API_KEY is not set — EIA tool will be disabled"; fi
+	@if [ -z "$(ERCOT_API_KEY)" ];          then echo "WARN: ERCOT_API_KEY is not set — ERCOT tool will be disabled"; fi
+	@if [ -z "$(SAMGOV_API_KEY)" ];         then echo "WARN: SAMGOV_API_KEY is not set — SAM.gov tool will be disabled"; fi
+	@if [ -z "$(TAVILY_API_KEY)" ];         then echo "WARN: TAVILY_API_KEY is not set — web search tool will be disabled"; fi
+	kubectl create secret generic mcp-server-dotnet-secret \
+		--namespace $(NAMESPACE) \
+		--from-literal=AZURE_SEARCH_ENDPOINT=$(AZURE_SEARCH_ENDPOINT) \
+		--from-literal=AZURE_SEARCH_API_KEY=$(AZURE_SEARCH_API_KEY) \
+		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
+		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
+		$(if $(EIA_API_KEY),--from-literal=EIA_API_KEY=$(EIA_API_KEY),) \
+		$(if $(ERCOT_API_KEY),--from-literal=ERCOT_API_KEY=$(ERCOT_API_KEY),) \
+		$(if $(SAMGOV_API_KEY),--from-literal=SAMGOV_API_KEY=$(SAMGOV_API_KEY),) \
+		$(if $(TAVILY_API_KEY),--from-literal=TAVILY_API_KEY=$(TAVILY_API_KEY),) \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "✓ mcp-server-dotnet-secret created in namespace $(NAMESPACE)"
+
 create-agent-api-secret: ## Create agent-api-secret K8s Secret (Azure OpenAI keys + DATABASE_URL)
 	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ]; then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set"; exit 1; fi
 	@if [ -z "$(AZURE_OPENAI_API_KEY)" ];  then echo "ERROR: AZURE_OPENAI_API_KEY is not set";  exit 1; fi
@@ -156,7 +178,7 @@ create-dd-postgres-secret: ## Create dd-postgres-secret K8s Secret (Datadog moni
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ dd-postgres-secret created"
 
-create-secrets: create-mcp-server-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-airflow-secret ## Create all application K8s secrets
+create-secrets: create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-airflow-secret ## Create all application K8s secrets
 
 setup-postgres-dbm: ## Create Datadog monitoring user + grants in Postgres (run once after deploy)
 	@if [ -z "$(POSTGRES_USER)" ]; then echo "ERROR: POSTGRES_USER is not set"; exit 1; fi
@@ -212,6 +234,7 @@ deploy-k8s: check-env ## Apply all Kubernetes manifests
 
 	@echo "→ Creating application secrets..."
 	$(MAKE) create-mcp-server-secret
+	$(MAKE) create-mcp-server-dotnet-secret
 	$(MAKE) create-agent-api-secret
 	$(MAKE) create-agent-api-dotnet-secret
 	$(MAKE) create-load-generator-secret
@@ -224,7 +247,9 @@ deploy-k8s: check-env ## Apply all Kubernetes manifests
 
 	@echo "→ Deploying application services..."
 	kubectl apply -f k8s/mcp-server/
+	kubectl apply -f k8s/mcp-server-dotnet/
 	kubectl apply -f k8s/agent-api/
+	kubectl apply -f k8s/agent-api-dotnet/
 	kubectl apply -f k8s/auth-api/
 	kubectl apply -f k8s/load-generator/
 	kubectl apply -f k8s/ui/

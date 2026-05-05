@@ -9,7 +9,7 @@ metadata:
     tags.datadoghq.com/service: infraadvisor-agent-api-dotnet
     tags.datadoghq.com/version: latest
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: agent-api-dotnet
@@ -53,8 +53,8 @@ spec:
             timeoutSeconds: 5
           resources:
             requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
               memory: "512Mi"
               cpu: "500m"
-            limits:
-              memory: "1Gi"
-              cpu: "1000m"
