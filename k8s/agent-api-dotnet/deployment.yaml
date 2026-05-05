@@ -22,6 +22,7 @@ spec:
         tags.datadoghq.com/version: latest
       annotations:
         ad.datadoghq.com/agent-api-dotnet.logs: "[{\"source\":\"csharp\",\"service\":\"infra-advisor-agent-api-dotnet\"}]"
+        admission.datadoghq.com/dotnet-lib.version: v3
     spec:
       imagePullSecrets:
         - name: ghcr-pull-secret

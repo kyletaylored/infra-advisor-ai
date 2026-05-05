@@ -1,14 +1,13 @@
 using Microsoft.AspNetCore.Builder;
 using OpenTelemetry.Exporter;
-using OpenTelemetry.Logs;
 using OpenTelemetry.Resources;
-using OpenTelemetry.Trace;
 using OpenTelemetry.Metrics;
 
 namespace InfraAdvisor.McpServer.Observability;
 
 public static class TelemetrySetup
 {
+    // DD SDK captures all ActivitySource spans when DD_TRACE_OTEL_ENABLED=true
     public const string ActivitySourceName = "infra-advisor-mcp-server-dotnet";
 
     public static void Configure(WebApplicationBuilder builder)
@@ -20,6 +19,8 @@ public static class TelemetrySetup
         var ddEnv = Environment.GetEnvironmentVariable("DD_ENV") ?? "dev";
         var ddVersion = Environment.GetEnvironmentVariable("DD_VERSION") ?? "latest";
 
+        // Traces: DD SDK (auto-injected + DD_TRACE_OTEL_ENABLED=true) handles export to port 8126.
+        // Metrics: OTLP to DDOT collector for any custom meters.
         builder.Services.AddOpenTelemetry()
             .ConfigureResource(r => r
                 .AddService(serviceName)
@@ -28,39 +29,19 @@ public static class TelemetrySetup
                     ["service.version"] = ddVersion,
                 })
             )
-            .WithTracing(tracing => tracing
-                .AddAspNetCoreInstrumentation(opts => opts.RecordException = true)
-                .AddHttpClientInstrumentation()
-                .AddSource(ActivitySourceName)
-                .AddOtlpExporter(otlp =>
-                {
-                    otlp.Endpoint = new Uri(otlpEndpoint);
-                    otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
-                })
-            )
             .WithMetrics(metrics => metrics
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddMeter(ActivitySourceName)
-                .AddOtlpExporter(otlp =>
-                {
+                .AddOtlpExporter(otlp => {
                     otlp.Endpoint = new Uri(otlpEndpoint);
                     otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
                 })
             );
 
+        // DD_LOGS_INJECTION=true injects trace context into ILogger structured properties
+        // for log/trace correlation via Datadog agent stdout collection.
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole();
-        builder.Logging.AddOpenTelemetry(logging =>
-        {
-            logging.IncludeFormattedMessage = true;
-            logging.IncludeScopes = true;
-            logging.ParseStateValues = true;
-            logging.AddOtlpExporter(otlp =>
-            {
-                otlp.Endpoint = new Uri(otlpEndpoint);
-                otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
-            });
-        });
     }
 }

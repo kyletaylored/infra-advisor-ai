@@ -7,8 +7,17 @@ metadata:
     app: agent-api-dotnet
 data:
   DD_ENV: "dev"
+  DD_SERVICE: "infra-advisor-agent-api-dotnet"
   DD_VERSION: "latest"
   DD_AGENT_HOST: "datadog-agent.datadog.svc.cluster.local"
+  DD_TRACE_AGENT_PORT: "8126"
+  DD_DOGSTATSD_PORT: "8125"
+  DD_TRACE_OTEL_ENABLED: "true"
+  DD_LOGS_INJECTION: "true"
+  DD_RUNTIME_METRICS_ENABLED: "true"
+  DD_DATA_STREAMS_ENABLED: "true"
+  DD_CODE_ORIGIN_FOR_SPANS_ENABLED: "true"
+  DD_DBM_PROPAGATION_MODE: "full"
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://datadog-agent.datadog.svc.cluster.local:4318"
   OTEL_SERVICE_NAME: "infra-advisor-agent-api-dotnet"
   OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=dev,service.version=latest,service.name=infra-advisor-agent-api-dotnet"
@@ -21,4 +30,3 @@ data:
   REDIS_PORT: "6379"
   LOG_LEVEL: "Information"
   ASPNETCORE_ENVIRONMENT: "Production"
-  DD_DBM_PROPAGATION_MODE: "full"

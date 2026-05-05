@@ -22,6 +22,7 @@ spec:
         tags.datadoghq.com/version: latest
       annotations:
         ad.datadoghq.com/mcp-server-dotnet.logs: '[{"source":"csharp","service":"infra-advisor-mcp-server-dotnet"}]'
+        admission.datadoghq.com/dotnet-lib.version: v3
     spec:
       imagePullSecrets:
         - name: ghcr-pull-secret

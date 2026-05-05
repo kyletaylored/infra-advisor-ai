@@ -1,17 +1,15 @@
 using Microsoft.AspNetCore.Builder;
 using OpenTelemetry.Exporter;
-using OpenTelemetry.Logs;
 using OpenTelemetry.Resources;
-using OpenTelemetry.Trace;
 using OpenTelemetry.Metrics;
-using Npgsql;
 
 namespace InfraAdvisor.AgentApi.Observability;
 
 public static class TelemetrySetup
 {
+    // Used by AgentService for custom spans; DD SDK captures all ActivitySource spans
+    // when DD_TRACE_OTEL_ENABLED=true (no OTel TracerProvider registration needed)
     public const string ActivitySourceName = "infra-advisor-agent-api-dotnet";
-    // OpenInference.NET emits spans under this source name
     public const string OpenInferenceSourceName = "OpenInference.NET";
 
     public static void Configure(WebApplicationBuilder builder)
@@ -23,24 +21,16 @@ public static class TelemetrySetup
         var ddEnv = Environment.GetEnvironmentVariable("DD_ENV") ?? "dev";
         var ddVersion = Environment.GetEnvironmentVariable("DD_VERSION") ?? "latest";
 
+        // Traces: DD SDK (auto-injected via admission controller + DD_TRACE_OTEL_ENABLED=true)
+        // bridges all ActivitySource spans to Datadog APM on port 8126 — no OTLP trace export needed.
+        //
+        // Metrics: still exported via OTLP to the DDOT collector for custom meters.
         builder.Services.AddOpenTelemetry()
             .ConfigureResource(r => r
                 .AddService(serviceName)
                 .AddAttributes(new Dictionary<string, object> {
                     ["deployment.environment"] = ddEnv,
                     ["service.version"] = ddVersion,
-                })
-            )
-            .WithTracing(tracing => tracing
-                .AddAspNetCoreInstrumentation(opts => opts.RecordException = true)
-                .AddHttpClientInstrumentation()
-                .AddNpgsql()
-                .AddSource(ActivitySourceName)
-                // OpenInference.NET LLM spans
-                .AddSource(OpenInferenceSourceName)
-                .AddOtlpExporter(otlp => {
-                    otlp.Endpoint = new Uri(otlpEndpoint);
-                    otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
                 })
             )
             .WithMetrics(metrics => metrics
@@ -53,18 +43,10 @@ public static class TelemetrySetup
                 })
             );
 
+        // Console logging only; DD_LOGS_INJECTION=true (set in configmap) causes the DD SDK
+        // to inject dd.trace_id/dd.span_id into ILogger structured properties so the Datadog
+        // agent can correlate stdout logs with APM traces.
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole(opts => opts.FormatterName = "simple");
-        builder.Logging.AddOpenTelemetry(logging =>
-        {
-            logging.IncludeFormattedMessage = true;
-            logging.IncludeScopes = true;
-            logging.ParseStateValues = true;
-            logging.AddOtlpExporter(otlp =>
-            {
-                otlp.Endpoint = new Uri(otlpEndpoint);
-                otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
-            });
-        });
     }
 }
