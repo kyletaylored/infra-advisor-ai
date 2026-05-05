@@ -2,6 +2,7 @@ using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using OpenTelemetry.Metrics;
+using Npgsql;
 
 namespace InfraAdvisor.AgentApi.Observability;
 
@@ -30,6 +31,7 @@ public static class TelemetrySetup
             .WithTracing(tracing => tracing
                 .AddAspNetCoreInstrumentation(opts => opts.RecordException = true)
                 .AddHttpClientInstrumentation()
+                .AddNpgsql()
                 .AddSource(ActivitySourceName)
                 // OpenInference.NET LLM spans
                 .AddSource(OpenInferenceSourceName)

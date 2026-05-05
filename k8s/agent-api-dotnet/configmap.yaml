@@ -21,3 +21,4 @@ data:
   REDIS_PORT: "6379"
   LOG_LEVEL: "Information"
   ASPNETCORE_ENVIRONMENT: "Production"
+  DD_DBM_PROPAGATION_MODE: "full"

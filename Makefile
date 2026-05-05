@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags help
+.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags help
 
 # Load .env if present (for local dev)
 -include .env
@@ -94,15 +94,29 @@ create-mcp-server-secret: ## Create mcp-server-secret K8s Secret (Azure, EIA, ER
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ mcp-server-secret created in namespace $(NAMESPACE)"
 
-create-agent-api-secret: ## Create agent-api-secret K8s Secret (Azure OpenAI keys)
+create-agent-api-secret: ## Create agent-api-secret K8s Secret (Azure OpenAI keys + DATABASE_URL)
 	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ]; then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set"; exit 1; fi
 	@if [ -z "$(AZURE_OPENAI_API_KEY)" ];  then echo "ERROR: AZURE_OPENAI_API_KEY is not set";  exit 1; fi
+	@if [ -z "$(DATABASE_URL)" ]; then echo "WARN: DATABASE_URL not set — conversation persistence will be disabled"; fi
 	kubectl create secret generic agent-api-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
 		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
+		$(if $(DATABASE_URL),--from-literal=DATABASE_URL=$(DATABASE_URL),) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ agent-api-secret created in namespace $(NAMESPACE)"
+
+create-agent-api-dotnet-secret: ## Create agent-api-dotnet-secret K8s Secret (Azure OpenAI keys + DATABASE_URL)
+	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ]; then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set"; exit 1; fi
+	@if [ -z "$(AZURE_OPENAI_API_KEY)" ];  then echo "ERROR: AZURE_OPENAI_API_KEY is not set";  exit 1; fi
+	@if [ -z "$(DATABASE_URL)" ]; then echo "WARN: DATABASE_URL not set — conversation persistence will be disabled"; fi
+	kubectl create secret generic agent-api-dotnet-secret \
+		--namespace $(NAMESPACE) \
+		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
+		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
+		$(if $(DATABASE_URL),--from-literal=DATABASE_URL=$(DATABASE_URL),) \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "✓ agent-api-dotnet-secret created in namespace $(NAMESPACE)"
 
 create-load-generator-secret: ## Create load-generator-secret K8s Secret (Datadog API key)
 	@if [ -z "$(DD_API_KEY)" ]; then echo "ERROR: DD_API_KEY is not set"; exit 1; fi
@@ -142,7 +156,7 @@ create-dd-postgres-secret: ## Create dd-postgres-secret K8s Secret (Datadog moni
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ dd-postgres-secret created"
 
-create-secrets: create-mcp-server-secret create-agent-api-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-airflow-secret ## Create all application K8s secrets
+create-secrets: create-mcp-server-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-airflow-secret ## Create all application K8s secrets
 
 setup-postgres-dbm: ## Create Datadog monitoring user + grants in Postgres (run once after deploy)
 	@if [ -z "$(POSTGRES_USER)" ]; then echo "ERROR: POSTGRES_USER is not set"; exit 1; fi
@@ -199,6 +213,7 @@ deploy-k8s: check-env ## Apply all Kubernetes manifests
 	@echo "→ Creating application secrets..."
 	$(MAKE) create-mcp-server-secret
 	$(MAKE) create-agent-api-secret
+	$(MAKE) create-agent-api-dotnet-secret
 	$(MAKE) create-load-generator-secret
 	$(MAKE) create-postgres-secret
 	$(MAKE) create-auth-api-secret

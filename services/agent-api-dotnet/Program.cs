@@ -83,6 +83,7 @@ builder.Services.AddHttpClient<McpClientService>(client =>
 builder.Services.AddSingleton<MemoryService>();
 builder.Services.AddSingleton<AgentService>();
 builder.Services.AddSingleton<SuggestionService>();
+builder.Services.AddSingleton<ConversationService>();
 
 // ── Background services ───────────────────────────────────────────────────────
 builder.Services.AddHostedService<KafkaConsumerService>();
@@ -107,6 +108,11 @@ var app = builder.Build();
 var appState = app.Services.GetRequiredService<AppState>();
 var mcpClient = app.Services.GetRequiredService<McpClientService>();
 var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
+var conversationService = app.Services.GetRequiredService<ConversationService>();
+
+// Init DB schema (non-fatal — no DATABASE_URL means persistence is simply disabled)
+try { await conversationService.InitializeAsync(); }
+catch (Exception ex) { startupLogger.LogWarning("Conversation DB init failed: {Error}", ex.Message); }
 
 // Parse available models
 var availableModels = availableModelsRaw
@@ -159,6 +165,7 @@ app.MapPost("/query", async (
     HttpContext httpContext,
     AgentService agentService,
     MemoryService memoryService,
+    ConversationService conversationSvc,
     AppState state,
     ActivitySource activitySource) =>
 {
@@ -171,6 +178,8 @@ app.MapPost("/query", async (
 
     var headerSessionId = httpContext.Request.Headers["X-Session-ID"].FirstOrDefault();
     var rumSessionId = httpContext.Request.Headers["X-DD-RUM-Session-ID"].FirstOrDefault();
+    var conversationId = httpContext.Request.Headers["X-Conversation-ID"].FirstOrDefault();
+    var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
     var sessionId = headerSessionId ?? body.SessionId ?? Guid.NewGuid().ToString();
 
     // Resolve model: request body > session memory > default
@@ -209,6 +218,13 @@ app.MapPost("/query", async (
 
     var traceId = Activity.Current?.TraceId.ToString();
     var spanId = Activity.Current?.SpanId.ToString();
+
+    if (!string.IsNullOrWhiteSpace(conversationId) && !string.IsNullOrWhiteSpace(userId))
+    {
+        await conversationSvc.SaveMessagesAsync(
+            conversationId, body.Query, result.Answer,
+            result.Sources, traceId, spanId);
+    }
 
     return Results.Ok(new QueryResponse(
         Answer: result.Answer,
@@ -384,6 +400,73 @@ app.MapDelete("/session/{sessionId}", async (string sessionId, MemoryService mem
 {
     var cleared = await memoryService.ClearSessionAsync(sessionId);
     return Results.Ok(new { session_id = sessionId, cleared = cleared });
+});
+
+// POST /conversations
+app.MapPost("/conversations", async (
+    HttpContext httpContext,
+    ConversationService conversationSvc) =>
+{
+    var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
+    if (string.IsNullOrWhiteSpace(userId))
+        return Results.Problem(detail: "X-User-ID header required", statusCode: 400);
+
+    string? title = null, model = null, backend = null;
+    try
+    {
+        using var doc = await JsonDocument.ParseAsync(httpContext.Request.Body, cancellationToken: httpContext.RequestAborted);
+        if (doc.RootElement.TryGetProperty("title", out var t)) title = t.GetString();
+        if (doc.RootElement.TryGetProperty("model", out var m)) model = m.GetString();
+        if (doc.RootElement.TryGetProperty("backend", out var b)) backend = b.GetString();
+    }
+    catch { /* body optional */ }
+
+    var conv = await conversationSvc.CreateConversationAsync(
+        userId, title ?? "New Conversation", model, backend ?? "dotnet");
+    return conv is null
+        ? Results.Problem(detail: "Conversation persistence not available", statusCode: 503)
+        : Results.Ok(conv);
+});
+
+// GET /conversations
+app.MapGet("/conversations", async (
+    HttpContext httpContext,
+    ConversationService conversationSvc) =>
+{
+    var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
+    if (string.IsNullOrWhiteSpace(userId))
+        return Results.Problem(detail: "X-User-ID header required", statusCode: 400);
+
+    var list = await conversationSvc.ListConversationsAsync(userId);
+    return Results.Ok(list);
+});
+
+// GET /conversations/{id}
+app.MapGet("/conversations/{id}", async (
+    string id,
+    HttpContext httpContext,
+    ConversationService conversationSvc) =>
+{
+    var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
+    if (string.IsNullOrWhiteSpace(userId))
+        return Results.Problem(detail: "X-User-ID header required", statusCode: 400);
+
+    var conv = await conversationSvc.GetConversationAsync(id, userId);
+    return conv is null ? Results.NotFound() : Results.Ok(conv);
+});
+
+// DELETE /conversations/{id}
+app.MapDelete("/conversations/{id}", async (
+    string id,
+    HttpContext httpContext,
+    ConversationService conversationSvc) =>
+{
+    var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
+    if (string.IsNullOrWhiteSpace(userId))
+        return Results.Problem(detail: "X-User-ID header required", statusCode: 400);
+
+    var deleted = await conversationSvc.DeleteConversationAsync(id, userId);
+    return deleted ? Results.StatusCode(204) : Results.NotFound();
 });
 
 app.Run();
