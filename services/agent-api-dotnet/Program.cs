@@ -125,34 +125,44 @@ app.Lifetime.ApplicationStarted.Register(() =>
 {
     _ = Task.Run(async () =>
     {
-        // Probe MCP
-        try
+        // Retry both probes with exponential backoff until both are connected.
+        // Cap at 60 s between attempts so the service recovers from transient failures.
+        for (int attempt = 0; !appState.McpConnected || !appState.LlmConnected; attempt++)
         {
-            await mcpClient.ListToolsAsync();
-            appState.McpConnected = true;
-            startupLogger.LogInformation("MCP client connected to {Url}", mcpServerUrl);
-        }
-        catch (Exception ex)
-        {
-            startupLogger.LogWarning("MCP client failed to connect (will retry per-request): {Error}", ex.Message);
-            appState.McpConnected = false;
-        }
+            if (attempt > 0)
+                await Task.Delay(TimeSpan.FromSeconds(Math.Min(2 << attempt, 60)));
 
-        // Probe LLM
-        try
-        {
-            var azure = app.Services.GetRequiredService<AgentService>().AzureClient;
-            var chat = azure.GetChatClient(azureDeployment);
-            var probe = await chat.CompleteChatAsync(
-                new List<ChatMessage> { new UserChatMessage("ping") },
-                new ChatCompletionOptions { MaxOutputTokenCount = 1 });
-            appState.LlmConnected = true;
-            startupLogger.LogInformation("LLM client connected (deployment={Deployment})", azureDeployment);
-        }
-        catch (Exception ex)
-        {
-            startupLogger.LogWarning("LLM client probe failed: {Error}", ex.Message);
-            appState.LlmConnected = false;
+            if (!appState.McpConnected)
+            {
+                try
+                {
+                    await mcpClient.ListToolsAsync();
+                    appState.McpConnected = true;
+                    startupLogger.LogInformation("MCP client connected to {Url}", mcpServerUrl);
+                }
+                catch (Exception ex)
+                {
+                    startupLogger.LogWarning("MCP probe attempt {Attempt} failed: {Error}", attempt + 1, ex.Message);
+                }
+            }
+
+            if (!appState.LlmConnected)
+            {
+                try
+                {
+                    var azure = app.Services.GetRequiredService<AgentService>().AzureClient;
+                    var chat = azure.GetChatClient(azureDeployment);
+                    await chat.CompleteChatAsync(
+                        new List<ChatMessage> { new UserChatMessage("ping") },
+                        new ChatCompletionOptions { MaxOutputTokenCount = 1 });
+                    appState.LlmConnected = true;
+                    startupLogger.LogInformation("LLM client connected (deployment={Deployment})", azureDeployment);
+                }
+                catch (Exception ex)
+                {
+                    startupLogger.LogWarning("LLM probe attempt {Attempt} failed: {Error}", attempt + 1, ex.Message);
+                }
+            }
         }
     });
 });

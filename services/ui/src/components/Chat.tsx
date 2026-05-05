@@ -475,6 +475,7 @@ export function Chat() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<{ message: string; traceId: string | null } | null>(null);
   const [activeCitations, setActiveCitations] = useState<Citation[]>([]);
+  const [activeMsgIdx, setActiveMsgIdx] = useState<number | null>(null);
   const [recommendations, setRecommendations] = useState<Suggestion[]>([]);
   const [availableModels, setAvailableModels] = useState<string[]>(["gpt-4.1-mini"]);
   const [selectedModel, setSelectedModel] = useState<string>(getModel());
@@ -553,7 +554,11 @@ export function Chat() {
         traceId: resp.trace_id,
         spanId: resp.span_id,
       };
-      setMessages((prev) => [...prev, aiMessage]);
+      setMessages((prev) => {
+        const next = [...prev, aiMessage];
+        setActiveMsgIdx(next.length - 1);
+        return next;
+      });
       setActiveCitations(aiMessage.citations);
       if (resp.model && resp.model !== selectedModel) setSelectedModel(resp.model);
       // Show static domain follow-ups immediately, then upgrade to LLM-generated ones
@@ -610,14 +615,17 @@ export function Chat() {
     setMessages(loaded);
 
     // Show citations from the last assistant message
-    const lastAi = [...loaded].reverse().find((m) => m.role === "assistant");
-    if (lastAi) setActiveCitations(lastAi.citations);
+    const lastAiIdx = [...loaded].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === "assistant");
+    if (lastAiIdx) {
+      setActiveCitations(lastAiIdx.m.citations);
+      setActiveMsgIdx(lastAiIdx.i);
+    }
 
     // Restore model/backend from conversation metadata
     if (detail.model && availableModels.includes(detail.model)) setSelectedModel(detail.model);
     if (detail.backend) setSelectedBackend(detail.backend as BackendType);
 
-    setRecommendations(getFollowUpSuggestions(lastAi?.sources ?? []));
+    setRecommendations(getFollowUpSuggestions(lastAiIdx?.m.sources ?? []));
   }
 
   const shortSha = VERSION && VERSION !== "local" ? VERSION : null;
@@ -702,6 +710,7 @@ export function Chat() {
               newConversation();
               setMessages([]);
               setActiveCitations([]);
+              setActiveMsgIdx(null);
               setRecommendations(INITIAL_SUGGESTIONS);
               setError(null);
               setInput("");
@@ -798,6 +807,7 @@ export function Chat() {
               newConversation();
               setMessages([]);
               setActiveCitations([]);
+              setActiveMsgIdx(null);
               setRecommendations(INITIAL_SUGGESTIONS);
               setError(null);
               setInput("");
@@ -834,7 +844,13 @@ export function Chat() {
                         py={3}
                         boxShadow={msg.role === "assistant" ? "xs" : "none"}
                         borderWidth={msg.role === "assistant" ? "1px" : 0}
-                        borderColor="gray.200"
+                        borderColor={msg.role === "assistant" && activeMsgIdx === i ? "blue.300" : "gray.200"}
+                        cursor={msg.role === "assistant" && msg.citations.length > 0 ? "pointer" : undefined}
+                        onClick={msg.role === "assistant" && msg.citations.length > 0 ? () => {
+                          setActiveCitations(msg.citations);
+                          setActiveMsgIdx(i);
+                        } : undefined}
+                        _hover={msg.role === "assistant" && msg.citations.length > 0 ? { borderColor: "blue.200" } : undefined}
                       >
                         {msg.role === "assistant" ? (
                           <MarkdownContent content={msg.content} />

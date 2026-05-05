@@ -81,11 +81,35 @@ public class McpClientService
     private async Task<JsonElement> PostJsonRpcAsync(object payload, CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(payload);
-        var content = new StringContent(json, Encoding.UTF8, "application/json");
-        var resp = await _http.PostAsync("", content, ct);
+        var req = new HttpRequestMessage(HttpMethod.Post, "")
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json"),
+        };
+        // MCP Streamable HTTP transport (2024-11-05 spec) requires both Accept values.
+        req.Headers.TryAddWithoutValidation("Accept", "application/json, text/event-stream");
+
+        var resp = await _http.SendAsync(req, ct);
         resp.EnsureSuccessStatusCode();
+
+        var contentType = resp.Content.Headers.ContentType?.MediaType ?? "";
         var body = await resp.Content.ReadAsStringAsync(ct);
-        using var doc = JsonDocument.Parse(body);
-        return doc.RootElement.Clone();
+
+        if (contentType.Contains("text/event-stream"))
+        {
+            // SSE format: lines starting with "data: <json>"
+            foreach (var line in body.Split('\n'))
+            {
+                var trimmed = line.TrimEnd('\r');
+                if (!trimmed.StartsWith("data: ")) continue;
+                var data = trimmed["data: ".Length..].Trim();
+                if (string.IsNullOrEmpty(data) || data == "[DONE]") continue;
+                using var doc = JsonDocument.Parse(data);
+                return doc.RootElement.Clone();
+            }
+            throw new InvalidOperationException("No JSON-RPC response found in SSE stream");
+        }
+
+        using var jsonDoc = JsonDocument.Parse(body);
+        return jsonDoc.RootElement.Clone();
     }
 }
