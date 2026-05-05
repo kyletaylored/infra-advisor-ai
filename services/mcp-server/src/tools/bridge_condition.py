@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from observability.metrics import emit_external_api, emit_tool_call
 
@@ -95,7 +95,11 @@ class BridgeConditionInput(BaseModel):
     )
     order_by: str = Field(
         default="LOWEST_RATING ASC",
-        description="ORDER BY clause for the ArcGIS query",
+        description=(
+            "ORDER BY clause for the ArcGIS query. "
+            "Use LOWEST_RATING (0=failed, 9=excellent) to sort by structural condition. "
+            "SUFFICIENCY_RATING no longer exists in the NBI service — use LOWEST_RATING instead."
+        ),
     )
     limit: int = Field(
         default=50,
@@ -103,6 +107,12 @@ class BridgeConditionInput(BaseModel):
         le=200,
         description="Maximum number of bridges to return (1–200)",
     )
+
+    @field_validator("order_by")
+    @classmethod
+    def _normalize_order_by(cls, v: str) -> str:
+        # SUFFICIENCY_RATING was removed from the NTAD NBI service; silently rewrite it.
+        return v.replace("SUFFICIENCY_RATING", "LOWEST_RATING")
 
 
 # ---------------------------------------------------------------------------

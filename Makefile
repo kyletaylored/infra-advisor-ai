@@ -170,13 +170,13 @@ create-auth-api-secret: ## Create auth-api-secret K8s Secret (DATABASE_URL, JWT_
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ auth-api-secret created"
 
-create-dd-postgres-secret: ## Create dd-postgres-secret K8s Secret (Datadog monitoring user password)
+create-dd-postgres-secret: ## Create dd-postgres-secret K8s Secret in datadog namespace (referenced by DatadogAgent CR)
 	@if [ -z "$(DD_POSTGRES_PASSWORD)" ]; then echo "ERROR: DD_POSTGRES_PASSWORD is not set"; exit 1; fi
 	kubectl create secret generic dd-postgres-secret \
-		--namespace $(NAMESPACE) \
+		--namespace datadog \
 		--from-literal=DD_POSTGRES_PASSWORD=$(DD_POSTGRES_PASSWORD) \
 		--dry-run=client -o yaml | kubectl apply -f -
-	@echo "✓ dd-postgres-secret created"
+	@echo "✓ dd-postgres-secret created in namespace datadog"
 
 create-secrets: create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-airflow-secret ## Create all application K8s secrets
 

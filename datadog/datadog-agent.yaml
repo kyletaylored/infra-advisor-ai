@@ -20,6 +20,62 @@ spec:
       enabled: true
     orchestratorExplorer:
       enabled: true
+    otelCollector:
+      enabled: true
+      ports:
+        - containerPort: 4317
+          hostPort: 4317
+          name: otel-grpc
+        - containerPort: 4318
+          hostPort: 4318
+          name: otel-http
+      conf:
+        configData: |-
+          receivers:
+            prometheus:
+              config:
+                scrape_configs:
+                  - job_name: "datadog-agent"
+                    scrape_interval: 10s
+                    static_configs:
+                      - targets:
+                          - 0.0.0.0:8888
+            otlp:
+              protocols:
+                grpc:
+                  endpoint: 0.0.0.0:4317
+                http:
+                  endpoint: 0.0.0.0:4318
+          exporters:
+            debug:
+              verbosity: normal
+            datadog:
+              api:
+                key: ${env:DD_API_KEY}
+                site: ${env:DD_SITE}
+              sending_queue:
+                batch:
+                  flush_timeout: 10s
+          processors:
+            infraattributes:
+              cardinality: 2
+          connectors:
+            datadog/connector:
+              traces:
+          service:
+            pipelines:
+              traces:
+                receivers: [otlp]
+                processors: [infraattributes]
+                exporters: [datadog, datadog/connector]
+              metrics:
+                receivers: [otlp, datadog/connector, prometheus]
+                processors: [infraattributes]
+                exporters: [datadog]
+              logs:
+                receivers: [otlp]
+                processors: [infraattributes]
+                exporters: [datadog]
     apm:
       instrumentation:
         enabled: true
@@ -61,6 +117,8 @@ spec:
     npm:
       enabled: true
     liveProcessCollection:
+      enabled: true
+    processDiscovery:
       enabled: true
   override:
     nodeAgent:
