@@ -1,14 +1,14 @@
 ---
-title: Agent API
+title: Agent API (Python)
 parent: Services
 nav_order: 2
 ---
 
-# Agent API
+# Agent API (Python)
 
 **Port:** 8001 | **Framework:** FastAPI + LangChain ReAct + LangGraph | **Replicas:** 2
 
-The Agent API is the reasoning core of InfraAdvisor AI. It receives natural-language queries, routes them to the appropriate specialist agent, executes MCP tool calls, synthesizes answers, and maintains session memory in Redis.
+The Agent API is the reasoning core of InfraAdvisor AI. A parallel .NET implementation is documented at [Agent API (.NET)](agent-api-dotnet). It receives natural-language queries, routes them to the appropriate specialist agent, executes MCP tool calls, synthesizes answers, and maintains session memory in Redis.
 
 Every query produces a rich Datadog LLM Observability trace with a multi-level span hierarchy: workflow → router → planner → specialist → tool calls → faithfulness eval.
 
@@ -168,6 +168,86 @@ Directly invoke an MCP tool (debug/sandbox endpoint). Used by the UI Sandbox tab
 
 ---
 
+### `POST /conversations`
+
+Create a new conversation record. Returns a conversation object with a server-generated UUID that the client should send as `X-Conversation-ID` on subsequent `/query` calls.
+
+**Headers:** `X-User-ID: <user-id>` (required)
+
+**Request body (all optional):**
+```json
+{ "title": "Bridge analysis session", "model": "gpt-4.1-mini", "backend": "python" }
+```
+
+**Response:**
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "user_id": "alice@example.com",
+  "title": "Bridge analysis session",
+  "model": "gpt-4.1-mini",
+  "backend": "python",
+  "created_at": "2026-05-05T10:00:00Z",
+  "updated_at": "2026-05-05T10:00:00Z",
+  "message_count": 0
+}
+```
+
+Returns `503` when `DATABASE_URL` is not configured (persistence disabled).
+
+---
+
+### `GET /conversations`
+
+List all conversations for a user, sorted by `updated_at` descending.
+
+**Headers:** `X-User-ID: <user-id>` (required)
+
+**Response:** Array of conversation summary objects (same shape as above, plus `message_count`).
+
+---
+
+### `GET /conversations/{id}`
+
+Fetch a single conversation with its full message history.
+
+**Headers:** `X-User-ID: <user-id>` (required)
+
+**Response:** Conversation summary plus a `messages` array:
+```json
+{
+  "id": "...",
+  "messages": [
+    {
+      "id": "...",
+      "role": "user",
+      "content": "What bridges in Harris County...",
+      "sources": [],
+      "created_at": "2026-05-05T10:00:05Z"
+    },
+    {
+      "id": "...",
+      "role": "assistant",
+      "content": "I found 18 bridges...",
+      "sources": ["get_bridge_condition"],
+      "trace_id": "3421959702764693",
+      "span_id": "8721043291846321",
+      "created_at": "2026-05-05T10:00:08Z"
+    }
+  ]
+}
+```
+
+---
+
+### `DELETE /conversations/{id}`
+
+Delete a conversation and all its messages. Returns `204 No Content` on success, `404` if not found or not owned by the requesting user.
+
+**Headers:** `X-User-ID: <user-id>` (required)
+
+---
+
 ## Session memory
 
 Session history is stored in Redis with a 24-hour TTL:
@@ -186,6 +266,49 @@ TTL: 86400 seconds
 ```
 
 On `DELETE /session/{session_id}`, both keys are removed.
+
+## Conversation persistence
+
+When `DATABASE_URL` is set, the Agent API stores every user/assistant exchange in PostgreSQL. This enables the conversation history sidebar in the UI.
+
+**Schema:**
+
+```sql
+conversations (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id     TEXT NOT NULL,
+    title       TEXT NOT NULL DEFAULT 'New Conversation',
+    model       TEXT,
+    backend     TEXT DEFAULT 'python',   -- 'python' | 'dotnet'
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+
+messages (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id UUID REFERENCES conversations(id) ON DELETE CASCADE,
+    role            TEXT NOT NULL,       -- 'user' | 'assistant'
+    content         TEXT NOT NULL,
+    sources         JSONB NOT NULL DEFAULT '[]',
+    trace_id        TEXT,               -- ddtrace trace ID for APM linking
+    span_id         TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)
+```
+
+Tables are created on startup via `init_db()` (idempotent `CREATE TABLE IF NOT EXISTS`). If `DATABASE_URL` is unset the service starts normally — all conversation endpoints return `[]` or `503`.
+
+**Enabling persistence:**
+
+```bash
+# Set DATABASE_URL in your .env before running make create-agent-api-secret
+DATABASE_URL=postgresql://user:pass@postgres.infra-advisor.svc.cluster.local:5432/infraadvisor
+make create-agent-api-secret
+```
+
+**How the UI wires it in:** The UI creates a conversation on the first message of a new session, then sends `X-Conversation-ID` and `X-User-ID` on every subsequent `/query` call. Each exchange is saved automatically.
+
+**DD_DBM_PROPAGATION_MODE:** Set to `full` in `k8s/agent-api/configmap.yaml`. Every PostgreSQL query issued by this service includes a SQL comment with the full ddtrace trace context, enabling **"View Trace"** links from Datadog Database Monitoring query samples back to the originating APM trace.
 
 ## Error responses
 

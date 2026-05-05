@@ -1,5 +1,5 @@
 ---
-title: MCP Server
+title: MCP Server (Python)
 parent: Services
 nav_order: 1
 ---

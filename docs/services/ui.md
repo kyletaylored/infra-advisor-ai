@@ -1,14 +1,14 @@
 ---
 title: UI
 parent: Services
-nav_order: 5
+nav_order: 7
 ---
 
 # React UI
 
 **Framework:** React 18 + TypeScript 5.6 + Chakra UI v3 | **Build:** Vite | **Served by:** nginx
 
-The UI is a single-page application (SPA) that provides the consultant-facing chat interface. It handles authentication, query submission, response rendering, citation browsing, feedback collection, admin user management, and session management.
+The UI is a single-page application (SPA) that provides the consultant-facing chat interface. It handles authentication, query submission, response rendering, citation browsing, backend switching, model selection, conversation history, feedback collection, admin user management, and session management.
 
 ## Features
 
@@ -16,16 +16,50 @@ The UI is a single-page application (SPA) that provides the consultant-facing ch
 
 The core workflow:
 1. User submits a natural-language query
-2. `POST /api/query` with `Authorization` and `X-Session-ID` headers
+2. `POST /api/query` (Python) or `POST /api-dotnet/query` (.NET) with `Authorization`, `X-Session-ID`, `X-Conversation-ID`, and `X-User-ID` headers
 3. Response streams back with answer, citations, trace ID, and model used
 4. Follow-up suggestions appear below the answer
 5. Citation panel expands on the right with tool sources and external links
+
+### Backend switcher (Python / .NET)
+
+The query toolbar shows a toggle to select which backend processes the query:
+
+```
+[ Python ]  [ .NET ]
+```
+
+The selection is persisted to `localStorage` under `infra_advisor_backend` and survives page reloads. Switching takes effect on the next query — no page reload required.
+
+- **Python** routes requests to `/api/*` → `agent-api` (FastAPI + LangChain, ddtrace LLM Obs)
+- **.NET** routes requests to `/api-dotnet/*` → `agent-api-dotnet` (ASP.NET Core, OTel/OpenInference)
+
+Both backends talk to their own MCP Server instance (`mcp-server` vs `mcp-server-dotnet`) and share the same PostgreSQL conversation store.
 
 ### Session persistence
 
 Session IDs are stored in `localStorage` under the key `infra_advisor_session_id`. Page reloads resume the same conversation — same Redis memory key, same LLM Obs session grouping.
 
-The **New Conversation** button (pencil icon in header) generates a fresh UUID and stores it, clearing all in-progress conversation state.
+The **New Conversation** button (pencil icon in conversation sidebar header) clears the active conversation and starts a fresh session.
+
+### Conversation history sidebar
+
+A 220px left rail shows all past conversations for the logged-in user, sorted by most recently updated. Conversations are stored in PostgreSQL (requires `DATABASE_URL` to be configured on the backend).
+
+> **📸 Screenshot placeholder:** Conversation sidebar open, showing list of past conversations with relative timestamps and the active conversation highlighted.
+
+**Interactions:**
+- **Click a conversation** — loads the full message history, restores the model and backend that were active when the conversation was created
+- **New conversation button** (top of sidebar) — clears state and starts fresh
+- **Delete button** (trash icon, revealed on hover) — permanently removes the conversation and all its messages
+
+The sidebar is hidden on screens narrower than the `md` breakpoint (768 px).
+
+**How it works:**
+1. On the first message of a new session, the UI calls `POST /conversations` (via the active backend) to create a conversation record
+2. Every subsequent `/query` call includes `X-Conversation-ID` and `X-User-ID` headers
+3. The backend saves the user/assistant exchange to PostgreSQL after each response
+4. On page load the sidebar calls `GET /conversations` to populate the list
 
 ### Model picker
 
@@ -35,9 +69,9 @@ The query input bar shows pill buttons for each available model:
 [ gpt-4.1-mini ]  [ gpt-4.1 ]
 ```
 
-The selected model is sent with each query. The Agent API persists it to Redis, so the same model is used for follow-up turns even without the user re-selecting.
+The selected model is persisted to `localStorage` under `infra_advisor_model`. On page load, the stored model is pre-selected if it appears in the list returned by `GET /models`.
 
-The response includes the model used, so the UI syncs on page reload (session recovery from Redis).
+The model is also saved with each conversation — loading a past conversation restores the model that was active during that session.
 
 ### Citation panel
 
@@ -102,19 +136,32 @@ The tour can be re-triggered any time via the Compass icon in the header. Comple
 
 ```
 src/
-  App.tsx                   Root component, auth state, routing
+  App.tsx                        Root component, auth state, routing
   components/
-    LoginPage.tsx           Login, register, forgot/reset password flows
-    Chat.tsx                Main conversation UI, query submission, suggestions
-    CitationPanel.tsx       Sidebar showing tool sources with expand/link
-    AdminPanel.tsx          User management table (admin only)
-    Sandbox.tsx             Direct MCP tool invocation playground
+    LoginPage.tsx                Login, register, forgot/reset password flows
+    Chat.tsx                     Main conversation UI, query submission, suggestions,
+                                   backend/model toggles, conversation state
+    ConversationSidebar.tsx      Left rail: conversation list, new/delete/select actions
+    CitationPanel.tsx            Right sidebar: tool sources with expand/link
+    AdminPanel.tsx               User management table (admin only)
+    Sandbox.tsx                  Direct MCP tool invocation playground
   lib/
-    api.ts                  HTTP client (sendQuery, fetchModels, submitFeedback, etc.)
-    auth.ts                 Auth API wrappers (login, register, forgotPassword, etc.)
-    datadog-rum.ts          RUM initialization, getRumSessionId()
-    tour.ts                 Driver.js tour definition, localStorage helpers
+    api.ts                       HTTP client: sendQuery, fetchModels, submitFeedback,
+                                   getBackend/setBackend, getModel/setModel,
+                                   createConversation, listConversations,
+                                   getConversation, deleteConversation
+    auth.ts                      Auth API wrappers (login, register, forgotPassword, etc.)
+    datadog-rum.ts               RUM initialization, getRumSessionId()
+    tour.ts                      Driver.js tour definition, localStorage helpers
 ```
+
+### localStorage keys
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `infra_advisor_session_id` | UUID string | Active Redis session for memory continuity |
+| `infra_advisor_backend` | `"python"` \| `"dotnet"` | Selected backend; used by `getApiBase()` |
+| `infra_advisor_model` | model name string | Last selected model; pre-selects on page load |
 
 ## Datadog RUM
 
@@ -160,10 +207,11 @@ These are injected by GitHub Actions from repository secrets during the Docker i
 
 The production Docker image uses nginx to:
 1. Serve the built React SPA (`dist/`) as static files
-2. Proxy `/api/*` to `agent-api.infra-advisor.svc.cluster.local:8001`
-3. Proxy `/auth/*` to `auth-api.infra-advisor.svc.cluster.local:8002`
-4. Proxy `/airflow/*` to `airflow-api-server.airflow.svc.cluster.local:8080`
-5. Proxy `/mailhog/*` to `mailhog.infra-advisor.svc.cluster.local:8025`
-6. Serve the SPA for all unknown paths (`try_files $uri $uri/ /index.html`)
+2. Proxy `/api/*` to `agent-api.infra-advisor.svc.cluster.local:8001` (Python backend)
+3. Proxy `/api-dotnet/*` to `agent-api-dotnet.infra-advisor.svc.cluster.local:8001` (.NET backend)
+4. Proxy `/auth/*` to `auth-api.infra-advisor.svc.cluster.local:8002`
+5. Proxy `/airflow/*` to `airflow-api-server.airflow.svc.cluster.local:8080`
+6. Proxy `/mailhog/*` to `mailhog.infra-advisor.svc.cluster.local:8025`
+7. Serve the SPA for all unknown paths (`try_files $uri $uri/ /index.html`)
 
 Static assets (`/assets/`) are cached with `Cache-Control: public, immutable` and a 1-year `Expires` header.

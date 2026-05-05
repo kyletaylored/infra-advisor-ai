@@ -6,9 +6,11 @@ nav_order: 1
 
 # APM & Distributed Tracing
 
-All four Python services and the Airflow scheduler use `ddtrace` for automatic instrumentation. `import ddtrace.auto` is the **first import** in every service entrypoint — before any framework or library imports.
+All Python services and the Airflow scheduler use `ddtrace` for automatic instrumentation. `import ddtrace.auto` is the **first import** in every Python service entrypoint.
 
-## Span coverage
+The .NET services (`agent-api-dotnet`, `mcp-server-dotnet`) use **OpenTelemetry** with OTLP HTTP export to the Datadog Agent at port 4318. This is the standard path for non-Python Datadog customers — no ddtrace involved.
+
+## Span coverage — Python services
 
 ### MCP Server (`mcp-server`)
 
@@ -54,6 +56,28 @@ All four Python services and the Airflow scheduler use `ddtrace` for automatic i
 | Azure AI Search upserts | azure-search-documents (auto) | |
 | Azure OpenAI embeddings | openai (auto) | |
 
+## Span coverage — .NET services
+
+The .NET services share the same `OTEL_EXPORTER_OTLP_ENDPOINT` (port 4318 on the Datadog Agent) and emit spans that appear in Datadog APM alongside the Python services.
+
+### Agent API (.NET) (`agent-api-dotnet`)
+
+| Span type | Source | Tags |
+|-----------|--------|------|
+| HTTP request | `AddAspNetCoreInstrumentation` (auto) | `http.method`, `http.url`, `http.status_code` |
+| Outbound HTTP (MCP Server) | `AddHttpClientInstrumentation` (auto) | `http.url`, `peer.hostname` |
+| PostgreSQL queries | `AddNpgsql()` (auto) | `db.statement`, `db.system=postgresql` |
+| Redis commands | StackExchange.Redis (manual via ActivitySource) | |
+| LLM span (router + specialists) | `LlmTelemetry.StartLlmActivity` (custom) | `openinference.span.kind=LLM`, `gen_ai.system`, `gen_ai.request.model`, `gen_ai.prompt.0.content` |
+
+### MCP Server (.NET) (`mcp-server-dotnet`)
+
+| Span type | Source | Tags |
+|-----------|--------|------|
+| HTTP request | `AddAspNetCoreInstrumentation` (auto) | |
+| Outbound HTTP (government APIs) | `AddHttpClientInstrumentation` (auto) | |
+| Azure AI Search | `AddHttpClientInstrumentation` (auto, via REST calls) | |
+
 ## Code origin
 
 `DD_CODE_ORIGIN_FOR_SPANS_ENABLED=true` is set on all four service configmaps. When viewing a span in Datadog APM, the **Code Origin** section links directly to the source file and line that created the span.
@@ -84,13 +108,17 @@ The Airflow scheduler uses a custom `DDJsonFormatter` (defined in `airflowLocalS
 
 ## Database Monitoring (DBM)
 
-`DD_DBM_PROPAGATION_MODE=full` is set **only** on `auth-api` (the sole service using PostgreSQL directly). This injects full trace context as SQL comments:
+`DD_DBM_PROPAGATION_MODE=full` is set on all services that use PostgreSQL directly: `auth-api`, `agent-api`, and `agent-api-dotnet`. This injects full trace context as SQL comments, enabling **"View Trace"** links from every DBM query sample back to the originating APM trace.
+
+**Python services** (ddtrace): propagation is injected automatically by `psycopg2` instrumentation:
 
 ```sql
-/*dddbs='auth-api',dde='dev',ddh='auth-api-pod',ddps='auth-api',ddpv='latest',
+/*dddbs='agent-api',dde='dev',ddh='agent-api-pod',ddps='agent-api',ddpv='latest',
 traceparent='00-3421959702764693-8721043291846321-01'*/
-SELECT * FROM users WHERE email = $1
+SELECT * FROM conversations WHERE user_id = $1
 ```
+
+**agent-api-dotnet** (Npgsql + OTel): `AddNpgsql()` in the OTel tracing pipeline captures database spans. The `DD_DBM_PROPAGATION_MODE=full` variable is present in the configmap for future Npgsql DDM propagation support — Npgsql DB spans already appear in APM via OTel.
 
 In Datadog DBM, each query sample shows a **"View Trace"** link that opens the originating APM trace.
 
@@ -112,10 +140,14 @@ The UI renders a **"View trace →"** link that opens `https://us3.datadoghq.com
 Navigate to **Datadog → APM → Service Map** to see the auto-discovered service dependency graph:
 
 ```
-browser → ui/nginx → agent-api → mcp-server → [arcgis, openfema, eia, epa, samgov, tavily]
-                   → auth-api  → postgres
+browser → ui/nginx → agent-api         → mcp-server         → [arcgis, openfema, eia, epa, samgov, tavily]
+                   → agent-api-dotnet  → mcp-server-dotnet  → [arcgis, openfema, eia, epa, samgov, tavily]
+                   → auth-api          → postgres
+                   → postgres (conversations)
                    → redis
                    → kafka
 airflow-scheduler  → [openai, blob, search]
 load-generator     → kafka
 ```
+
+Python services appear as `ddtrace`-instrumented services. .NET services appear as OpenTelemetry-sourced services under the same `dd.env=dev` tag. Both are visible in the same service map.

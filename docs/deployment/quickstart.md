@@ -56,12 +56,20 @@ make create-secrets
 
 This runs all individual secret targets:
 - `create-mcp-server-secret`
-- `create-agent-api-secret`
+- `create-agent-api-secret` — Azure OpenAI keys + optional `DATABASE_URL`
+- `create-agent-api-dotnet-secret` — same keys for the .NET backend
 - `create-auth-api-secret`
 - `create-postgres-secret`
 - `create-dd-postgres-secret`
 - `create-airflow-secret`
 - `create-load-generator-secret`
+
+**Enabling conversation persistence (optional):** Set `DATABASE_URL` in your `.env` before running `make create-secrets`. Both Agent API services read this variable; if unset, conversation history is silently disabled and the sidebar shows no past conversations.
+
+```bash
+# .env
+DATABASE_URL=postgresql://appuser:password@postgres.infra-advisor.svc.cluster.local:5432/infraadvisor
+```
 
 ## 6. Deploy Kubernetes workloads
 

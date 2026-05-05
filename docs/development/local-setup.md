@@ -42,12 +42,11 @@ Verify:
 curl http://localhost:8000/health | python3 -m json.tool
 ```
 
-## 4. Start Agent API
+## 4. Start Agent API (Python)
 
 ```bash
 cd services/agent-api
 uv sync
-# Override MCP URL and Redis for local
 MCP_SERVER_URL=http://localhost:8000/mcp \
 REDIS_HOST=localhost \
 KAFKA_BOOTSTRAP_SERVERS=localhost:9092 \
@@ -58,6 +57,46 @@ Verify:
 ```bash
 curl http://localhost:8001/health | python3 -m json.tool
 ```
+
+## 4b. Start Agent API (.NET) — optional
+
+Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0).
+
+```bash
+cd services/agent-api-dotnet
+dotnet restore
+
+AZURE_OPENAI_ENDPOINT=<your-endpoint> \
+AZURE_OPENAI_API_KEY=<your-key> \
+MCP_SERVER_URL=http://localhost:8000/mcp \
+REDIS_HOST=localhost \
+KAFKA_BOOTSTRAP_SERVERS=localhost:9092 \
+dotnet run --urls http://localhost:8003
+```
+
+The .NET backend listens on port 8003 locally (the Python backend owns 8001). In the cluster both listen on 8001 in separate pods.
+
+Verify:
+```bash
+curl http://localhost:8003/health | python3 -m json.tool
+```
+
+> **Conversation persistence (.NET):** Add `DATABASE_URL=postgresql://postgres:postgres@localhost:5432/infraadvisor` to the environment above. Tables are created automatically on startup.
+
+## 4c. Start MCP Server (.NET) — optional
+
+```bash
+cd services/mcp-server-dotnet
+dotnet restore
+
+AZURE_OPENAI_ENDPOINT=<your-endpoint> \
+AZURE_OPENAI_API_KEY=<your-key> \
+AZURE_SEARCH_ENDPOINT=<your-endpoint> \
+AZURE_SEARCH_API_KEY=<your-key> \
+dotnet run --urls http://localhost:8004
+```
+
+Then point the .NET Agent API at it: `MCP_SERVER_URL=http://localhost:8004/mcp`.
 
 ## 5. Start Auth API
 
@@ -116,6 +155,18 @@ Source both files:
 ```bash
 set -a && source .env && source .env.local && set +a
 ```
+
+## Vite dev server proxy
+
+`vite.config.ts` proxies both backends:
+
+| Browser path | Proxied to |
+|-------------|-----------|
+| `/api/*` | `http://localhost:8001` (Python Agent API) |
+| `/api-dotnet/*` | `http://localhost:8003` (.NET Agent API) |
+| `/auth/*` | `http://localhost:8002` (Auth API) |
+
+Switch backends in the UI using the **Python / .NET** toggle in the chat toolbar.
 
 ## Disabling Datadog in local dev
 

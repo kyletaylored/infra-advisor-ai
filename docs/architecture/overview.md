@@ -8,49 +8,51 @@ nav_order: 1
 
 ## Service map
 
-Six microservices work together to serve infrastructure advisory queries. Each runs as a containerized workload on AKS, with images published to GitHub Container Registry.
+Seven microservices work together to serve infrastructure advisory queries. Each runs as a containerized workload on AKS, with images published to GitHub Container Registry.
+
+The platform provides **parallel Python and .NET reasoning stacks** (Agent API + MCP Server). The UI backend switcher routes a user's requests to one stack or the other.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │  Browser                                                             │
 │  React 18 + Chakra UI + Datadog RUM                                  │
 │  https://infra-advisor-ai.kyletaylor.dev                             │
-└────────────┬──────────────────────────┬────────────────────────────┘
-             │ /auth/*                  │ /api/*
-             ▼                          ▼
-┌────────────────────┐    ┌─────────────────────────────────────────┐
-│   Auth API         │    │   Agent API                             │
-│   :8002            │    │   :8001                                 │
-│   FastAPI          │    │   FastAPI + LangChain ReAct + LangGraph │
-│   PostgreSQL ORM   │    │   Redis session memory                  │
-│   JWT + bcrypt     │    │   Kafka eval producer                   │
-└────────────────────┘    └──────────────────┬────────────────────┘
-         │                                   │ MCP HTTP
-         │                                   ▼
-         │                    ┌──────────────────────────┐
-         │                    │   MCP Server             │
-         │                    │   :8000                  │
-         │                    │   FastMCP                │
-         │                    │   11 data tools          │
-         │                    └─────────┬────────────────┘
-         │                              │
-         ▼                   ┌──────────┴─────────┐
-┌─────────────────┐          │  External APIs      │
-│  PostgreSQL     │          │  FHWA NBI ArcGIS    │
-│  :5432          │          │  OpenFEMA REST      │
-│  User accounts  │          │  EIA API v2         │
-└─────────────────┘          │  EPA SDWIS          │
-                             │  ERCOT public API   │
-                             │  TxDOT Open Data    │
-                             │  SAM.gov            │
-                             │  USASpending.gov    │
-                             │  Tavily search      │
-                             └────────────────────┘
+└──────┬─────────────────────┬────────────────────┬───────────────────┘
+       │ /auth/*             │ /api/*              │ /api-dotnet/*
+       ▼                     ▼                     ▼
+┌────────────────┐  ┌─────────────────────┐  ┌──────────────────────────┐
+│   Auth API     │  │   Agent API         │  │   Agent API (.NET)       │
+│   :8002        │  │   :8001             │  │   :8001                  │
+│   FastAPI      │  │   FastAPI + LangChain│  │   ASP.NET Core 10        │
+│   PostgreSQL   │  │   LangGraph ReAct   │  │   OTel/OpenInference.NET │
+│   JWT + bcrypt │  │   Redis + Kafka     │  │   Redis + Kafka          │
+└───────┬────────┘  └──────────┬──────────┘  └───────────┬──────────────┘
+        │                      │ MCP HTTP                 │ MCP HTTP
+        │                      ▼                          ▼
+        │           ┌──────────────────┐       ┌──────────────────────┐
+        │           │   MCP Server     │       │   MCP Server (.NET)  │
+        │           │   :8000 FastMCP  │       │   :8000 ModelContextP│
+        │           │   11 data tools  │       │   11 data tools      │
+        │           └────────┬─────────┘       └───────────┬──────────┘
+        │                    └──────────────────────────────┘
+        │                              │
+        ▼                   ┌──────────┴─────────┐
+┌──────────────────┐        │  External APIs      │
+│  PostgreSQL      │        │  FHWA NBI ArcGIS    │
+│  :5432           │        │  OpenFEMA REST      │
+│  User accounts   │        │  EIA API v2         │
+│  Conversations   │        │  EPA SDWIS          │
+│  Messages        │        │  ERCOT public API   │
+└──────────────────┘        │  TxDOT Open Data    │
+                            │  SAM.gov            │
+                            │  USASpending.gov    │
+                            │  Tavily search      │
+                            └────────────────────┘
 
 ┌────────────────────────────────────────────────────────────────────┐
 │  Data Pipeline (Airflow)                                           │
-│  Scheduler StatefulSet — LocalExecutor — 5 DAGs                   │
-│  NBI → FEMA → EIA → TWDB/EPA → Knowledge Base                     │
+│  Scheduler StatefulSet — LocalExecutor — 9 DAGs                   │
+│  NBI → FEMA → EIA → TWDB/EPA → Knowledge Base → ...               │
 │  Azure Blob Storage (raw parquet) → Azure AI Search (vectors)     │
 └────────────────────────────────────────────────────────────────────┘
 
@@ -68,7 +70,7 @@ All workloads are organized into four Kubernetes namespaces:
 
 | Namespace | Contents |
 |-----------|----------|
-| `infra-advisor` | mcp-server, agent-api, auth-api, ui, redis, postgres, mailhog, load-generator |
+| `infra-advisor` | mcp-server, mcp-server-dotnet, agent-api, agent-api-dotnet, auth-api, ui, redis, postgres, mailhog, load-generator |
 | `airflow` | Airflow scheduler, API server, dag-processor, triggerer, PostgreSQL |
 | `kafka` | Strimzi Operator, Kafka cluster, topics |
 | `datadog` | Datadog Agent DaemonSet, Cluster Agent |
@@ -79,16 +81,20 @@ All service-to-service traffic uses Kubernetes DNS names (`<service>.<namespace>
 
 | From | To | Protocol | DNS Name |
 |------|----|----------|----------|
-| nginx (UI) | Agent API | HTTP | `agent-api.infra-advisor.svc.cluster.local:8001` |
+| nginx (UI) | Agent API (Python) | HTTP | `agent-api.infra-advisor.svc.cluster.local:8001` |
+| nginx (UI) | Agent API (.NET) | HTTP | `agent-api-dotnet.infra-advisor.svc.cluster.local:8001` |
 | nginx (UI) | Auth API | HTTP | `auth-api.infra-advisor.svc.cluster.local:8002` |
-| Agent API | MCP Server | HTTP (MCP) | `mcp-server.infra-advisor.svc.cluster.local:8000` |
-| Agent API | Redis | Redis protocol | `redis.infra-advisor.svc.cluster.local:6379` |
-| Agent API | Kafka | Kafka protocol | `kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092` |
+| Agent API (Python) | MCP Server (Python) | HTTP (MCP) | `mcp-server.infra-advisor.svc.cluster.local:8000` |
+| Agent API (.NET) | MCP Server (.NET) | HTTP (MCP) | `mcp-server-dotnet.infra-advisor.svc.cluster.local:8000` |
+| Agent API (both) | Redis | Redis protocol | `redis.infra-advisor.svc.cluster.local:6379` |
+| Agent API (both) | Kafka | Kafka protocol | `kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092` |
+| Agent API (both) | PostgreSQL | PostgreSQL | `postgres.infra-advisor.svc.cluster.local:5432` |
 | Load Generator | Kafka | Kafka protocol | `kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092` |
 | Airflow | Azure OpenAI | HTTPS | `*.openai.azure.com` |
 | Airflow | Azure AI Search | HTTPS | `*.search.windows.net` |
 | Airflow | Azure Blob Storage | HTTPS | `*.blob.core.windows.net` |
-| All pods | Datadog Agent | UDP/TCP | `datadog-agent.datadog.svc.cluster.local:8125/8126` |
+| Python services | Datadog Agent | UDP/TCP | `datadog-agent.datadog.svc.cluster.local:8125/8126` |
+| .NET services | Datadog Agent (OTLP) | HTTP | `datadog-agent.datadog.svc.cluster.local:4318` |
 
 ## Container images
 
@@ -97,10 +103,12 @@ All images are hosted at `ghcr.io/kyletaylored/infra-advisor-ai/<service>:latest
 | Service | Image | Language | Base |
 |---------|-------|----------|------|
 | MCP Server | `mcp-server` | Python 3.12 | `python:3.12-slim` |
+| MCP Server (.NET) | `mcp-server-dotnet` | .NET 10 | `mcr.microsoft.com/dotnet/aspnet:10.0` |
 | Agent API | `agent-api` | Python 3.12 | `python:3.12-slim` |
+| Agent API (.NET) | `agent-api-dotnet` | .NET 10 | `mcr.microsoft.com/dotnet/aspnet:10.0` |
 | Auth API | `auth-api` | Python 3.12 | `python:3.12-slim` |
 | Load Generator | `load-generator` | Python 3.12 | `python:3.12-slim` |
-| UI | `ui` | TypeScript/nginx | `node:20-alpine` → `nginx:alpine` |
+| UI | `ui` | TypeScript/nginx | `node:24-alpine` → `nginx:alpine` |
 
 ## Ingress
 
@@ -109,7 +117,8 @@ A single nginx Deployment (in the `ui` pod) acts as the ingress reverse proxy fo
 | Path prefix | Proxied to | Notes |
 |-------------|-----------|-------|
 | `/` | nginx static files | React SPA (`/assets/`) |
-| `/api/*` | Agent API `:8001` | Strips `/api/` prefix |
+| `/api/*` | Agent API (Python) `:8001` | Strips `/api/` prefix |
+| `/api-dotnet/*` | Agent API (.NET) `:8001` | Strips `/api-dotnet/` prefix |
 | `/auth/*` | Auth API `:8002` | Strips `/auth/` prefix |
 | `/airflow/*` | Airflow API Server `:8080` | Preserves `/airflow/` prefix |
 | `/mailhog/*` | MailHog `:8025` | Dev SMTP capture UI |
