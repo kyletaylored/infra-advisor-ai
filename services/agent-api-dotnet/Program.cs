@@ -34,8 +34,8 @@ Environment.SetEnvironmentVariable("AZURE_OPENAI_API_KEY", azureApiKey);
 Environment.SetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT", azureDeployment);
 Environment.SetEnvironmentVariable("KAFKA_BOOTSTRAP_SERVERS", kafkaBootstrapServers);
 
-// ── OpenTelemetry ─────────────────────────────────────────────────────────────
-TelemetrySetup.Configure(builder.Services);
+// ── OpenTelemetry + Logging ───────────────────────────────────────────────────
+TelemetrySetup.Configure(builder);
 
 // ── ActivitySource (custom spans) ─────────────────────────────────────────────
 builder.Services.AddSingleton(new ActivitySource(TelemetrySetup.ActivitySourceName));
@@ -93,13 +93,6 @@ builder.Services.AddHostedService<SuggestionPoolMaintenanceService>();
 builder.Services.ConfigureHttpJsonOptions(opts =>
 {
     opts.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
-});
-
-// ── Logging ───────────────────────────────────────────────────────────────────
-builder.Logging.ClearProviders();
-builder.Logging.AddConsole(opts =>
-{
-    opts.FormatterName = "simple";
 });
 
 var app = builder.Build();
@@ -400,7 +393,7 @@ app.MapGet("/health", (AppState state) =>
     Results.Ok(new
     {
         status = "ok",
-        service = "infraadvisor-agent-api-dotnet",
+        service = "infra-advisor-agent-api-dotnet",
         mcp_connected = state.McpConnected,
         llm_connected = state.LlmConnected,
     }));

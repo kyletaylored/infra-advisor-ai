@@ -87,6 +87,8 @@ spec:
             ddTraceVersions:
               python: "4"
               js: "5"
+              php: "1"
+              dotnet: "3"
             ddTraceConfigs:
               - name: "DD_PROFILING_ENABLED"
                 value: "auto"

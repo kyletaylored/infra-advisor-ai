@@ -6,7 +6,7 @@ metadata:
   labels:
     app: auth-api
     tags.datadoghq.com/env: dev
-    tags.datadoghq.com/service: infraadvisor-auth-api
+    tags.datadoghq.com/service: infra-advisor-auth-api
     tags.datadoghq.com/version: latest
 spec:
   replicas: 1
@@ -18,10 +18,10 @@ spec:
       labels:
         app: auth-api
         tags.datadoghq.com/env: dev
-        tags.datadoghq.com/service: infraadvisor-auth-api
+        tags.datadoghq.com/service: infra-advisor-auth-api
         tags.datadoghq.com/version: latest
       annotations:
-        ad.datadoghq.com/auth-api.logs: "[{\"source\":\"python\",\"service\":\"infraadvisor-auth-api\"}]"
+        ad.datadoghq.com/auth-api.logs: "[{\"source\":\"python\",\"service\":\"infra-advisor-auth-api\"}]"
     spec:
       imagePullSecrets:
         - name: ghcr-pull-secret

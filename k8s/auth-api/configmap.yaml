@@ -5,7 +5,7 @@ metadata:
   namespace: infra-advisor
 data:
   LOG_LEVEL: "INFO"
-  DD_SERVICE: "infraadvisor-auth-api"
+  DD_SERVICE: "infra-advisor-auth-api"
   DD_ENV: "dev"
   DD_VERSION: "latest"
   DD_AGENT_HOST: "datadog-agent.datadog.svc.cluster.local"

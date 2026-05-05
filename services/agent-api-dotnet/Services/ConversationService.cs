@@ -264,21 +264,32 @@ public sealed class ConversationService
         try
         {
             var sourcesJson = System.Text.Json.JsonSerializer.Serialize(sources);
+            var convGuid = Guid.Parse(convId);
             await using var conn = await _ds.OpenConnectionAsync();
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
-                INSERT INTO messages (conversation_id, role, content, sources) VALUES ($1, 'user', $2, '[]'::jsonb);
-                INSERT INTO messages (conversation_id, role, content, sources, trace_id, span_id)
-                    VALUES ($1, 'assistant', $3, $4::jsonb, $5, $6);
-                UPDATE conversations SET updated_at = NOW() WHERE id = $1;
-                """;
-            cmd.Parameters.AddWithValue(Guid.Parse(convId));
-            cmd.Parameters.AddWithValue(userQuery);
-            cmd.Parameters.AddWithValue(aiAnswer);
-            cmd.Parameters.AddWithValue(sourcesJson);
-            cmd.Parameters.AddWithValue(traceId is null ? DBNull.Value : (object)traceId);
-            cmd.Parameters.AddWithValue(spanId is null ? DBNull.Value : (object)spanId);
-            await cmd.ExecuteNonQueryAsync();
+
+            // NpgsqlBatch required for multi-statement parameterized queries in Npgsql 9.x
+            await using var batch = conn.CreateBatch();
+
+            var insertUser = batch.CreateBatchCommand();
+            insertUser.CommandText =
+                "INSERT INTO messages (conversation_id, role, content, sources) VALUES ($1, 'user', $2, '[]'::jsonb)";
+            insertUser.Parameters.AddWithValue(convGuid);
+            insertUser.Parameters.AddWithValue(userQuery);
+
+            var insertAssistant = batch.CreateBatchCommand();
+            insertAssistant.CommandText =
+                "INSERT INTO messages (conversation_id, role, content, sources, trace_id, span_id) VALUES ($1, 'assistant', $2, $3::jsonb, $4, $5)";
+            insertAssistant.Parameters.AddWithValue(convGuid);
+            insertAssistant.Parameters.AddWithValue(aiAnswer);
+            insertAssistant.Parameters.AddWithValue(sourcesJson);
+            insertAssistant.Parameters.AddWithValue(traceId is null ? DBNull.Value : (object)traceId);
+            insertAssistant.Parameters.AddWithValue(spanId is null ? DBNull.Value : (object)spanId);
+
+            var updateConv = batch.CreateBatchCommand();
+            updateConv.CommandText = "UPDATE conversations SET updated_at = NOW() WHERE id = $1";
+            updateConv.Parameters.AddWithValue(convGuid);
+
+            await batch.ExecuteNonQueryAsync();
         }
         catch (Exception ex)
         {

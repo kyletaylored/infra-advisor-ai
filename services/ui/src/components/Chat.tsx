@@ -961,7 +961,12 @@ export function Chat() {
               <HStack gap={3} justify="flex-end" flexWrap="wrap">
                 <HStack gap={1.5} align="center">
                   <Text fontSize="10px" color="gray.400" fontFamily="mono" letterSpacing="wide" textTransform="uppercase">Backend</Text>
-                  <NativeSelect.Root size="xs" disabled={loading} data-dd-action-name="backend-select">
+                  <NativeSelect.Root
+                    size="xs"
+                    disabled={loading || !!conversationId}
+                    title={conversationId ? "Backend is locked to the active conversation" : undefined}
+                    data-dd-action-name="backend-select"
+                  >
                     <NativeSelect.Field
                       id="backend-select"
                       aria-label="Select backend"
@@ -973,6 +978,7 @@ export function Chat() {
                       }}
                       fontFamily="mono"
                       fontSize="xs"
+                      opacity={conversationId ? 0.5 : 1}
                     >
                       <option value="python">Python</option>
                       <option value="dotnet">.NET</option>

@@ -6,7 +6,7 @@ metadata:
   labels:
     app: agent-api
     tags.datadoghq.com/env: dev
-    tags.datadoghq.com/service: infraadvisor-agent-api
+    tags.datadoghq.com/service: infra-advisor-agent-api
     tags.datadoghq.com/version: latest
 spec:
   replicas: 2
@@ -18,10 +18,10 @@ spec:
       labels:
         app: agent-api
         tags.datadoghq.com/env: dev
-        tags.datadoghq.com/service: infraadvisor-agent-api
+        tags.datadoghq.com/service: infra-advisor-agent-api
         tags.datadoghq.com/version: latest
       annotations:
-        ad.datadoghq.com/agent-api.logs: "[{\"source\":\"python\",\"service\":\"infraadvisor-agent-api\"}]"
+        ad.datadoghq.com/agent-api.logs: "[{\"source\":\"python\",\"service\":\"infra-advisor-agent-api\"}]"
     spec:
       imagePullSecrets:
         - name: ghcr-pull-secret

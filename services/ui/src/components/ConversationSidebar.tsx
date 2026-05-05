@@ -119,9 +119,13 @@ export function ConversationSidebar({ userId, activeId, onSelect, onNew, refresh
                       <Text fontSize="10px" color="gray.400" fontFamily="mono">
                         {formatDate(conv.updated_at)}
                       </Text>
-                      {conv.backend && conv.backend !== "python" && (
-                        <Text fontSize="10px" color="teal.500" fontFamily="mono">.NET</Text>
-                      )}
+                      <Text
+                        fontSize="10px"
+                        color={conv.backend === "dotnet" ? "teal.500" : "gray.400"}
+                        fontFamily="mono"
+                      >
+                        {conv.backend === "dotnet" ? ".NET" : "PY"}
+                      </Text>
                     </HStack>
                   </VStack>
                   <IconButton

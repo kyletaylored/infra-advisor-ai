@@ -7,8 +7,8 @@ metadata:
     app: mcp-server-dotnet
 data:
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://datadog-agent.datadog.svc.cluster.local:4318"
-  OTEL_SERVICE_NAME: "infratools-mcp-dotnet"
-  OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=dev,service.version=latest"
+  OTEL_SERVICE_NAME: "infra-advisor-mcp-server-dotnet"
+  OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=dev,service.version=latest,service.name=infra-advisor-mcp-server-dotnet"
   ASPNETCORE_ENVIRONMENT: "Production"
   AZURE_SEARCH_INDEX_NAME: "infra-advisor-knowledge"
   AZURE_OPENAI_DEPLOYMENT_NAME: "gpt-4.1-mini"

@@ -3,12 +3,8 @@ using InfraAdvisor.McpServer.Tools;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// ── OpenTelemetry ─────────────────────────────────────────────────────────────
-TelemetrySetup.Configure(builder.Services);
-
-// ── Logging ───────────────────────────────────────────────────────────────────
-builder.Logging.ClearProviders();
-builder.Logging.AddConsole();
+// ── OpenTelemetry + Logging ───────────────────────────────────────────────────
+TelemetrySetup.Configure(builder);
 
 // ── HttpClient factory ────────────────────────────────────────────────────────
 builder.Services.AddHttpClient();
@@ -37,7 +33,7 @@ app.MapMcp("/mcp");
 app.MapGet("/health", () => Results.Ok(new
 {
     status = "ok",
-    service = Environment.GetEnvironmentVariable("DD_SERVICE") ?? "infratools-mcp-dotnet",
+    service = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "infra-advisor-mcp-server-dotnet",
     tools = new[]
     {
         "get_bridge_condition",

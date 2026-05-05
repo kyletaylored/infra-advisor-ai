@@ -319,7 +319,8 @@ export async function listConversations(userId: string): Promise<ConversationSum
       return [];
     }
     const data = await res.json();
-    return data.conversations ?? [];
+    // .NET returns a plain array; Python wraps in { conversations: [...] }
+    return Array.isArray(data) ? data : (data.conversations ?? []);
   } catch (err) {
     console.error("[api] listConversations failed:", err);
     return [];

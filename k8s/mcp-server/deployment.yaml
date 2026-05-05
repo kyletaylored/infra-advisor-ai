@@ -6,7 +6,7 @@ metadata:
   labels:
     app: mcp-server
     tags.datadoghq.com/env: dev
-    tags.datadoghq.com/service: infratools-mcp
+    tags.datadoghq.com/service: infra-advisor-mcp-server
     tags.datadoghq.com/version: latest
 spec:
   replicas: 2
@@ -18,10 +18,10 @@ spec:
       labels:
         app: mcp-server
         tags.datadoghq.com/env: dev
-        tags.datadoghq.com/service: infratools-mcp
+        tags.datadoghq.com/service: infra-advisor-mcp-server
         tags.datadoghq.com/version: latest
       annotations:
-        ad.datadoghq.com/mcp-server.logs: '[{"source":"python","service":"infratools-mcp"}]'
+        ad.datadoghq.com/mcp-server.logs: '[{"source":"python","service":"infra-advisor-mcp-server"}]'
     spec:
       imagePullSecrets:
         - name: ghcr-pull-secret

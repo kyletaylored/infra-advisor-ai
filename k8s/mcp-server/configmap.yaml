@@ -7,7 +7,7 @@ metadata:
     app: mcp-server
 data:
   DD_ENV: "dev"
-  DD_SERVICE: "infratools-mcp"
+  DD_SERVICE: "infra-advisor-mcp-server"
   DD_VERSION: "latest"
   DD_AGENT_HOST: "datadog-agent.datadog.svc.cluster.local"
   DD_TRACE_AGENT_PORT: "8126"

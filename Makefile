@@ -180,11 +180,12 @@ create-dd-postgres-secret: ## Create dd-postgres-secret K8s Secret in datadog na
 
 create-secrets: create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-airflow-secret ## Create all application K8s secrets
 
-setup-postgres-dbm: ## Create Datadog monitoring user + grants in Postgres (run once after deploy)
-	@if [ -z "$(POSTGRES_USER)" ]; then echo "ERROR: POSTGRES_USER is not set"; exit 1; fi
+setup-postgres-dbm: ## Create Datadog monitoring user + grants in Postgres (run once after deploy; requires authuser superuser)
 	@if [ -z "$(DD_POSTGRES_PASSWORD)" ]; then echo "ERROR: DD_POSTGRES_PASSWORD is not set"; exit 1; fi
 	chmod +x k8s/postgres/setup-dbm.sh
-	NAMESPACE=$(NAMESPACE) POSTGRES_USER=$(POSTGRES_USER) POSTGRES_DB=$(POSTGRES_DB) \
+	NAMESPACE=$(NAMESPACE) \
+		POSTGRES_USER=$${POSTGRES_USER:-authuser} \
+		POSTGRES_DB=$${POSTGRES_DB:-postgres} \
 		DD_POSTGRES_PASSWORD='$(DD_POSTGRES_PASSWORD)' \
 		bash k8s/postgres/setup-dbm.sh
 
