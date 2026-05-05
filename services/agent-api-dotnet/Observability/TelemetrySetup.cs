@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Builder;
+using OpenInference.NET.Extensions.DependencyInjection;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Metrics;
@@ -21,10 +22,19 @@ public static class TelemetrySetup
         var ddEnv = Environment.GetEnvironmentVariable("DD_ENV") ?? "dev";
         var ddVersion = Environment.GetEnvironmentVariable("DD_VERSION") ?? "latest";
 
-        // Traces: DD SDK (auto-injected via admission controller + DD_TRACE_OTEL_ENABLED=true)
-        // bridges all ActivitySource spans to Datadog APM on port 8126 — no OTLP trace export needed.
-        //
-        // Metrics: still exported via OTLP to the DDOT collector for custom meters.
+        // OpenInference.NET: configures global LlmTelemetry options + registers DI services.
+        // Spans are emitted under ActivitySource "OpenInference.NET" and captured automatically
+        // by the DD SDK bridge (DD_TRACE_OTEL_ENABLED=true).
+        builder.Services.AddOpenInferenceTelemetry(options => {
+            options.EmitTextContent = true;
+            options.RecordTokenUsage = true;
+            options.SanitizeSensitiveInfo = true;
+            options.RecordModelName = true;
+            options.EmitMetrics = true;
+        });
+
+        // Traces: DD SDK bridge (DD_TRACE_OTEL_ENABLED=true) captures all ActivitySources.
+        // Metrics: OTLP to DDOT collector for both custom and OpenInference meters.
         builder.Services.AddOpenTelemetry()
             .ConfigureResource(r => r
                 .AddService(serviceName)
@@ -37,6 +47,7 @@ public static class TelemetrySetup
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddMeter(ActivitySourceName)
+                .AddMeter(OpenInferenceSourceName)
                 .AddOtlpExporter(otlp => {
                     otlp.Endpoint = new Uri($"{otlpEndpoint.TrimEnd('/')}/v1/metrics");
                     otlp.Protocol = OtlpExportProtocol.HttpProtobuf;

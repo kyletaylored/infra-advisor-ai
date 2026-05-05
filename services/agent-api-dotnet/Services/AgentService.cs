@@ -5,7 +5,7 @@ using Azure;
 using Azure.AI.OpenAI;
 using InfraAdvisor.AgentApi.Models;
 using OpenAI.Chat;
-using InfraAdvisor.AgentApi.Observability;
+using OpenInference.NET.Core;
 
 namespace InfraAdvisor.AgentApi.Services;
 

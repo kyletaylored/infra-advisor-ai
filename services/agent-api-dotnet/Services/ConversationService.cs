@@ -267,27 +267,28 @@ public sealed class ConversationService
             var convGuid = Guid.Parse(convId);
             await using var conn = await _ds.OpenConnectionAsync();
 
-            // NpgsqlBatch required for multi-statement parameterized queries in Npgsql 9.x
+            // NpgsqlBatch for multi-statement parameterized queries in Npgsql 9.x.
+            // CreateBatchCommand() creates but does NOT add to BatchCommands — use explicit Add().
             await using var batch = conn.CreateBatch();
 
-            var insertUser = batch.CreateBatchCommand();
-            insertUser.CommandText =
-                "INSERT INTO messages (conversation_id, role, content, sources) VALUES ($1, 'user', $2, '[]'::jsonb)";
+            var insertUser = new NpgsqlBatchCommand(
+                "INSERT INTO messages (conversation_id, role, content, sources) VALUES ($1, 'user', $2, '[]'::jsonb)");
             insertUser.Parameters.AddWithValue(convGuid);
             insertUser.Parameters.AddWithValue(userQuery);
+            batch.BatchCommands.Add(insertUser);
 
-            var insertAssistant = batch.CreateBatchCommand();
-            insertAssistant.CommandText =
-                "INSERT INTO messages (conversation_id, role, content, sources, trace_id, span_id) VALUES ($1, 'assistant', $2, $3::jsonb, $4, $5)";
+            var insertAssistant = new NpgsqlBatchCommand(
+                "INSERT INTO messages (conversation_id, role, content, sources, trace_id, span_id) VALUES ($1, 'assistant', $2, $3::jsonb, $4, $5)");
             insertAssistant.Parameters.AddWithValue(convGuid);
             insertAssistant.Parameters.AddWithValue(aiAnswer);
             insertAssistant.Parameters.AddWithValue(sourcesJson);
             insertAssistant.Parameters.AddWithValue(traceId is null ? DBNull.Value : (object)traceId);
             insertAssistant.Parameters.AddWithValue(spanId is null ? DBNull.Value : (object)spanId);
+            batch.BatchCommands.Add(insertAssistant);
 
-            var updateConv = batch.CreateBatchCommand();
-            updateConv.CommandText = "UPDATE conversations SET updated_at = NOW() WHERE id = $1";
+            var updateConv = new NpgsqlBatchCommand("UPDATE conversations SET updated_at = NOW() WHERE id = $1");
             updateConv.Parameters.AddWithValue(convGuid);
+            batch.BatchCommands.Add(updateConv);
 
             await batch.ExecuteNonQueryAsync();
         }
