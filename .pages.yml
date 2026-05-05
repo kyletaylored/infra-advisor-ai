@@ -1,74 +1,282 @@
 repo: kyletaylored/infra-advisor-ai
 branch: main
-media: docs/assets/img
+
+media:
+  input: docs/assets/img
+  output: /assets/img
+  rename: safe
+  categories: [image]
+
+settings:
+  commit:
+    templates:
+      create: "docs: add {filename}"
+      update: "docs: update {filename}"
+      delete: "docs: remove {filename}"
+      rename: "docs: rename {oldFilename} to {newFilename}"
+
 content:
+  # ── Blog posts ──────────────────────────────────────────────────────────────
   - name: posts
-    label: Posts
+    label: Blog Posts
     type: collection
     path: docs/_posts
+    filename:
+      template: "{year}-{month}-{day}-{primary}.md"
     view:
-      fields: [title, date, categories]
+      primary: title
+      fields: [title, date, categories, tags]
+      sort: [date, title]
+      search: [title, categories, tags]
+      default:
+        sort: date
+        order: desc
     fields:
-      - { name: title, label: Title, type: string }
-      - { name: date, label: Date, type: date }
-      - { name: categories, label: Categories, type: list }
-      - { name: tags, label: Tags, type: list }
-      - { name: body, label: Body, type: rich-text }
+      - name: title
+        label: Title
+        type: string
+        required: true
+        options:
+          maxlength: 120
 
-  - name: services
-    label: Services
-    type: collection
-    path: docs/services
-    fields:
-      - { name: title, label: Title, type: string }
-      - { name: body, label: Body, type: rich-text }
+      - name: date
+        label: Date
+        type: date
+        default: ""
+        options:
+          format: "yyyy-MM-dd"
 
-  - name: architecture
-    label: Architecture
-    type: collection
-    path: docs/architecture
-    fields:
-      - { name: title, label: Title, type: string }
-      - { name: body, label: Body, type: rich-text }
+      - name: categories
+        label: Categories
+        type: string
+        list: true
 
-  - name: observability
-    label: Observability
-    type: collection
-    path: docs/observability
-    fields:
-      - { name: title, label: Title, type: string }
-      - { name: body, label: Body, type: rich-text }
+      - name: tags
+        label: Tags
+        type: string
+        list: true
 
-  - name: data-pipeline
-    label: Data Pipeline
-    type: collection
-    path: docs/data-pipeline
-    fields:
-      - { name: title, label: Title, type: string }
-      - { name: body, label: Body, type: rich-text }
+      - name: image
+        label: Cover image
+        type: object
+        fields:
+          - name: path
+            label: Image
+            type: image
+          - name: alt
+            label: Alt text
+            type: string
 
-  - name: deployment
-    label: Deployment
-    type: collection
-    path: docs/deployment
-    fields:
-      - { name: title, label: Title, type: string }
-      - { name: body, label: Body, type: rich-text }
+      - name: pin
+        label: Pin to top
+        type: boolean
+        default: false
 
-  - name: development
-    label: Development
-    type: collection
-    path: docs/development
-    fields:
-      - { name: title, label: Title, type: string }
-      - { name: body, label: Body, type: rich-text }
+      - name: math
+        label: Enable MathJax
+        type: boolean
+        default: false
 
+      - name: mermaid
+        label: Enable Mermaid
+        type: boolean
+        default: false
+
+      - name: body
+        label: Body
+        type: rich-text
+        options:
+          format: markdown
+          switcher: true
+
+  # ── Navigation tabs (fixed set — create/delete/rename disabled) ─────────────
   - name: tabs
     label: Navigation Tabs
     type: collection
     path: docs/_tabs
+    operations:
+      create: false
+      delete: false
+      rename: false
+    view:
+      primary: title
+      fields: [title, order, icon]
+      sort: [order]
+      default:
+        sort: order
+        order: asc
     fields:
-      - { name: title, label: Title, type: string }
-      - { name: icon, label: "Font Awesome icon class", type: string }
-      - { name: order, label: "Sidebar order", type: number }
-      - { name: body, label: Body, type: rich-text }
+      - name: title
+        label: Title
+        type: string
+        required: true
+
+      - name: icon
+        label: Icon class
+        type: string
+        description: "Font Awesome 6 class (e.g. fas fa-sitemap, fas fa-database)"
+
+      - name: order
+        label: Sidebar order
+        type: number
+        required: true
+        options:
+          min: 1
+          max: 20
+
+      - name: permalink
+        label: Permalink
+        type: string
+        hidden: true
+
+      - name: body
+        label: Body
+        type: rich-text
+        options:
+          format: markdown
+          switcher: true
+
+  # ── Documentation sections (grouped in sidebar) ─────────────────────────────
+  - name: docs
+    label: Documentation
+    type: group
+    items:
+      - name: services
+        label: Services
+        type: collection
+        path: docs/services
+        view:
+          primary: title
+          fields: [title]
+          search: [title, body]
+        fields:
+          - name: title
+            label: Title
+            type: string
+            required: true
+          - name: body
+            label: Body
+            type: rich-text
+            options:
+              format: markdown
+              switcher: true
+
+      - name: architecture
+        label: Architecture
+        type: collection
+        path: docs/architecture
+        view:
+          primary: title
+          fields: [title]
+          search: [title, body]
+        fields:
+          - name: title
+            label: Title
+            type: string
+            required: true
+          - name: body
+            label: Body
+            type: rich-text
+            options:
+              format: markdown
+              switcher: true
+
+      - name: data-pipeline
+        label: Data Pipeline
+        type: collection
+        path: docs/data-pipeline
+        view:
+          primary: title
+          fields: [title]
+          search: [title, body]
+        fields:
+          - name: title
+            label: Title
+            type: string
+            required: true
+          - name: body
+            label: Body
+            type: rich-text
+            options:
+              format: markdown
+              switcher: true
+
+      - name: observability
+        label: Observability
+        type: collection
+        path: docs/observability
+        view:
+          primary: title
+          fields: [title]
+          search: [title, body]
+        fields:
+          - name: title
+            label: Title
+            type: string
+            required: true
+          - name: body
+            label: Body
+            type: rich-text
+            options:
+              format: markdown
+              switcher: true
+
+      - name: deployment
+        label: Deployment
+        type: collection
+        path: docs/deployment
+        view:
+          primary: title
+          fields: [title]
+          search: [title, body]
+        fields:
+          - name: title
+            label: Title
+            type: string
+            required: true
+          - name: body
+            label: Body
+            type: rich-text
+            options:
+              format: markdown
+              switcher: true
+
+      - name: development
+        label: Development
+        type: collection
+        path: docs/development
+        view:
+          primary: title
+          fields: [title]
+          search: [title, body]
+        fields:
+          - name: title
+            label: Title
+            type: string
+            required: true
+          - name: body
+            label: Body
+            type: rich-text
+            options:
+              format: markdown
+              switcher: true
+
+      - name: agent-guides
+        label: Agent Guides
+        type: collection
+        path: docs/agent-guides
+        view:
+          primary: title
+          fields: [title]
+          search: [title, body]
+        fields:
+          - name: title
+            label: Title
+            type: string
+            required: true
+          - name: body
+            label: Body
+            type: rich-text
+            options:
+              format: markdown
+              switcher: true
