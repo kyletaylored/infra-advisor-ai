@@ -108,6 +108,11 @@ jobs:
             type=sha,prefix=
             type=raw,value=latest,enable={{is_default_branch}}
 
+      - name: Compute short SHA
+        id: sha
+        if: matrix.changed == 'true' && matrix.service == 'ui'
+        run: echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
       - name: Collect UI build args
         id: ui-args
         if: matrix.changed == 'true' && matrix.service == 'ui'
@@ -118,7 +123,7 @@ jobs:
             echo "VITE_DD_RUM_CLIENT_TOKEN=${{ secrets.VITE_DD_RUM_CLIENT_TOKEN }}"
             echo "VITE_DD_RUM_SITE=${{ secrets.VITE_DD_RUM_SITE || 'us3.datadoghq.com' }}"
             echo "VITE_DD_ENV=${{ vars.DD_ENV || 'dev' }}"
-            echo "VITE_APP_VERSION=${{ github.sha }}"
+            echo "VITE_APP_VERSION=${{ steps.sha.outputs.short }}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -132,7 +137,7 @@ jobs:
           VITE_DD_RUM_CLIENT_TOKEN: ${{ secrets.VITE_DD_RUM_CLIENT_TOKEN }}
           VITE_DD_RUM_SITE: ${{ secrets.VITE_DD_RUM_SITE || 'us3.datadoghq.com' }}
           VITE_DD_ENV: ${{ vars.DD_ENV || 'dev' }}
-          VITE_APP_VERSION: ${{ github.sha }}
+          VITE_APP_VERSION: ${{ steps.sha.outputs.short }}
         run: npm ci && npm run build
 
       - name: Upload sourcemaps to Datadog
@@ -144,7 +149,7 @@ jobs:
         run: |
           npx @datadog/datadog-ci sourcemaps upload ./dist \
             --service infra-advisor-ui \
-            --release-version "${{ github.sha }}" \
+            --release-version "${{ steps.sha.outputs.short }}" \
             --minified-path-prefix "https://infra-advisor-ai.kyletaylor.dev"
 
       - name: Build and push
