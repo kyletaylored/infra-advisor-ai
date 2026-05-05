@@ -1,0 +1,544 @@
+[2026-05-05] Fix: Message persistence (NpgsqlBatch) + OpenInference.NET wiring
+  Two root causes:
+
+  1. Messages never saved — NpgsqlBatch.CreateBatchCommand() silent no-op:
+     - ConversationService.SaveMessagesAsync called conn.CreateBatch() then batch.CreateBatchCommand()
+     - DbBatch.CreateBatchCommand() creates an NpgsqlBatchCommand object but does NOT add it to
+       batch.BatchCommands — the batch executed with zero commands every time
+     - All message INSERTs and the conversation UPDATE silently dropped
+     - Fixed: replaced with new NpgsqlBatchCommand(...) + explicit batch.BatchCommands.Add()
+     - Smoke-tested end-to-end: POST /conversations → POST /query → DB shows msg_count=2, updated_at changed
+
+  2. OpenInference.NET installed but completely unused:
+     - AgentService.cs was calling a hand-rolled duplicate LlmTelemetry class (custom ActivitySource)
+       instead of the library at OpenInference.NET.Core.LlmTelemetry
+     - AddOpenInferenceTelemetry() was never called — DI services and global options never registered
+     - Fixed:
+       - Deleted duplicate LlmTelemetry.cs (now just a comment placeholder)
+       - AgentService.cs now imports OpenInference.NET.Core (call signatures were already compatible)
+       - TelemetrySetup.cs calls AddOpenInferenceTelemetry() with EmitTextContent, RecordTokenUsage,
+         SanitizeSensitiveInfo, RecordModelName, EmitMetrics = true
+       - WithMetrics now includes AddMeter("OpenInference.NET") so LLM metrics flow to DDOT
+
+  Also fixed in this session:
+  3. Dockerfiles used mcr.microsoft.com/dotnet/sdk:10.0 (tag doesn't exist → 403 from MCR):
+     - Fixed: use mcr.microsoft.com/dotnet/sdk:10.0-resolute (actual available tag)
+     - Both agent-api-dotnet and mcp-server-dotnet Dockerfiles updated
+  4. OTLP metrics endpoint missing /v1/metrics path:
+     - OTel .NET SDK only auto-appends signal path when reading OTEL_EXPORTER_OTLP_ENDPOINT from env;
+       programmatic otlp.Endpoint = new Uri(...) uses path as-is → was posting to / → 404
+     - Fixed: otlp.Endpoint = new Uri($"{endpoint.TrimEnd('/')}/v1/metrics")
+  5. DD .NET tracer not injected (no traces in Datadog):
+     - Datadog admission controller couldn't detect .NET from ghcr.io image name
+     - Fixed: admission.datadoghq.com/dotnet-lib.version: v3 annotation on both .NET pod templates
+     - Confirmed: datadog-lib-dotnet-init init container present; DD_INSTRUMENTATION_LANGUAGES_DETECTED=dotnet
+
+  Verified:
+  [x] DB smoke test: POST /query with X-Conversation-ID → conversations.msg_count=2, updated_at updated
+  [x] GET /conversations/{id} returns messages array with correct role/content/trace_id
+  [x] dotnet build: 0 errors after OpenInference.NET wiring changes
+  [x] OTLP metrics: POST to /v1/metrics returns 200 (was 404 on /)
+  [x] datadog-lib-dotnet-init init container confirmed present in both .NET pods
+  [x] DD_INSTRUMENTATION_LANGUAGES_DETECTED=dotnet in running agent-api-dotnet pod env
+
+[2026-05-05] Fix: Conversation sidebar empty + message_count 0 + backend locking
+  Three root causes:
+
+  1. Sidebar always showed "No conversations yet" despite API returning data:
+     - .NET GET /conversations returns a plain JSON array [...] (not {conversations:[...]})
+     - api.ts listConversations did `data.conversations ?? []` → undefined on plain array → []
+     - Fixed: `Array.isArray(data) ? data : (data.conversations ?? [])` in api.ts
+
+  2. message_count always 0 — messages never persisted:
+     - ConversationService.cs SaveMessagesAsync used a multi-statement SQL string with
+       positional parameters ($N). Npgsql 9.x does not support multi-statement batches in a
+       single NpgsqlCommand via the extended query protocol — 2nd INSERT + UPDATE silently skipped.
+     - Fixed: replaced with NpgsqlBatch (3 separate BatchCommand objects each with own params)
+
+  3. Backend selector locked to conversation + sidebar backend labels:
+     - Backend NativeSelect now disabled={loading || !!conversationId} with title tooltip when locked
+     - handleSelectConversation already restores backend from conversation metadata (was already working)
+     - Sidebar backend badge now always visible: ".NET" (teal) or "PY" (gray) for every conversation
+
+  Verified:
+  [x] api.ts: listConversations handles both array and {conversations:[]} formats
+  [x] dotnet build: 0 errors after NpgsqlBatch refactor
+  [x] npx tsc --noEmit: 0 errors after Chat.tsx + ConversationSidebar.tsx changes
+  [x] Backend selector disabled when conversationId set; opacity 0.5 + tooltip
+  [x] Sidebar shows PY/\.NET badge on all conversations (not just .NET)
+
+[2026-05-05] Fix: Service name alignment + .NET OTLP logging + Postgres DBM user
+  Three issues:
+
+  1. Service naming inconsistency across all 5 services:
+     - infraadvisor-agent-api → infra-advisor-agent-api
+     - infratools-mcp → infra-advisor-mcp-server
+     - infraadvisor-auth-api → infra-advisor-auth-api
+     - infraadvisor-agent-api-dotnet → infra-advisor-agent-api-dotnet
+     - infratools-mcp-dotnet → infra-advisor-mcp-server-dotnet
+     - Updated: DD_SERVICE/OTEL_SERVICE_NAME/OTEL_RESOURCE_ATTRIBUTES in all configmaps,
+       tags.datadoghq.com/service labels in all deployments, and log annotation service fields
+     - .NET deployments: source: "dotnet" → source: "csharp" in log annotations (Datadog pipeline)
+
+  2. .NET trace/log correlation missing:
+     - TelemetrySetup.cs (both services) refactored to accept WebApplicationBuilder (not just IServiceCollection)
+     - Reads OTEL_SERVICE_NAME from env var (was hardcoded) so configmap controls the name
+     - Added OTLP log export: builder.Logging.AddOpenTelemetry() with IncludeFormattedMessage,
+       IncludeScopes, ParseStateValues + AddOtlpExporter to DDOT collector at port 4318
+     - OTel SDK auto-injects TraceId/SpanId into OTLP log records → Datadog correlates with traces
+     - Program.cs (both services): changed TelemetrySetup.Configure(builder.Services) → Configure(builder);
+       removed duplicate logging blocks (now centralized in TelemetrySetup)
+
+  3. Postgres DBM "password authentication failed for user 'datadog'":
+     - datadog role never created; PVC initialized with authuser superuser (not POSTGRES_USER=infraadvisor)
+     - Fixed: kubectl exec postgres -- psql -U authuser → CREATE USER datadog WITH PASSWORD '...';
+       applied dbm-setup.sql (ALTER ROLE INHERIT, pg_monitor grant, datadog schema, explain_statement fn)
+     - Fixed Makefile: setup-postgres-dbm no longer requires POSTGRES_USER; defaults to authuser
+       (actual cluster superuser) via shell default $${POSTGRES_USER:-authuser}
+
+  All 5 deployments rolled out (kubectl rollout status confirmed); temporarily set maxSurge=0
+  to break CPU scheduling deadlock during rolling updates.
+
+  Verified:
+  [x] All 5 services: tags.datadoghq.com/service labels confirm infra-advisor- prefix (kubectl confirmed)
+  [x] .NET log annotation source: "csharp" in both agent-api-dotnet + mcp-server-dotnet deployments
+  [x] TelemetrySetup.cs: dotnet build 0 errors for both services after refactor
+  [x] datadog role: rolcanlogin=t confirmed in pg_roles; datadog schema + explain_statement present
+  [x] All 5 deployments: kubectl rollout status → "successfully rolled out"
+
+[2026-05-05] Fix: Datadog node agent 9-day outage + OTel collector + bridge SUFFICIENCY_RATING
+  Three root causes:
+
+  1. Datadog node agents stuck in CreateContainerConfigError (9 days):
+     - dd-postgres-secret referenced by DatadogAgent CR nodeAgent.env but never created in
+       datadog namespace; Makefile target was creating it in infra-advisor namespace instead
+     - Fixed: make create-dd-postgres-secret NAMESPACE=datadog → secret created
+     - Restarted DaemonSet: all 3 nodes 5/5 Running; APM sockets (apm.socket + dsd.socket)
+       now live in application pods; traces flowing to Datadog
+     - Fixed Makefile: create-dd-postgres-secret now hardcodes --namespace datadog
+
+  2. DDOT OTel Collector not configured:
+     - datadog-agent.yaml had otelCollector: {enabled: true} only — no ports or pipeline
+     - Added: ports 4317 (gRPC OTLP) + 4318 (HTTP OTLP) with hostPort
+     - Added: conf.configData with full pipeline — otlp+prometheus receivers,
+       infraattributes processor, datadog exporter (${env:DD_API_KEY}/${env:DD_SITE}),
+       datadog/connector for trace→metric correlation, traces+metrics+logs pipelines
+     - Applied immediately to cluster (kubectl apply); 6th container (otel-collector)
+       rolling out across nodes
+
+  3. Bridge tool ArcGIS 400 "Invalid field: SUFFICIENCY_RATING":
+     - NTAD NBI service removed SUFFICIENCY_RATING field; replaced by LOWEST_RATING
+     - LLM always passes order_by=SUFFICIENCY_RATING ASC from query phrasing → 400
+     - Added @field_validator("order_by") that silently rewrites SUFFICIENCY_RATING → LOWEST_RATING
+     - Updated field description to explicitly instruct model to use LOWEST_RATING
+
+  Committed: 8d658a7; pushed; CI rebuilding mcp-server (bridge_condition.py changed)
+
+  Verified:
+  [x] dd-postgres-secret created in datadog namespace (kubectl confirm)
+  [x] All 3 Datadog node agents: 5/5 Running (was 0/5 CreateContainerConfigError)
+  [x] APM socket: /var/run/datadog/apm.socket + dsd.socket now visible in agent-api pod
+  [x] DatadogAgent CR applied with OTel collector ports + conf.configData pipeline
+  [x] Bridge validator: BridgeConditionInput(order_by='SUFFICIENCY_RATING ASC').order_by == 'LOWEST_RATING ASC' ✓
+  [~] OTel collector 6th container rolling out on Datadog node agents
+
+[2026-05-05] Fix: .NET backend 503/500 + contextual sources panel
+  Three root causes found and fixed:
+
+  1. 503 "Agent not ready — MCP or LLM client unavailable":
+     - MCP probe returned 406 Not Acceptable because McpClientService sent no Accept header.
+       MCP Streamable HTTP transport (ASP.NET SDK) requires Accept: application/json, text/event-stream
+     - Startup probe had no retry: if probe failed, McpConnected stayed false permanently and every
+       /query returned 503. Changed to exponential-backoff retry loop (cap 60s) until both connected.
+     - Fixed in: services/agent-api-dotnet/Services/McpClientService.cs (Accept header + SSE handling)
+                 services/agent-api-dotnet/Program.cs (retry loop)
+
+  2. 500 on /api-dotnet/conversations (GET + POST):
+     - Postgres PVC initialized with POSTGRES_USER=authuser (not infraadvisor); env vars ignored
+       on existing data. Role "infraadvisor" did not exist → auth failure.
+     - Fixed by: kubectl exec postgres -- psql -U authuser: CREATE ROLE infraadvisor + CREATE DATABASE
+
+  3. Sources panel not contextual to selected message:
+     - activeCitations only updated on latest response; clicking older messages did nothing.
+     - Added activeMsgIdx state; AI message bubbles clickable (cursor pointer, blue border on active);
+       clicking any AI message with sources updates the right-side CitationPanel.
+     - Fixed in: services/ui/src/components/Chat.tsx
+
+  Committed: feb1a47 — pushed to CI, building agent-api-dotnet + ui images now
+
+  Verified:
+  [x] McpClientService: Accept header present; SSE line parsing for text/event-stream responses
+  [x] Program.cs: retry loop replaces one-shot probe; will connect once new image deploys
+  [x] infraadvisor role + database created in postgres (kubectl exec confirmed)
+  [x] Chat.tsx: activeMsgIdx state; AI messages clickable; TypeScript 0 errors
+  [~] CI deploying feb1a47 — will rollout agent-api-dotnet and ui pods
+
+[2026-05-05] Fix: Deploy .NET backend to cluster — agent-api-dotnet + mcp-server-dotnet
+  Root cause: neither agent-api-dotnet nor mcp-server-dotnet Deployments were in the cluster;
+  mcp-server-dotnet-secret target was missing from Makefile; both services absent from deploy-k8s.
+
+  Makefile:
+  - Added create-mcp-server-dotnet-secret target (Azure Search + OpenAI + optional API keys)
+  - Added create-mcp-server-dotnet-secret to create-secrets dependency chain and PHONY list
+  - Added `kubectl apply -f k8s/mcp-server-dotnet/` and `kubectl apply -f k8s/agent-api-dotnet/`
+    to deploy-k8s apply block
+
+  k8s/agent-api-dotnet/deployment.yaml:
+  - Reduced CPU request 500m → 250m (cluster at ~85% avg CPU; 500m×2 pods unschedulable)
+  - Reduced replicas 2 → 1 to match HPA minReplicas=1
+
+  k8s/agent-api-dotnet/hpa.yaml:
+  - Reduced minReplicas 2 → 1
+
+  services/agent-api-dotnet/Services/ConversationService.cs:
+  - Added ToNpgsqlConnectionString() helper: converts postgresql://user:pass@host/db URI format
+    to Npgsql ADO.NET key=value format (Host=;Port=;Database=;Username=;Password=)
+  - NpgsqlDataSourceBuilder 9.x passes raw URI to DbConnectionOptions parser which only accepts
+    key=value; crash was "Format of initialization string does not conform to specification at index 0"
+
+  Cluster:
+  - Applied mcp-server-dotnet-secret (kubectl via make create-mcp-server-dotnet-secret)
+  - Applied agent-api-dotnet-secret (kubectl via make create-agent-api-dotnet-secret)
+  - Applied k8s/mcp-server-dotnet/ and k8s/agent-api-dotnet/ manifests
+  - mcp-server-dotnet: 2/2 pods Running immediately
+  - agent-api-dotnet: crashed on URI format bug → code fix pushed to CI (commit 8ece33b)
+    CI build running; rollout will complete once new image is available
+
+  Verified:
+  [x] make create-mcp-server-dotnet-secret: secret created in cluster
+  [x] make create-agent-api-dotnet-secret: secret created in cluster
+  [x] mcp-server-dotnet: 2/2 Running (confirmed kubectl get pods)
+  [x] ConversationService.cs: ToNpgsqlConnectionString parses postgresql:// URI correctly
+  [x] dotnet build: 0 errors
+  [x] Committed 8ece33b; pushed; CI build triggered (agent-api-dotnet image rebuilding)
+  [~] agent-api-dotnet pods: pending CI image build completing
+
+[2026-05-05] Fix: API error handling — body stream double-read + console.error logging
+  services/ui/src/lib/api.ts:
+  - Added extractErrorDetail(response) helper: reads body once with response.text() (never
+    throws "body stream already read"), then JSON.parse(); detects HTML responses (starts with <)
+    and returns "Backend unavailable (HTTP NNN)" instead of dumping Cloudflare/nginx HTML
+  - sendQuery: replaced try{json()} catch{text()} double-read pattern with extractErrorDetail;
+    added console.error on every non-OK response; error message is clean for HTML or JSON bodies
+  - createConversation, listConversations, getConversation, deleteConversation: replaced bare
+    catch{return null/false} with console.error + extractErrorDetail on non-OK responses
+  - fetchSuggestions, fetchInitialSuggestions, fetchModels: added console.error in catch blocks
+    (were silently discarding all errors)
+
+  Root cause of "body stream already read": response.json() consumes the body stream; when it
+  throws on an HTML 502, the catch block's response.text() fails with that error. Fix is to
+  always read as text() first, then JSON.parse() synchronously.
+
+  Verified:
+  [x] npx tsc --noEmit: 0 errors
+  [x] extractErrorDetail reads body once; all callers removed direct .json()/.text() on error paths
+  [x] HTML response detection: raw.trimStart().startsWith('<') → friendly message
+  [x] console.error present in all 7 fetch functions (sendQuery, createConversation,
+      listConversations, getConversation, deleteConversation, fetchSuggestions,
+      fetchInitialSuggestions, fetchModels)
+
+[2026-05-05] Fix: UI CrashLoopBackOff — nginx resolver + short SHA version
+  Root cause: nginx.conf referenced agent-api-dotnet.infra-advisor.svc.cluster.local which didn't
+  exist in cluster; NGINX resolves all upstreams at startup → NXDOMAIN → crash; rollout timed out
+  after 10m leaving old pod (ef0a82f) serving; CI reported success due to non-fatal timeout.
+
+  services/ui/nginx.conf:
+  - Added `resolver 10.0.0.10 valid=10s ipv6=off;` (AKS CoreDNS ClusterIP)
+  - Converted ALL proxy_pass locations to use `set $var` + `rewrite` pattern so upstreams are
+    resolved per-request rather than at startup; NGINX now starts even when a backend service
+    isn't deployed yet (returns 502 gracefully instead of crashing)
+
+  k8s/agent-api-dotnet/service.yaml:
+  - Applied to cluster immediately (kubectl apply) to unblock stuck crashing pod
+  - Service was present in repo but never deployed; agent-api-dotnet DNS now resolves
+
+  .github/workflows/build-push.yml:
+  - Added "Compute short SHA" step: `echo "short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"`
+  - VITE_APP_VERSION, runner build env, and sourcemap --release-version all now use 7-char SHA
+  - Consistent short version flows into RUM SDK, version badge, and Datadog sourcemap matching
+
+  services/ui/src/components/Chat.tsx:
+  - Removed `.slice(0, 7)` from shortSha — VERSION is already 7 chars from build pipeline
+
+  Verified:
+  [x] resolver directive present in nginx.conf with correct CoreDNS IP (10.0.0.10)
+  [x] All 5 proxy_pass locations use set $var + rewrite pattern (airflow, mailhog, auth, dotnet, api)
+  [x] agent-api-dotnet Service applied to cluster (kubectl apply confirmed "created")
+  [x] build-push.yml: "Compute short SHA" step present before "Collect UI build args"
+  [x] VITE_APP_VERSION uses ${{ steps.sha.outputs.short }} in args, runner env, and sourcemap upload
+  [x] Chat.tsx: shortSha = VERSION (no slice needed)
+
+[2026-05-05] Fix: UI accessibility — select boxes, autocomplete, label associations, docs Jekyll/Chirpy
+  services/ui/src/components/Chat.tsx:
+  - Replaced backend button group with NativeSelect.Root/Field/Indicator (Chakra v3 native select)
+  - Replaced model button group with NativeSelect.Root/Field/Indicator
+  - Both selects have aria-label + data-dd-action-name for RUM action naming
+
+  services/ui/src/components/LoginPage.tsx:
+  - Added autoComplete="current-password" to login password input
+  - Added autoComplete="new-password" to register, new-password, and confirm-password inputs
+  - Added autoComplete="email" to email input
+  - All inputs now have id attributes + native <label htmlFor="..."> associations
+  - All inputs have explicit aria-label attributes for RUM and screen readers
+  - Resolves browser warning: "Input elements should have autocomplete attributes"
+
+  docs/ — Jekyll + Chirpy theme conversion:
+  - docs/Gemfile: jekyll-theme-chirpy ~> 7.2
+  - docs/_config.yml: full Chirpy config (mermaid, pwa, jekyll-archives, UST, social)
+  - docs/_tabs/: 7 sidebar nav entries (about, architecture, services, data-pipeline, observability,
+    deployment, development) each with Font Awesome icon + order + full section content
+  - docs/_data/contact.yml + share.yml: sidebar contact links and share buttons
+  - .github/workflows/docs.yml: replaced jekyll-build-pages@v1 with ruby/setup-ruby@v1 +
+    bundle exec jekyll build; artifact uploaded from docs/_site
+  - .pages.yml: Pages CMS config at repo root (8 content collections)
+  - Deleted 6 just-the-docs stub files (docs/*.md empty section stubs)
+  - Deleted 6 conflicting */index.md files whose /section/ URLs collided with _tabs/ permalinks
+
+  Verified:
+  [x] npx tsc --noEmit: 0 errors after all Chat.tsx + LoginPage.tsx changes
+  [x] NativeSelect imported from @chakra-ui/react; no unused Button imports remain in toolbar
+  [x] autoComplete on all 4 password inputs (current-password / new-password per mode)
+  [x] htmlFor on all native <label> elements; id on all corresponding Input elements
+  [x] docs/_tabs/: 7 files present with correct icon + order frontmatter
+  [x] .github/workflows/docs.yml: ruby/setup-ruby@v1 present; jekyll-build-pages@v1 removed
+  [x] .pages.yml: present at repo root with 8 collections
+
+[2026-05-04] Feature: Conversation persistence + model memory + UI sidebar
+  services/agent-api/src/conversations.py — SQLAlchemy CRUD for conversations + messages tables:
+  - ConversationRow: id, user_id, title, model, backend, created_at, updated_at
+  - MessageRow: id, conversation_id, role, content, sources (JSONB), trace_id, span_id, created_at
+  - init_db(): CREATE TABLE IF NOT EXISTS both tables + indexes (non-fatal if DATABASE_URL unset)
+  - CRUD: create_conversation, list_conversations (sorted updated_at DESC), get_conversation
+    (includes messages), delete_conversation, save_messages (user+assistant pair, non-fatal)
+  - Gracefully disabled when DATABASE_URL env var is unset
+
+  services/agent-api/src/main.py:
+  - init_db() called in lifespan (non-fatal exception handling)
+  - POST /query: reads X-Conversation-ID + X-User-ID headers; calls save_messages() when both set
+  - New endpoints: POST /conversations, GET /conversations, GET /conversations/{id},
+    DELETE /conversations/{id}
+
+  services/agent-api/pyproject.toml: added sqlalchemy>=2.0.0, psycopg2-binary>=2.9.0
+
+  services/agent-api-dotnet/Services/ConversationService.cs — Npgsql port of conversations.py:
+  - Same table schema as Python (conversations + messages)
+  - Uses NpgsqlDataSource (connection pool); gracefully disabled when DATABASE_URL unset
+  - CRUD: InitializeAsync, CreateConversationAsync, ListConversationsAsync,
+    GetConversationAsync, DeleteConversationAsync, SaveMessagesAsync
+  - StoredMessage record (avoids collision with MemoryService.ConversationMessage)
+
+  services/agent-api-dotnet/InfraAdvisor.AgentApi.csproj: added Npgsql 9.0.3 + Npgsql.OpenTelemetry 9.0.3
+  services/agent-api-dotnet/Observability/TelemetrySetup.cs: added .AddNpgsql() for DB span tracing
+  services/agent-api-dotnet/Program.cs:
+  - ConversationService registered as singleton; InitializeAsync called on startup (non-fatal)
+  - POST /query: reads X-Conversation-ID + X-User-ID; calls SaveMessagesAsync when both set
+  - Conversation endpoints added: POST /conversations, GET /conversations,
+    GET /conversations/{id}, DELETE /conversations/{id}
+
+  services/ui/src/lib/api.ts:
+  - MODEL_STORAGE_KEY, getModel(), setModel() for localStorage model persistence
+  - sendQuery() accepts conversationId? + userId? → sends as X-Conversation-ID/X-User-ID headers
+  - Types: ConversationMessage, ConversationSummary, ConversationDetail
+  - Functions: createConversation, listConversations, getConversation, deleteConversation
+
+  services/ui/src/components/ConversationSidebar.tsx — 220px left rail:
+  - Lists conversations sorted by updated_at (relative timestamps)
+  - Delete button (opacity reveal on hover), active highlight (blue.50 + blue.500 left border)
+  - "New conversation" IconButton in header; refreshTrigger prop to force list refresh
+
+  services/ui/src/components/Chat.tsx:
+  - selectedModel initialized from getModel() / persisted via setModel()
+  - conversationId state; lazily created on first message submit via createConversation()
+  - handleSelectConversation() loads past conversation (messages/model/backend/citations)
+  - ConversationSidebar inserted as leftmost child of body Flex
+
+  k8s/agent-api/configmap.yaml: DD_DBM_PROPAGATION_MODE: "full" (ddtrace SQL comment injection)
+  k8s/agent-api-dotnet/configmap.yaml: DD_DBM_PROPAGATION_MODE: "full" (Npgsql OTel DB tracing)
+
+  k8s/secrets/agent-api-secret.yaml: added DATABASE_URL: PLACEHOLDER
+  k8s/secrets/agent-api-dotnet-secret.yaml: added DATABASE_URL: PLACEHOLDER
+
+  Makefile:
+  - create-agent-api-secret: conditionally includes DATABASE_URL (warns if unset)
+  - create-agent-api-dotnet-secret: new target (AZURE keys + DATABASE_URL)
+  - create-secrets: includes create-agent-api-dotnet-secret
+  - deploy-k8s: calls create-agent-api-dotnet-secret
+
+  Verified:
+  [x] dotnet build: 0 errors (8 moderate pre-existing warnings, 0 new)
+  [x] ConversationService.cs: Npgsql 9.0.3 resolves; NpgsqlDataSource builds clean
+  [x] StoredMessage record avoids CS0101 collision with MemoryService.ConversationMessage
+  [x] TelemetrySetup.cs: .AddNpgsql() present for Npgsql OTel DB span tracing
+  [x] Program.cs: ConversationService singleton + InitializeAsync + 4 conversation endpoints
+  [x] POST /query: X-Conversation-ID/X-User-ID headers wired to SaveMessagesAsync
+  [x] DD_DBM_PROPAGATION_MODE: "full" in both agent-api and agent-api-dotnet configmaps
+  [x] Makefile: create-agent-api-dotnet-secret target present + wired into create-secrets/deploy-k8s
+
+[2026-05-04] Feature: .NET mcp-server-dotnet — full port of Python MCP server (11 tools)
+  services/mcp-server-dotnet/ — 23-file .NET 10 MCP server using ModelContextProtocol.AspNetCore:
+  - Program.cs: MapMcp("/mcp") + GET /health; all 11 tools registered with WithHttpTransport()
+  - Tools/ (11 files): BridgeConditionTool, DisasterHistoryTool, EnergyInfrastructureTool,
+    WaterInfrastructureTool, ProjectKnowledgeTool, DraftDocumentTool, ErcotEnergyTool,
+    TxDotOpenDataTool, ProcurementOpportunitiesTool, ContractAwardsTool, WebProcurementSearchTool
+  - Templates/ (4 Scriban .md files): cost_estimate_scaffold, funding_positioning_memo,
+    risk_summary, scope_of_work — converted from Jinja2, loaded as EmbeddedResource
+  - Observability/TelemetrySetup.cs: OTel traces + metrics, OTLP HTTP to DDOT at port 4318,
+    service name infratools-mcp-dotnet
+  - InfraAdvisor.McpServer.csproj: ModelContextProtocol.AspNetCore 0.2.0-preview.3,
+    Azure.Search.Documents 11.7.0, Azure.AI.OpenAI 2.2.0-beta.4, Scriban 7.1.0 (CVE-clean),
+    OTel 1.10.0; net10.0 target
+  - Dockerfile: multi-stage sdk:10.0 → aspnet:10.0, port 8000, ASPNETCORE_URLS=http://+:8000
+
+  Strict routing isolation (Python ↔ .NET, no cross-talk):
+  - k8s/agent-api/configmap.yaml: MCP_SERVER_URL → mcp-server.infra-advisor (unchanged)
+  - k8s/agent-api-dotnet/configmap.yaml: MCP_SERVER_URL → mcp-server-dotnet.infra-advisor
+
+  k8s/mcp-server-dotnet/ — deployment, service, configmap mirroring Python mcp-server:
+  - image: ghcr.io/kyletaylored/infra-advisor-ai/mcp-server-dotnet:latest
+  - OTel env: OTEL_EXPORTER_OTLP_ENDPOINT → datadog-agent.datadog.svc.cluster.local:4318
+  - No DD_* / ddtrace vars; uses OTel only
+
+  k8s/secrets/mcp-server-dotnet-secret.yaml: placeholder (8 keys: same as mcp-server-secret)
+
+  CI/CD updates:
+  - .github/workflows/ci.yml: test-dotnet job now uses matrix [agent-api-dotnet, mcp-server-dotnet]
+    (dotnet restore + build + test with per-service artifact upload)
+  - .github/workflows/build-push.yml: mcp-server-dotnet added to all 6 touch-points
+    (changes detection, path filter, build matrix, deploy if-condition, rollout restart/wait)
+
+  Verified:
+  [x] dotnet build -c Release: 0 errors (6 moderate OTel warnings, no Scriban CVEs)
+  [x] All 11 tool files present in Tools/; _source fields match Python exactly
+  [x] All 4 Scriban templates present in Templates/; Jinja2 → Scriban syntax converted
+  [x] k8s/agent-api-dotnet/configmap.yaml MCP_SERVER_URL → mcp-server-dotnet
+  [x] k8s/agent-api/configmap.yaml MCP_SERVER_URL unchanged (still points to Python MCP)
+  [x] k8s/mcp-server-dotnet/: deployment, service, configmap present
+  [x] ci.yml test-dotnet uses matrix strategy covering both dotnet services
+  [x] build-push.yml mcp-server-dotnet present in all 6 required locations
+
+[2026-05-04] Feature: .NET agent-api-dotnet service + DDOT OTel collector + UI backend toggle
+  services/agent-api-dotnet/ — full ASP.NET Core 8 port of the Python agent-api:
+  - Program.cs: all 9 endpoints (POST /query, POST /suggestions, GET /suggestions/initial,
+    GET /models, GET /tools, POST /tools/{name}, POST /feedback, GET /health, DELETE /session/{id})
+  - Services/AgentService.cs: router LLM call (JSON mode) → 5-specialist ReAct loop
+    (tool-calling iteration up to 10 turns), faithfulness eval (fire-and-forget OTel metric),
+    source extraction from nested MCP tool result JSON
+  - Services/McpClientService.cs: JSON-RPC 2.0 HTTP client for MCP streamable-HTTP transport
+  - Services/MemoryService.cs: Redis session memory (key pattern, 86400s TTL, 10-pair window)
+  - Services/SuggestionService.cs: Redis pool (80 max, 20 min trigger), 4 batch prompts,
+    contextual + fallback suggestions, ParseSuggestions with regex fallback
+  - Services/KafkaConsumerService.cs: BackgroundService, consumer group infra-advisor-agent-api,
+    topics infra.query.events → infra.eval.results (non-fatal if Kafka unavailable)
+  - Services/SuggestionPoolMaintenanceService.cs: BackgroundService, 30-min refill loop
+  - Observability/TelemetrySetup.cs: OpenInference.Instrumentation.OpenAI + OTLP HTTP/protobuf
+    export to DDOT collector at port 4318; custom ActivitySource for router/specialist spans
+  - InfraAdvisor.AgentApi.csproj: Azure.AI.OpenAI 2.1.0, OpenInference.Instrumentation.OpenAI
+    1.4.0, OTel 1.9.0, StackExchange.Redis 2.8.16, Confluent.Kafka 2.6.0
+  - Dockerfile: multi-stage mcr.microsoft.com/dotnet/sdk:8.0 → aspnet:8.0, port 8001
+
+  k8s/agent-api-dotnet/ — deployment, service, configmap, HPA mirroring agent-api:
+  - image: ghcr.io/kyletaylored/infra-advisor-ai/agent-api-dotnet:latest
+  - OTel env: OTEL_EXPORTER_OTLP_ENDPOINT → datadog-agent.datadog.svc.cluster.local:4318
+  - No DD_LLMOBS_* vars; uses OTel/OpenInference instead of ddtrace
+
+  k8s/ddot-collector/ — Datadog agent with OTLP ingestion enabled:
+  - deployment.yaml: datadog/agent:latest in namespace datadog, ports 8126/8125/4317/4318
+  - service.yaml: ClusterIP named datadog-agent, exposes all 4 ports
+  - configmap.yaml: DD_OTLP_CONFIG_RECEIVER_PROTOCOLS_HTTP_ENDPOINT=0.0.0.0:4318
+  - secret.yaml: placeholder for DD_API_KEY
+
+  k8s/secrets/agent-api-dotnet-secret.yaml: placeholder for AZURE_OPENAI_ENDPOINT/API_KEY
+
+  services/ui/src/lib/api.ts:
+  - Added BackendType, getBackend(), setBackend() (persisted to localStorage key infra_advisor_backend)
+  - getApiBase() called per-request: "dotnet" → /api-dotnet, else /api
+  - All 6 fetch call sites updated to use getApiBase()
+
+  services/ui/src/components/Chat.tsx:
+  - Added selectedBackend state initialized from getBackend()
+  - Backend toggle group (Python / .NET) in input toolbar, same style as model selector
+  - Switching persists to localStorage, takes effect on next API call (no page reload)
+
+  services/ui/nginx.conf:
+  - Added /api-dotnet/ proxy block → agent-api-dotnet.infra-advisor.svc.cluster.local:8001
+
+  Verified:
+  [x] All .NET service files present: Program.cs, 5 Services, TelemetrySetup.cs, csproj, Dockerfile
+  [x] AgentService.cs: tool partitions, specialist prompts, router prompt match Python exactly
+  [x] OpenInference.NET v1.0.0 in csproj (correct package from nuget.org/packages/OpenInference.NET)
+  [x] AddOpenInferenceTelemetry() in TelemetrySetup + AddSource("OpenInference.NET") in OTel pipeline
+  [x] LlmTelemetry.StartLlmActivity/EndLlmActivity wrapping router + each specialist ReAct iteration
+  [x] OTLP HTTP protobuf export to datadog-agent.datadog.svc.cluster.local:4318
+  [x] k8s/agent-api-dotnet/: deployment, service, configmap, HPA all present
+  [x] k8s/ddot-collector/: deployment, service, configmap, secret all present
+  [x] NGINX /api-dotnet/ block present (grep confirmed)
+  [x] api.ts getApiBase() called per-request; all 6 fetch sites updated
+  [x] Chat.tsx backend toggle present (selectedBackend state + ButtonGroup)
+
+[2026-04-22] Fix: UI SEO meta tags — robots noindex/nofollow + banner image
+  services/ui/index.html:
+  - Changed robots meta from "index, follow" → "noindex, nofollow" (block all crawlers)
+  - Updated og:image and twitter:image to use /infra-banner.png (from public/infra-banner.png)
+  - Restored og:image:width/height (1200×630) and twitter:card "summary_large_image"
+  - Previously pointed at /banner.png (missing); now points at the actual file in public/
+
+  Verified:
+  [x] index.html: robots content="noindex, nofollow"
+  [x] og:image and twitter:image both reference /infra-banner.png
+  [x] twitter:card restored to summary_large_image
+
+[2026-04-22] Fix: Helm values — remove invalid dagProcessor.dags block
+  k8s/airflow/values.yaml:
+  - Removed dagProcessor.dags.persistence + dagProcessor.dags.gitSync block
+  - Schema error: "at '/dagProcessor': additional properties 'dags' not allowed"
+  - dagProcessor inherits top-level dags.persistence (azurefile-csi PVC) automatically
+  - CI kubectl cp sync step populates that same PVC — no separate git-sync needed
+
+  Verified:
+  [x] dagProcessor section contains only env: block — no dags: sub-key
+  [x] Top-level dags.persistence (azurefile-csi, ReadWriteMany, 1Gi) unchanged
+
+[2026-04-22] Fix: Datadog APM trace link — add spanID query parameter
+  services/ui/src/components/Chat.tsx:
+  - Extended APM link href from /apm/trace/{traceId} → /apm/trace/{traceId}?spanID={spanId}
+  - spanId already present in MessageActionsProps and message state; just needed in URL
+  - Matches Datadog URL format: https://us3.datadoghq.com/apm/trace/{id}?spanID={spanId}
+
+  Verified:
+  [x] TypeScript build: 0 errors (npx tsc --noEmit)
+  [x] Link conditionally appends ?spanID= only when spanId is truthy
+
+[2026-04-22] Docs: README full rewrite to match current architecture
+  README.md updated to reflect actual project state:
+  - Services: added auth-api (was missing); 6 services total
+  - MCP tools: 6 → 11; all tools named
+  - Added multi-agent routing diagram (router → 5 specialists)
+  - Airflow DAGs: "5 sources + init" → 9 DAGs
+  - Models: gpt-4.1-mini / gpt-4.1 / gpt-5.4-mini (removed gpt-4.1-nano reference)
+  - Infrastructure table: added PostgreSQL, MailHog
+  - Quick Start: replaced manual kubectl secret commands with make create-secrets
+  - Prerequisites: added SAM.gov and Tavily API keys
+  - Datadog coverage: new table (APM, LLMObs, RUM, DSM, DJM, CSPM); 5 dashboards, 3 monitors
+  - Design decisions: added multi-agent routing, RUM↔LLMObs linking, Redis suggestion pool
+  - Eval pipeline: added user_feedback evaluation signal
+
+  Verified:
+  [x] All service counts, tool counts, and DAG counts match actual codebase
+  [x] make create-secrets replaces manual kubectl commands in Quick Start
+
+[2026-04-21] Fix: DAG files — move third-party imports inside function bodies + schedule_interval → schedule
+  All 9 DAG files under services/ingestion/dags/ refactored for Airflow 3 + dag-processor compat:
+  - Removed top-level `import ddtrace.auto` (dag-processor minimal env has no ddtrace)
+  - Moved all third-party imports (pandas, requests, tiktoken, azure.*, openai, _dd_blob)
+    inside the task function bodies that use them; top level now has stdlib + airflow only
+  - Changed `schedule_interval=` → `schedule=` in all 9 DAG constructors (Airflow 2 → 3)
+  Files changed:
+    nbi_refresh.py, fema_refresh.py, eia_refresh.py, twdb_water_plan_refresh.py,
+    samgov_awards_refresh.py, census_market_intelligence_refresh.py,
+    spark_feature_engineering.py, knowledge_base_init.py, public_docs_ingestion.py
+  _dd_blob.py: no changes needed (already clean — ddtrace inside try/except in function body)
+
+  Verified:
+  [x] grep "^import ddtrace" dags/*.py → 0 results
+  [x] grep "schedule_interval" dags/*.py → 0 results (only in comments)
+  [x] All third-party imports are inside def bodies; top level is stdlib + airflow only
