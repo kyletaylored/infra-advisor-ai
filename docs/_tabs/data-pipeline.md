@@ -1,10 +1,9 @@
 ---
 title: Data Pipeline
-nav_order: 4
-has_children: true
+icon: fas fa-database
+order: 4
+permalink: /data-pipeline/
 ---
-
-# Data Pipeline
 
 Five Apache Airflow DAGs ingest real US government data on a recurring schedule, store raw records in Azure Blob Storage as Parquet files, and index searchable chunks into Azure AI Search. Together they maintain a continuously updated knowledge base of 600k+ infrastructure records.
 

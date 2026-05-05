@@ -1,10 +1,9 @@
 ---
 title: Development
-nav_order: 7
-has_children: true
+icon: fas fa-code
+order: 7
+permalink: /development/
 ---
-
-# Development
 
 Everything needed to run InfraAdvisor AI locally, write and run tests, and follow the project's coding standards.
 
@@ -23,20 +22,24 @@ infra-advisor-ai/
   k8s/                     Kubernetes manifests by service/system
     airflow/               Helm values.yaml
     agent-api/             Deployment, Service, HPA, ConfigMap
+    agent-api-dotnet/      Deployment, Service, HPA, ConfigMap (.NET)
     auth-api/              Deployment, Service, ConfigMap
     kafka/                 Strimzi KafkaCluster + KafkaTopics
     mailhog/               Deployment, Service
     mcp-server/            Deployment, Service, ConfigMap
+    mcp-server-dotnet/     Deployment, Service, ConfigMap (.NET)
     postgres/              StatefulSet, Service, PVC
     redis/                 Deployment, Service
     secrets/               Secret templates (not committed with values)
     ui/                    Deployment, Service, Ingress
   services/
     agent-api/             Python FastAPI + LangChain
+    agent-api-dotnet/      ASP.NET Core 10 + OpenTelemetry
     auth-api/              Python FastAPI + SQLAlchemy
     ingestion/             Airflow DAGs + helpers
     load-generator/        Python CronJob
     mcp-server/            Python FastMCP
+    mcp-server-dotnet/     .NET ModelContextProtocol.AspNetCore
     ui/                    React TypeScript
   specs/                   Product Requirements Document
   Makefile                 All deployment and build automation

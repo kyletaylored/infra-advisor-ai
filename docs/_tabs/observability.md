@@ -1,10 +1,9 @@
 ---
 title: Observability
-nav_order: 5
-has_children: true
+icon: fas fa-chart-line
+order: 5
+permalink: /observability/
 ---
-
-# Observability
 
 InfraAdvisor AI is instrumented end-to-end with Datadog. Every layer — browser interactions, HTTP requests, LLM reasoning, tool calls, database queries, data pipelines, and Kafka streams — produces correlated telemetry.
 

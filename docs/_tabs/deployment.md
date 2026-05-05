@@ -1,10 +1,9 @@
 ---
 title: Deployment
-nav_order: 6
-has_children: true
+icon: fas fa-rocket
+order: 6
+permalink: /deployment/
 ---
-
-# Deployment
 
 InfraAdvisor AI deploys to Azure Kubernetes Service in two phases: first provision Azure resources with Bicep, then apply Kubernetes manifests and Helm releases. A preflight `check-env` step validates all required environment variables before any cluster operations run.
 
@@ -54,7 +53,8 @@ Phase 3: Data Initialization
 | `make create-secrets` | Create all K8s secrets at once |
 | `make create-ghcr-secret` | GHCR image pull secret |
 | `make create-mcp-server-secret` | Azure Search, OpenAI, EIA, SAM.gov, Tavily |
-| `make create-agent-api-secret` | Azure OpenAI endpoint + key |
+| `make create-agent-api-secret` | Azure OpenAI endpoint + key (+ optional DATABASE_URL) |
+| `make create-agent-api-dotnet-secret` | Azure OpenAI endpoint + key (+ optional DATABASE_URL) |
 | `make create-auth-api-secret` | DATABASE_URL, JWT_SECRET |
 | `make create-postgres-secret` | Postgres credentials |
 | `make create-dd-postgres-secret` | Datadog DBM monitoring user password |

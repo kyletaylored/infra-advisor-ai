@@ -1,0 +1,74 @@
+repo: kyletaylored/infra-advisor-ai
+branch: main
+media: docs/assets/img
+content:
+  - name: posts
+    label: Posts
+    type: collection
+    path: docs/_posts
+    view:
+      fields: [title, date, categories]
+    fields:
+      - { name: title, label: Title, type: string }
+      - { name: date, label: Date, type: date }
+      - { name: categories, label: Categories, type: list }
+      - { name: tags, label: Tags, type: list }
+      - { name: body, label: Body, type: rich-text }
+
+  - name: services
+    label: Services
+    type: collection
+    path: docs/services
+    fields:
+      - { name: title, label: Title, type: string }
+      - { name: body, label: Body, type: rich-text }
+
+  - name: architecture
+    label: Architecture
+    type: collection
+    path: docs/architecture
+    fields:
+      - { name: title, label: Title, type: string }
+      - { name: body, label: Body, type: rich-text }
+
+  - name: observability
+    label: Observability
+    type: collection
+    path: docs/observability
+    fields:
+      - { name: title, label: Title, type: string }
+      - { name: body, label: Body, type: rich-text }
+
+  - name: data-pipeline
+    label: Data Pipeline
+    type: collection
+    path: docs/data-pipeline
+    fields:
+      - { name: title, label: Title, type: string }
+      - { name: body, label: Body, type: rich-text }
+
+  - name: deployment
+    label: Deployment
+    type: collection
+    path: docs/deployment
+    fields:
+      - { name: title, label: Title, type: string }
+      - { name: body, label: Body, type: rich-text }
+
+  - name: development
+    label: Development
+    type: collection
+    path: docs/development
+    fields:
+      - { name: title, label: Title, type: string }
+      - { name: body, label: Body, type: rich-text }
+
+  - name: tabs
+    label: Navigation Tabs
+    type: collection
+    path: docs/_tabs
+    fields:
+      - { name: title, label: Title, type: string }
+      - { name: icon, label: "Font Awesome icon class", type: string }
+      - { name: order, label: "Sidebar order", type: number }
+      - { name: body, label: Body, type: rich-text }

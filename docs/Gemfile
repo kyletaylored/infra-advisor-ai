@@ -1,0 +1,5 @@
+source "https://rubygems.org"
+
+# Chirpy theme — includes jekyll-archives, jekyll-sitemap, jekyll-seo-tag,
+# jekyll-feed, jekyll-paginate, jekyll-redirect-from, rouge, etc.
+gem "jekyll-theme-chirpy", "~> 7.2"

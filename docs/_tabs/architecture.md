@@ -1,10 +1,9 @@
 ---
 title: Architecture
-nav_order: 2
-has_children: true
+icon: fas fa-sitemap
+order: 2
+permalink: /architecture/
 ---
-
-# Architecture
 
 InfraAdvisor AI is a cloud-native microservices platform deployed on Azure Kubernetes Service. Six purpose-built services work together to ingest government data, reason over it with a multi-agent LLM pipeline, and deliver cited answers through a consultant-facing web interface.
 

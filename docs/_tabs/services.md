@@ -1,10 +1,9 @@
 ---
 title: Services
-nav_order: 3
-has_children: true
+icon: fas fa-cubes
+order: 3
+permalink: /services/
 ---
-
-# Services
 
 InfraAdvisor AI runs seven microservices plus an Airflow ingestion workload, all containerized and deployed on AKS. This section documents each service's API, design decisions, and observability instrumentation.
 
