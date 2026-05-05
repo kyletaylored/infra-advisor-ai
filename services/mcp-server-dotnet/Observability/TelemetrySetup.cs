@@ -34,7 +34,7 @@ public static class TelemetrySetup
                 .AddHttpClientInstrumentation()
                 .AddMeter(ActivitySourceName)
                 .AddOtlpExporter(otlp => {
-                    otlp.Endpoint = new Uri(otlpEndpoint);
+                    otlp.Endpoint = new Uri($"{otlpEndpoint.TrimEnd('/')}/v1/metrics");
                     otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
                 })
             );
