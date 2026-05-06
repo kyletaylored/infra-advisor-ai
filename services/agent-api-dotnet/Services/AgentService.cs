@@ -5,7 +5,7 @@ using Azure;
 using Azure.AI.OpenAI;
 using InfraAdvisor.AgentApi.Models;
 using OpenAI.Chat;
-using OpenInference.NET.Core;
+using InfraAdvisor.AgentApi.Observability;
 
 namespace InfraAdvisor.AgentApi.Services;
 
@@ -321,7 +321,8 @@ public class AgentService
 
                 if (completion.FinishReason == ChatFinishReason.ToolCalls)
                 {
-                    LlmTelemetry.EndLlmActivity(llmSpan, "tool_calls", true, iterSw.ElapsedMilliseconds);
+                    LlmTelemetry.EndLlmActivity(llmSpan, "tool_calls", true, iterSw.ElapsedMilliseconds,
+                        completion.Usage?.InputTokenCount ?? 0, completion.Usage?.OutputTokenCount ?? 0);
                     messages.Add(new AssistantChatMessage(completion));
 
                     foreach (var toolCall in completion.ToolCalls)
@@ -350,13 +351,15 @@ public class AgentService
                 else if (completion.FinishReason == ChatFinishReason.Stop)
                 {
                     answer = completion.Content.Count > 0 ? completion.Content[0].Text : "";
-                    LlmTelemetry.EndLlmActivity(llmSpan, answer.Length > 500 ? answer[..500] : answer, true, iterSw.ElapsedMilliseconds);
+                    LlmTelemetry.EndLlmActivity(llmSpan, answer.Length > 500 ? answer[..500] : answer, true, iterSw.ElapsedMilliseconds,
+                        completion.Usage?.InputTokenCount ?? 0, completion.Usage?.OutputTokenCount ?? 0);
                     break;
                 }
                 else
                 {
                     _logger.LogWarning("ReAct loop ended with finish reason: {Reason}", completion.FinishReason);
-                    LlmTelemetry.EndLlmActivity(llmSpan, completion.FinishReason.ToString(), false, iterSw.ElapsedMilliseconds);
+                    LlmTelemetry.EndLlmActivity(llmSpan, completion.FinishReason.ToString(), false, iterSw.ElapsedMilliseconds,
+                        completion.Usage?.InputTokenCount ?? 0, completion.Usage?.OutputTokenCount ?? 0);
                     break;
                 }
             }
@@ -451,7 +454,9 @@ public class AgentService
                 activity: llmActivity,
                 response: specialist,
                 isSuccess: true,
-                latencyMs: sw.ElapsedMilliseconds);
+                latencyMs: sw.ElapsedMilliseconds,
+                inputTokens: response.Value.Usage?.InputTokenCount ?? 0,
+                outputTokens: response.Value.Usage?.OutputTokenCount ?? 0);
 
             return (specialist, handoffContext);
         }
