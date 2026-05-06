@@ -1,0 +1,16 @@
+{
+  "name": "infra-advisor-ai-docs",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "astro": "^6.2.2",
+    "@astrojs/starlight": "^0.38.3",
+    "lucode-starlight": "^0.1.2"
+  }
+}
