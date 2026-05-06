@@ -4,8 +4,12 @@ namespace InfraAdvisor.AgentApi.Observability;
 
 public static class LlmTelemetry
 {
+    // Use the same ActivitySource name as router/specialist spans — that source is
+    // already captured by the DD bridge listener, so LLM spans appear in the same trace.
+    // A separate source name ("infra-advisor.llm") gets no listener when DD_TRACE_OTEL_ENABLED
+    // is active without an explicit WithTracing().AddSource() registration.
     public static readonly ActivitySource ActivitySource =
-        new("infra-advisor.llm", "1.0.0");
+        new(TelemetrySetup.ActivitySourceName, "1.0.0");
 
     public static Activity? StartLlmActivity(
         string modelName,

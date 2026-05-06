@@ -18,16 +18,19 @@ static string Env(string key, string? fallback = null) =>
 static string EnvOr(string key, string fallback) =>
     Environment.GetEnvironmentVariable(key) ?? fallback;
 
-// OTel trace IDs are 128-bit hex; DD indexes by lower 64 bits as uint64 decimal.
-static string? ToDdTraceId(Activity? activity)
+// Prefer the x-datadog-trace-id request header (RUM injects the authoritative 64-bit
+// decimal DD trace ID). Fall back to converting OTel lower-64-bit hex to decimal.
+static string? GetDdTraceId(HttpContext ctx, Activity? activity)
 {
+    var header = ctx.Request.Headers["x-datadog-trace-id"].FirstOrDefault();
+    if (!string.IsNullOrWhiteSpace(header)) return header;
     var hex = activity?.TraceId.ToString();
     if (hex is not { Length: 32 }) return hex;
     return ulong.TryParse(hex[16..], System.Globalization.NumberStyles.HexNumber, null, out var lo)
         ? lo.ToString() : hex;
 }
 
-static string? ToDdSpanId(Activity? activity)
+static string? GetDdSpanId(Activity? activity)
 {
     var hex = activity?.SpanId.ToString();
     if (hex is null) return null;
@@ -227,7 +230,7 @@ app.MapPost("/query", async (
     }
     catch (Exception ex)
     {
-        var traceIdErr = ToDdTraceId(Activity.Current);
+        var traceIdErr = GetDdTraceId(httpContext, Activity.Current);
         return Results.Problem(detail: ex.Message, statusCode: 500,
             extensions: new Dictionary<string, object?> { ["trace_id"] = traceIdErr });
     }
@@ -235,8 +238,8 @@ app.MapPost("/query", async (
     await memoryService.AppendExchangeAsync(sessionId, body.Query, result.Answer);
     await memoryService.SetSessionModelAsync(sessionId, deployment);
 
-    var traceId = ToDdTraceId(Activity.Current);
-    var spanId = ToDdSpanId(Activity.Current);
+    var traceId = GetDdTraceId(httpContext, Activity.Current);
+    var spanId = GetDdSpanId(Activity.Current);
 
     if (!string.IsNullOrWhiteSpace(conversationId) && !string.IsNullOrWhiteSpace(userId))
     {
