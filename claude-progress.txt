@@ -1,3 +1,38 @@
+[2026-05-05] Fix: LLM Observability spans — replace OpenInference with gen_ai.* + DD_LLMOBS_ENABLED
+  Root cause: OpenInference.NET is explicitly NOT supported by Datadog LLM Observability (per dd-otel.md).
+  The previous implementation used OpenInference.NET.Core.LlmTelemetry which emits spans under
+  ActivitySource "OpenInference.NET" — Datadog ignores these for LLM Observability purposes.
+
+  1. k8s/agent-api-dotnet/configmap.yaml:
+     - Added DD_LLMOBS_ENABLED: "1" — enables DD .NET tracer v3 auto-instrumentation of
+       Azure OpenAI ChatClient.CompleteChatAsync() calls → creates LLM Observability spans
+     - Added DD_LLMOBS_ML_APP: "infra-advisor" — required ML app name for LLM Observability
+
+  2. services/agent-api-dotnet/Observability/LlmTelemetry.cs — restored with OTel 1.37+ gen_ai.* attributes:
+     - ActivitySource "infra-advisor.llm" (DD SDK bridge captures all ActivitySources automatically)
+     - gen_ai.operation.name = "chat"
+     - gen_ai.system = provider (e.g. "azure")
+     - gen_ai.request.model = model name
+     - gen_ai.prompt.0.role / gen_ai.prompt.0.content = input (OpenLLMetry fallback format)
+     - gen_ai.completion.0.role / gen_ai.completion.0.content = output
+     - gen_ai.usage.input_tokens / gen_ai.usage.output_tokens = token counts (optional)
+     - gen_ai.conversation.id = session ID (optional)
+
+  3. services/agent-api-dotnet/Services/AgentService.cs:
+     - Reverted import: OpenInference.NET.Core → InfraAdvisor.AgentApi.Observability (custom class)
+     - All 4 EndLlmActivity call sites updated to pass completion.Usage?.InputTokenCount/OutputTokenCount
+       (router + 3 ReAct loop branches: ToolCalls, Stop, other finish reasons)
+
+  Committed b442f4b; pushed; CI built new image + deployed to cluster.
+  Configmap applied immediately; pod restarted to pick up DD_LLMOBS_ENABLED before image build.
+
+  Verified:
+  [x] kubectl exec: DD_LLMOBS_ENABLED=1, DD_LLMOBS_ML_APP=infra-advisor, DD_TRACE_OTEL_ENABLED=true confirmed
+  [x] Pod 1/1 Running after configmap restart (agent-api-dotnet-698765bc88-rbq4l)
+  [x] CI: b442f4b build completed; deploy step "Rolling restart changed deployments" succeeded
+  [x] Startup logs: ConversationService DB ready, MCP connected, LLM connected — no errors
+  [~] LLM spans in Datadog LLMObs — pending verification via live query
+
 [2026-05-05] Fix: Message persistence (NpgsqlBatch) + OpenInference.NET wiring
   Two root causes:
 
