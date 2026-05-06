@@ -1,3 +1,34 @@
+[2026-05-06] Fix: LLM spans (wrong ActivitySource) + trace ID (x-datadog-trace-id header)
+  Two root causes found after deployment revealed no LLM spans and trace ID still unresolvable:
+
+  1. LLM spans completely absent — services/agent-api-dotnet/Observability/LlmTelemetry.cs:
+     - ActivitySource was "infra-advisor.llm" — a name with no registered listener
+     - ActivitySource.StartActivity() returns null when nothing listens; all SetTag/EndLlmActivity
+       calls were no-ops and no spans were ever emitted
+     - Root cause: DD_TRACE_OTEL_ENABLED=true bridge registers a listener for sources it discovers,
+       but "infra-advisor.llm" was never referenced anywhere the DD bridge could discover it
+     - Fixed: use TelemetrySetup.ActivitySourceName ("infra-advisor-agent-api-dotnet") — the same
+       source name router/specialist spans use, which the DD bridge already captures (proven by
+       those spans appearing in the distributed trace)
+
+  2. Trace ID mismatch — services/agent-api-dotnet/Program.cs:
+     - x-datadog-trace-id request header is the authoritative 64-bit decimal Datadog trace ID
+       injected by the RUM SDK — exactly the format the APM URL needs
+     - Previous ToDdTraceId() conversion (OTel 128-bit hex → lower-64-bit decimal) was unreliable
+       because 128-bit trace IDs from newer RUM SDK versions have non-zero upper bits
+     - Renamed to GetDdTraceId(ctx, activity): reads x-datadog-trace-id header first,
+       falls back to OTel hex conversion only for non-RUM requests (test tools, direct API calls)
+     - GetDdSpanId(): unchanged, still derives from Activity.SpanId hex → decimal
+
+  Committed dbb82c7; pushed; CI building new agent-api-dotnet image.
+
+  Verified:
+  [x] dotnet build: 0 errors after LlmTelemetry.cs + Program.cs changes
+  [x] LlmTelemetry.ActivitySource now uses ActivitySourceName = "infra-advisor-agent-api-dotnet"
+  [x] GetDdTraceId reads x-datadog-trace-id header before OTel fallback
+  [~] LLM spans in APM: pending deployment — gen_ai.* spans should now appear in distributed trace
+  [~] Trace ID link from UI → Datadog APM: pending deployment — x-datadog-trace-id should resolve
+
 [2026-05-06] Fix: LLM span trace correlation — DD trace ID format + startup ping + Kafka eval tagging
   Three root causes why LLM spans were not tied to user queries and trace links were broken:
 
