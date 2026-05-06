@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Confluent.Kafka;
 using InfraAdvisor.AgentApi.Models;
+using InfraAdvisor.AgentApi.Observability;
 
 namespace InfraAdvisor.AgentApi.Services;
 
@@ -94,13 +96,20 @@ public class KafkaConsumerService : BackgroundService
 
                 if (evt == null) continue;
 
-                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var sw = Stopwatch.StartNew();
                 AgentResult? result = null;
 
                 try
                 {
                     using var scope = _serviceProvider.CreateScope();
                     var agentService = scope.ServiceProvider.GetRequiredService<AgentService>();
+                    // Run within a clearly-labelled eval activity so DD LLMObs spans
+                    // from this background re-run are distinguishable from user queries.
+                    using var evalActivity = LlmTelemetry.ActivitySource.StartActivity(
+                        "eval.agent_run", ActivityKind.Internal);
+                    evalActivity?.SetTag("eval.query_id", evt.QueryId);
+                    evalActivity?.SetTag("eval.session_id", evt.SessionId);
+                    evalActivity?.SetTag("eval.source", "kafka");
                     result = await agentService.RunAgentAsync(
                         query: evt.Query,
                         sessionId: evt.SessionId,

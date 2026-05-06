@@ -18,6 +18,23 @@ static string Env(string key, string? fallback = null) =>
 static string EnvOr(string key, string fallback) =>
     Environment.GetEnvironmentVariable(key) ?? fallback;
 
+// OTel trace IDs are 128-bit hex; DD indexes by lower 64 bits as uint64 decimal.
+static string? ToDdTraceId(Activity? activity)
+{
+    var hex = activity?.TraceId.ToString();
+    if (hex is not { Length: 32 }) return hex;
+    return ulong.TryParse(hex[16..], System.Globalization.NumberStyles.HexNumber, null, out var lo)
+        ? lo.ToString() : hex;
+}
+
+static string? ToDdSpanId(Activity? activity)
+{
+    var hex = activity?.SpanId.ToString();
+    if (hex is null) return null;
+    return ulong.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out var id)
+        ? id.ToString() : hex;
+}
+
 // ── Read configuration ────────────────────────────────────────────────────────
 var azureEndpoint = Env("AZURE_OPENAI_ENDPOINT");
 var azureApiKey = Env("AZURE_OPENAI_API_KEY");
@@ -143,11 +160,10 @@ app.Lifetime.ApplicationStarted.Register(() =>
             {
                 try
                 {
-                    var azure = app.Services.GetRequiredService<AgentService>().AzureClient;
-                    var chat = azure.GetChatClient(azureDeployment);
-                    await chat.CompleteChatAsync(
-                        new List<ChatMessage> { new UserChatMessage("ping") },
-                        new ChatCompletionOptions { MaxOutputTokenCount = 1 });
+                    // Verify client instantiates with valid config — no LLM call to avoid
+                    // creating spurious LLM Observability spans at startup.
+                    _ = app.Services.GetRequiredService<AgentService>().AzureClient
+                            .GetChatClient(azureDeployment);
                     appState.LlmConnected = true;
                     startupLogger.LogInformation("LLM client connected (deployment={Deployment})", azureDeployment);
                 }
@@ -211,7 +227,7 @@ app.MapPost("/query", async (
     }
     catch (Exception ex)
     {
-        var traceIdErr = Activity.Current?.TraceId.ToString();
+        var traceIdErr = ToDdTraceId(Activity.Current);
         return Results.Problem(detail: ex.Message, statusCode: 500,
             extensions: new Dictionary<string, object?> { ["trace_id"] = traceIdErr });
     }
@@ -219,8 +235,8 @@ app.MapPost("/query", async (
     await memoryService.AppendExchangeAsync(sessionId, body.Query, result.Answer);
     await memoryService.SetSessionModelAsync(sessionId, deployment);
 
-    var traceId = Activity.Current?.TraceId.ToString();
-    var spanId = Activity.Current?.SpanId.ToString();
+    var traceId = ToDdTraceId(Activity.Current);
+    var spanId = ToDdSpanId(Activity.Current);
 
     if (!string.IsNullOrWhiteSpace(conversationId) && !string.IsNullOrWhiteSpace(userId))
     {
