@@ -14,78 +14,89 @@ hero:
       variant: minimal
 ---
 
-**Infrastructure advisory at your fingertips.** InfraAdvisor AI is a production-grade, fully observable AI agent platform for architecture, engineering, construction, operations, and management (AECOM) consulting firms.
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import { ContainerSection } from 'lucode-starlight/components';
+import Mermaid from '../../components/Mermaid.astro';
 
----
-
-## What it does
+<ContainerSection>
 
 InfraAdvisor AI lets infrastructure consultants ask natural-language questions against real government datasets — bridge conditions, disaster history, energy capacity, water infrastructure, and federal procurement — and receive cited, synthesized answers in seconds.
 
-```
-"What are the lowest-rated bridges in Harris County, TX, by sufficiency score?"
+<CardGrid>
+  <Card title="Multi-agent reasoning" icon="rocket">
+    A router LLM routes each query to the right domain specialist. Each specialist works with a curated tool subset to reduce hallucination surface.
+  </Card>
+  <Card title="Live government data" icon="open-book">
+    5 Airflow pipelines ingest 615k+ records weekly from FHWA, FEMA, EIA, EPA, and TWDB into a hybrid vector + BM25 search index.
+  </Card>
+  <Card title="Full-stack observability" icon="magnifier">
+    Every layer instrumented with Datadog — APM, LLM Observability, RUM session replay, Data Streams, Data Jobs, and CSPM.
+  </Card>
+  <Card title="Dual implementations" icon="setting">
+    Python (FastAPI + LangChain + ddtrace) and .NET (ASP.NET Core 10 + OpenTelemetry) stacks run side-by-side. Switch between them in the UI.
+  </Card>
+</CardGrid>
 
-→ Calls FHWA NBI → ranks 18 records → returns structured table with citations
-```
+</ContainerSection>
 
-Key capabilities:
-
-- **Multi-agent reasoning:** A router LLM routes each query to the appropriate domain specialist (engineering, water/energy, business development, document drafting, or general). Each specialist works with a curated subset of tools to reduce hallucination surface.
-- **Live government data:** 5 Airflow pipelines ingest 615k+ records weekly from FHWA, FEMA, EIA, EPA, and TWDB into a hybrid vector + BM25 search index.
-- **Full-stack observability:** Every layer instrumented with Datadog — APM, LLM Observability, RUM session replay, Data Streams Monitoring, Data Jobs Monitoring, and CSPM.
-- **Session memory:** Redis-backed conversation history persists across page reloads (24-hour TTL).
-
----
+<ContainerSection>
 
 ## Architecture at a glance
 
-```
-Browser (React + Datadog RUM)
-  │  JWT auth  │  /api/query
-  ▼            ▼
-Auth API      Agent API ──── Redis (session memory)
-(Postgres)     │
-               │  MCP HTTP
-               ▼
-          MCP Server (11 tools)
-          ├── FHWA NBI ArcGIS
-          ├── OpenFEMA REST
-          ├── EIA API v2
-          ├── EPA SDWIS
-          ├── ERCOT public API
-          ├── TxDOT Open Data
-          ├── SAM.gov + grants.gov
-          ├── USASpending.gov
-          ├── Tavily web search
-          ├── Azure AI Search (knowledge base)
-          └── Jinja2 document templates
+<Mermaid code={`
+flowchart TD
+    Browser["Browser\\nReact + Datadog RUM"]
 
-Airflow (5 DAGs) ──► Azure Blob Storage ──► Azure AI Search
+    subgraph k8s["AKS · infra-advisor namespace"]
+        Auth["Auth API\\nFastAPI + PostgreSQL + JWT"]
+        AgentPy["Agent API (Python)\\nLangChain ReAct + LangGraph"]
+        AgentDN["Agent API (.NET)\\nASP.NET Core 10 + OTel"]
+        MCPPy["MCP Server (Python)\\n11 tools over MCP HTTP"]
+        MCPNet["MCP Server (.NET)\\n11 tools · .NET port"]
+        Redis["Redis\\nSession memory · 24h TTL"]
+        Kafka["Kafka (Strimzi)\\ninfra.query.events"]
+    end
 
-Load Generator ──► Kafka ──► Agent API (eval loop)
+    subgraph azure["Azure"]
+        Airflow["Airflow · 5 DAGs\\nFHWA · FEMA · EIA · TWDB · Synthetic"]
+        Blob["Blob Storage\\nParquet · date-partitioned"]
+        Search["AI Search\\n615k+ docs · hybrid BM25 + vector"]
+    end
 
-All pods ──► Datadog Agent (APM + logs + metrics + LLM Obs + DJM + DSM)
-```
+    DD["Datadog Agent\\nAPM · LLM Obs · RUM · DJM · DSM · CSPM"]
 
----
+    Browser --> Auth
+    Browser --> AgentPy & AgentDN
+    AgentPy --> MCPPy & Redis & Kafka
+    AgentDN --> MCPNet & Redis & Kafka
+    MCPPy & MCPNet --> Search
+    Airflow --> Blob --> Search
+    k8s --> DD
+`} />
 
-## Quick navigation
+</ContainerSection>
 
-| Section | Description |
-|---------|-------------|
-| [Architecture](/infra-advisor-ai/architecture/) | System design, service map, data flow |
-| [Services](/infra-advisor-ai/services/) | API reference for each microservice |
-| [Data Pipeline](/infra-advisor-ai/data-pipeline/) | Airflow DAGs and ingestion details |
-| [Observability](/infra-advisor-ai/observability/) | Datadog instrumentation across every layer |
-| [Deployment](/infra-advisor-ai/deployment/) | Prerequisites, secrets, step-by-step deploy |
-| [Development](/infra-advisor-ai/development/) | Local setup, testing, conventions |
+<ContainerSection>
 
----
+## Explore the docs
+
+<CardGrid>
+  <LinkCard title="Architecture" href="/infra-advisor-ai/architecture/" description="System design, service map, and data flow" />
+  <LinkCard title="Services" href="/infra-advisor-ai/services/" description="API reference for each microservice" />
+  <LinkCard title="Data Pipeline" href="/infra-advisor-ai/data-pipeline/" description="Airflow DAGs and ingestion details" />
+  <LinkCard title="Observability" href="/infra-advisor-ai/observability/" description="Datadog instrumentation across every layer" />
+  <LinkCard title="Deployment" href="/infra-advisor-ai/deployment/" description="Prerequisites, secrets, step-by-step deploy" />
+  <LinkCard title="Development" href="/infra-advisor-ai/development/" description="Local setup, testing, conventions" />
+</CardGrid>
+
+</ContainerSection>
+
+<ContainerSection>
 
 ## Technology stack
 
 | Layer | Technology |
-|-------|-----------|
+|---|---|
 | Cloud | Azure (AKS, OpenAI, AI Search, Blob Storage) |
 | Orchestration | Kubernetes 1.30 on AKS — 3× Standard_D2s_v3 nodes |
 | LLM inference | Azure OpenAI (gpt-4.1-mini, gpt-4.1) |
@@ -102,14 +113,18 @@ All pods ──► Datadog Agent (APM + logs + metrics + LLM Obs + DJM + DSM)
 | IaC | Azure Bicep + Helm + kubectl manifests |
 | CI/CD | GitHub Actions → GHCR → AKS rolling deploy |
 
----
+</ContainerSection>
+
+<ContainerSection>
 
 ## Live environment
 
 | Resource | URL |
-|----------|-----|
+|---|---|
 | Application | `https://infra-advisor-ai.kyletaylor.dev` |
 | Airflow UI | `https://infra-advisor-ai.kyletaylor.dev/airflow` |
 | MailHog (dev) | `https://infra-advisor-ai.kyletaylor.dev/mailhog` |
 | Azure resource group | `rg-tola-infra-advisor-ai` |
 | Container registry | `ghcr.io/kyletaylored/infra-advisor-ai` |
+
+</ContainerSection>
