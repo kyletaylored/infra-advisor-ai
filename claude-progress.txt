@@ -18,10 +18,11 @@
   - Kafka eval span wrapper pattern
   - Python vs .NET comparison table
   - Sidebar entry added to docs/astro.config.mjs under Observability section
-  Committed (pending); pushed (pending).
+  Committed 9a51126; pushed. Mermaid initial-render timing fix committed 6a0cd8c; pushed.
 
   Verified:
   [x] npm run build: 38 pages, 0 errors (llm-observability-dotnet/index.html present)
+  [x] git push: 9a51126 and 6a0cd8c both pushed to origin/main
   [~] Live page at kyletaylored.github.io/infra-advisor-ai/observability/llm-observability-dotnet/: pending CI
 
 [2026-05-06] Redesign docs home page with ContainerSection + architecture diagram
