@@ -90,6 +90,7 @@ export default defineConfig({
                         { label: 'Overview', slug: 'observability' },
                         { label: 'APM & Tracing', slug: 'observability/apm' },
                         { label: 'LLM Observability', slug: 'observability/llm-observability' },
+                        { label: 'LLM Observability (.NET)', slug: 'observability/llm-observability-dotnet' },
                         { label: 'RUM & Session Replay', slug: 'observability/rum' },
                         { label: 'Dashboards & Monitors', slug: 'observability/dashboards' },
                     ],

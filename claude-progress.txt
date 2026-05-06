@@ -1,3 +1,125 @@
+[2026-05-06] Document .NET LLM Observability instrumentation (deep-dive)
+  Created docs/src/content/docs/observability/llm-observability-dotnet.md — comprehensive
+  page explaining manual OTel instrumentation for LLMObs in the ASP.NET Core agent.
+
+  - Why manual: no ddtrace auto-instrumentation for Azure OpenAI SDK in .NET; must use
+    OpenTelemetry ActivitySource with gen_ai.* semantic conventions
+  - Dual export paths: (1) DD bridge global TracerProvider → APM at :8126 via DD_TRACE_OTEL_ENABLED;
+    (2) non-global Sdk.CreateTracerProviderBuilder() OTLP provider → LLMObs with headers
+    dd-api-key={DD_API_KEY},dd-otlp-source=llmobs
+  - Full annotated TelemetrySetup.cs and LlmTelemetry.cs code
+  - ActivitySource null-return gotcha: must use same ActivitySourceName as rest of service
+  - gen_ai.* attribute reference: operation.name, system, request.model, prompt/completion
+    content (role+content arrays), usage.input_tokens/output_tokens
+  - Span hierarchy ASCII tree: agent.query → router.select → specialist.run → llm.call
+  - Trace ID correlation: x-datadog-trace-id header (authoritative) + X-DD-RUM-Session-ID
+  - Prompt tracking: _dd.ml_obs.prompt_tracking JSON attribute
+  - Faithfulness score as OTel Histogram<double> metric (vs Python LLMObs.submit_evaluation())
+  - Kafka eval span wrapper pattern
+  - Python vs .NET comparison table
+  - Sidebar entry added to docs/astro.config.mjs under Observability section
+  Committed (pending); pushed (pending).
+
+  Verified:
+  [x] npm run build: 38 pages, 0 errors (llm-observability-dotnet/index.html present)
+  [~] Live page at kyletaylored.github.io/infra-advisor-ai/observability/llm-observability-dotnet/: pending CI
+
+[2026-05-06] Redesign docs home page with ContainerSection + architecture diagram
+  Replaced edge-to-edge flat content in docs/src/content/docs/index.mdx with Lucode's
+  ContainerSection layout and richer Starlight components.
+
+  - Wrapped all content blocks in <ContainerSection> from lucode-starlight/components
+    so each section gets proper max-width, padding, and Lucode container treatment
+  - "What it does" bullets → <CardGrid> of 4 <Card> components (multi-agent reasoning,
+    government data, observability, dual Python/.NET stacks)
+  - ASCII architecture diagram → Mermaid flowchart TD showing Browser → AKS namespace
+    (Python + .NET Agent/MCP stacks, Redis, Kafka) → Azure (Airflow, Blob, AI Search) →
+    Datadog Agent in a single view
+  - Navigation table → <CardGrid> of <LinkCard> components with descriptions
+  - Tech stack + live environment tables each in their own ContainerSection
+  Committed 93f6d09; pushed.
+
+  Verified:
+  [x] npm run build: 37 pages, 0 errors
+  [~] Live home page at kyletaylored.github.io/infra-advisor-ai/: pending CI deployment
+
+[2026-05-06] Convert data-flow code blocks to Mermaid diagrams
+  Replaced three ASCII/prose code blocks in docs/src/content/docs/architecture/data-flow.mdx
+  with interactive Mermaid diagrams rendered client-side via CDN.
+
+  - docs/src/components/Mermaid.astro: wrapper rendering <pre class="mermaid"> blocks;
+    uses Starlight's not-content class to avoid prose style conflicts
+  - docs/astro.config.mjs: Mermaid v11 ESM CDN script injected in head; reads
+    starlight-theme from localStorage for dark/light matching; re-runs on astro:page-load
+    to handle client-side navigation; no build-time browser/Chromium dependency
+  - data-flow.md → data-flow.mdx:
+      Query lifecycle  → sequenceDiagram (Browser→NGINX→AgentAPI→Router→Specialist→MCP→GovAPIs)
+      Ingestion pipeline → flowchart TD (Gov sources→Airflow 3-task pattern→Blob/AI Search)
+      Eval loop        → flowchart LR (LoadGen→Kafka→AgentAPI→FaithfulnessEval→Datadog)
+      Session memory   → converted ASCII code block to proper markdown table
+  Committed b98fa5c; pushed; CI queued (Publish docs to GitHub Pages).
+
+  Verified:
+  [x] npm run build: 37 pages, 0 errors after .md→.mdx rename + Mermaid component
+  [~] Live diagrams at kyletaylored.github.io/infra-advisor-ai/architecture/data-flow/: pending CI
+
+[2026-05-06] Migrate docs site from Jekyll/Chirpy to Astro Starlight + Lucode theme
+  Replaced Jekyll docs site with Astro Starlight using the lucode-starlight (shadcn/ui-inspired) theme.
+
+  - 37 content pages migrated from flat Jekyll layout to docs/src/content/docs/
+  - All Jekyll frontmatter stripped (icon, order, permalink, layout); title/description kept
+  - _tabs/*.md files repurposed as section index.md pages (architecture, services, etc.)
+  - docs/index.md converted to Starlight splash template with hero actions
+  - docs/astro.config.mjs: site=kyletaylored.github.io, base=/infra-advisor-ai,
+    8 sidebar sections, Lucode navLinks (Architecture, Services, Observability, Deployment, GitHub)
+  - .github/workflows/docs.yml: Ruby/Jekyll build replaced with withastro/action@v5.1.0
+  - deps: astro@6.2.2, @astrojs/starlight@0.38.3, lucode-starlight@0.1.2
+  - docs/.gitignore: excludes dist/, .astro/, node_modules/
+  - Local build verified: 37 pages generated, 0 errors
+
+  Committed f10d317; pushed; CI queued (Publish docs to GitHub Pages).
+
+  Verified:
+  [x] npm run build in docs/: 37 pages, 0 errors
+  [x] All 37 content pages present in src/content/docs/
+  [x] GitHub Actions workflow updated to withastro/action@v5.1.0
+  [~] Live site at kyletaylored.github.io/infra-advisor-ai: pending CI deployment
+
+[2026-05-05] Fix: Azure Search stream error + OTLP LLMObs export + prompt tracking
+  Three changes to fix LLMObs span visibility and Azure Search cancellation errors:
+
+  1. Azure Search ObjectDisposedException — mcp-server-dotnet/Tools/ProjectKnowledgeTool.cs +
+     WaterInfrastructureTool.cs:
+     - Azure SDK throws ObjectDisposedException mid-read when CancellationToken fires during
+       ResponseBodyPolicy.CopyToAsync() (HTTP response body buffering)
+     - Added catch (OperationCanceledException) { throw; } before generic catch to propagate
+       cancellation cleanly to MCP framework
+     - Added catch (ObjectDisposedException) when (cancellationToken.IsCancellationRequested) →
+       re-throw as OperationCanceledException so the MCP framework handles it correctly
+     - Also threaded CancellationToken into FetchTwdbProjects() and its SearchAsync() call
+
+  2. OTLP LLMObs TracerProvider — services/agent-api-dotnet/Observability/TelemetrySetup.cs:
+     - Added second non-global TracerProvider (Sdk.CreateTracerProviderBuilder()) that exports
+       spans to DD LLMObs via direct OTLP with headers: dd-api-key={DD_API_KEY},dd-otlp-source=llmobs
+     - Uses same ActivitySourceName as DD bridge so gen_ai.* spans reach both APM and LLMObs
+     - Reads DD_API_KEY from K8s secret (already there), OTEL_EXPORTER_OTLP_TRACES_ENDPOINT from
+       configmap (https://api.datadoghq.com), falls back to https://api.{DD_SITE}
+     - Registered as DI singleton for graceful disposal on app shutdown
+
+  3. Prompt tracking — services/agent-api-dotnet/Observability/LlmTelemetry.cs:
+     - Added _dd.ml_obs.prompt_tracking JSON attribute per dd-otel.md spec
+     - Fields: name=infra-advisor-{taskType}, version=v1, template={prompt}
+
+  configmap: added DD_SITE="datadoghq.com", OTEL_EXPORTER_OTLP_TRACES_ENDPOINT="https://api.datadoghq.com"
+  Committed 8c1723c; pushed; CI building new images.
+
+  Verified:
+  [x] dotnet build agent-api-dotnet: 0 errors
+  [x] dotnet build mcp-server-dotnet: 0 errors
+  [x] CI pipeline queued (runs 25414362488 / 25414362480)
+  [~] LLMObs spans in Datadog LLM Observability: pending deployment
+  [~] Azure Search cancellation errors resolved: pending deployment
+
 [2026-05-06] Fix: LLM spans (wrong ActivitySource) + trace ID (x-datadog-trace-id header)
   Two root causes found after deployment revealed no LLM spans and trace ID still unresolvable:
 
