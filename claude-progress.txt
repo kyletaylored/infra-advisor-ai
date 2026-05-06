@@ -1,3 +1,39 @@
+[2026-05-06] Fix: LLM span trace correlation — DD trace ID format + startup ping + Kafka eval tagging
+  Three root causes why LLM spans were not tied to user queries and trace links were broken:
+
+  1. Trace ID format mismatch — services/agent-api-dotnet/Program.cs:
+     - Activity.TraceId.ToString() returns 128-bit OTel hex (32 chars, e.g. 0000000000000000a3ce929d0e0e4736)
+     - Datadog indexes traces by lower 64 bits as uint64 decimal (e.g. 11820788492659695414)
+     - UI was constructing /apm/trace/{hex-string} which Datadog could not resolve
+     - Added ToDdTraceId() helper: extracts last 16 hex chars → ulong.Parse → decimal string
+     - Added ToDdSpanId() helper: parses 16-char hex SpanId → decimal string
+     - Both helpers used in POST /query response (TraceId, SpanId) and error path
+
+  2. Startup LLM ping — services/agent-api-dotnet/Program.cs:
+     - CompleteChatAsync("ping") at startup created a disconnected LLM Observability span
+       with no parent HTTP trace, appearing in LLMObs as a random unattributed LLM call
+     - With DD_LLMOBS_ENABLED=1, every CompleteChatAsync() creates an LLMObs span
+     - Replaced with configuration-only check: just instantiate the chat client (no API call)
+     - Actual LLM connectivity is proven by the first real user query
+
+  3. Kafka eval runs — services/agent-api-dotnet/Services/KafkaConsumerService.cs:
+     - KafkaConsumerService.RunAgentAsync() called CompleteChatAsync() with no parent activity
+     - Background eval re-runs created LLM spans under Kafka consumer trace context,
+       appearing in LLMObs as "user query" spans with no HTTP parent
+     - Added eval.agent_run activity (ActivityKind.Internal) wrapping each RunAgentAsync() call
+     - Tagged with eval.query_id, eval.session_id, eval.source=kafka
+     - LLM Observability spans from eval re-runs now clearly labelled, separate from user queries
+
+  Committed 8849755; pushed; CI building new agent-api-dotnet image.
+
+  Verified:
+  [x] dotnet build: 0 errors after all Program.cs + KafkaConsumerService.cs changes
+  [x] ToDdTraceId/ToDdSpanId: extracts lower 16 hex chars, converts to decimal (logic verified)
+  [x] CompleteChatAsync("ping") removed from startup probe — no LLM API call at startup
+  [x] eval.agent_run activity wraps RunAgentAsync in KafkaConsumerService
+  [~] DD trace ID format: pending live query verification — trace links from UI → Datadog APM
+  [~] LLMObs spans: pending deployment — user query spans should now be parent-linked, eval spans tagged
+
 [2026-05-05] Fix: LLM Observability spans — replace OpenInference with gen_ai.* + DD_LLMOBS_ENABLED
   Root cause: OpenInference.NET is explicitly NOT supported by Datadog LLM Observability (per dd-otel.md).
   The previous implementation used OpenInference.NET.Core.LlmTelemetry which emits spans under
