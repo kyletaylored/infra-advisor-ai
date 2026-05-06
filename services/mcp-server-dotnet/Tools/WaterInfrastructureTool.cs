@@ -50,7 +50,7 @@ public sealed class WaterInfrastructureTool(IHttpClientFactory httpFactory, ILog
 
         if (query_type == "water_plan_projects")
         {
-            var results = await FetchTwdbProjects(counties, planning_regions, project_types, limit);
+            var results = await FetchTwdbProjects(counties, planning_regions, project_types, limit, cancellationToken);
             foreach (var r in results) r.TryAdd("_source", TwdbSource);
             return JsonSerializer.Serialize(results);
         }
@@ -191,7 +191,8 @@ public sealed class WaterInfrastructureTool(IHttpClientFactory httpFactory, ILog
     }
 
     private async Task<List<Dictionary<string, object?>>> FetchTwdbProjects(
-        List<string>? counties, List<string>? planningRegions, List<string>? projectTypes, int limit)
+        List<string>? counties, List<string>? planningRegions, List<string>? projectTypes, int limit,
+        CancellationToken cancellationToken = default)
     {
         var endpoint = Environment.GetEnvironmentVariable("AZURE_SEARCH_ENDPOINT") ?? "";
         var apiKey = Environment.GetEnvironmentVariable("AZURE_SEARCH_API_KEY") ?? "";
@@ -231,7 +232,7 @@ public sealed class WaterInfrastructureTool(IHttpClientFactory httpFactory, ILog
                 IncludeTotalCount = true,
             };
 
-            var response = await searchClient.SearchAsync<SearchDocument>(searchText, options);
+            var response = await searchClient.SearchAsync<SearchDocument>(searchText, options, cancellationToken);
             var records = new List<Dictionary<string, object?>>();
 
             await foreach (var result in response.Value.GetResultsAsync())
@@ -241,6 +242,14 @@ public sealed class WaterInfrastructureTool(IHttpClientFactory httpFactory, ILog
 
             logger.LogInformation("TWDB AI Search returned {Count} records", records.Count);
             return records;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (ObjectDisposedException odEx) when (cancellationToken.IsCancellationRequested)
+        {
+            throw new OperationCanceledException("TWDB search cancelled", odEx, cancellationToken);
         }
         catch (Exception ex)
         {

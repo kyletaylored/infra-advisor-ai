@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 
 namespace InfraAdvisor.AgentApi.Observability;
 
@@ -32,6 +33,13 @@ public static class LlmTelemetry
 
         if (conversationId is not null)
             activity.SetTag("gen_ai.conversation.id", conversationId);
+
+        // DD LLMObs prompt tracking — associates this span with a named/versioned prompt template.
+        activity.SetTag("_dd.ml_obs.prompt_tracking", JsonSerializer.Serialize(new {
+            name = $"infra-advisor-{taskType}",
+            version = "v1",
+            template = prompt,
+        }));
 
         return activity;
     }

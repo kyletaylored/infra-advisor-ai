@@ -84,6 +84,16 @@ public sealed class ProjectKnowledgeTool(ILogger<ProjectKnowledgeTool> logger)
             logger.LogInformation("search_project_knowledge: {Count} chunks returned", chunks.Count);
             return JsonSerializer.Serialize(chunks);
         }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (ObjectDisposedException odEx) when (cancellationToken.IsCancellationRequested)
+        {
+            // Azure SDK throws ObjectDisposedException when the response stream is disposed
+            // mid-read due to CancellationToken firing — treat as a clean cancellation.
+            throw new OperationCanceledException("Search cancelled", odEx, cancellationToken);
+        }
         catch (Exception ex)
         {
             var msg = ex.Message.ToLowerInvariant();

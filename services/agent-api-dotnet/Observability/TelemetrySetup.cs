@@ -1,8 +1,10 @@
 using Microsoft.AspNetCore.Builder;
 using OpenInference.NET.Extensions.DependencyInjection;
+using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Metrics;
+using OpenTelemetry.Trace;
 
 namespace InfraAdvisor.AgentApi.Observability;
 
@@ -53,6 +55,35 @@ public static class TelemetrySetup
                     otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
                 })
             );
+
+        // LLMObs: second non-global TracerProvider — sends gen_ai.* spans to DD LLM Observability
+        // via direct OTLP. The DD bridge (global provider) handles APM; this handles LLMObs.
+        // DD_API_KEY is already injected via the agent-api-dotnet-secret K8s secret.
+        var ddApiKey = Environment.GetEnvironmentVariable("DD_API_KEY") ?? "";
+        var ddSite = Environment.GetEnvironmentVariable("DD_SITE") ?? "datadoghq.com";
+        var llmObsEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
+            ?? $"https://api.{ddSite}";
+
+        if (!string.IsNullOrEmpty(ddApiKey))
+        {
+            var llmObsProvider = Sdk.CreateTracerProviderBuilder()
+                .AddSource(ActivitySourceName)
+                .ConfigureResource(r => r
+                    .AddService(serviceName)
+                    .AddAttributes(new Dictionary<string, object> {
+                        ["deployment.environment"] = ddEnv,
+                        ["service.version"] = ddVersion,
+                    })
+                )
+                .AddOtlpExporter(otlp => {
+                    otlp.Endpoint = new Uri($"{llmObsEndpoint.TrimEnd('/')}/v1/traces");
+                    otlp.Headers = $"dd-api-key={ddApiKey},dd-otlp-source=llmobs";
+                    otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
+                })
+                .Build();
+            // Register for DI-managed disposal on app shutdown.
+            builder.Services.AddSingleton(llmObsProvider);
+        }
 
         // Console logging only; DD_LOGS_INJECTION=true (set in configmap) causes the DD SDK
         // to inject dd.trace_id/dd.span_id into ILogger structured properties so the Datadog
