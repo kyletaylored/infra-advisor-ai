@@ -18,6 +18,21 @@ export default defineConfig({
                 },
             ],
             lastUpdated: true,
+            head: [
+                {
+                    // Mermaid v11 ESM — CDN, renders .mermaid blocks client-side.
+                    // Reads Starlight's localStorage theme key to match dark/light mode.
+                    // Hooks into astro:page-load to re-render after client-side navigation.
+                    tag: 'script',
+                    attrs: { type: 'module' },
+                    content: [
+                        "import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';",
+                        "function t(){const s=localStorage.getItem('starlight-theme');if(s==='dark')return 'dark';if(s==='light')return 'default';return window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'default';}",
+                        "mermaid.initialize({startOnLoad:false,theme:t(),securityLevel:'loose'});",
+                        "document.addEventListener('astro:page-load',()=>{const n=document.querySelectorAll('.mermaid:not([data-processed])');if(n.length)mermaid.run({nodes:n});});",
+                    ].join('\n'),
+                },
+            ],
             plugins: [
                 lucode({
                     navLinks: [

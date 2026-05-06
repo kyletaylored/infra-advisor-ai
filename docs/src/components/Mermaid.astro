@@ -1,0 +1,24 @@
+---
+interface Props {
+    code: string;
+}
+const { code } = Astro.props;
+---
+
+<div class="mermaid-wrapper not-content">
+    <pre class="mermaid">{code}</pre>
+</div>
+
+<style>
+    .mermaid-wrapper {
+        margin-block: 1.5rem;
+        overflow-x: auto;
+        border-radius: 0.5rem;
+    }
+    .mermaid svg {
+        max-width: 100%;
+        height: auto;
+        display: block;
+        margin-inline: auto;
+    }
+</style>

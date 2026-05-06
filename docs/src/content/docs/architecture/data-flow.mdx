@@ -1,0 +1,141 @@
+---
+title: Data Flow
+description: Complete query lifecycle, ingestion pipeline, eval loop, and session memory schema
+---
+
+import Mermaid from '../../../components/Mermaid.astro';
+
+## Query request lifecycle
+
+A consultant types a question. Here is the complete path from browser to response, including every observability event produced along the way.
+
+<Mermaid code={`
+sequenceDiagram
+    actor User as Browser / RUM
+    participant NGINX
+    participant API as Agent API
+    participant Redis
+    participant Router as Router LLM
+    participant Spec as Specialist (ReAct)
+    participant MCP as MCP Server
+    participant Ext as Gov APIs
+
+    User->>NGINX: POST /api/query + JWT
+    NGINX->>API: proxy request
+    API->>Redis: GET session:{uuid}:memory
+    Redis-->>API: message history
+    Note over API: LLMObs.workflow("query-processing") opened
+    API->>Router: classify domain (gpt-4.1-mini)
+    Note over Router: LLMObs: router agent span<br/>~200 prompt / ~50 completion tokens
+    Router-->>API: {specialist, handoff_context}
+    API->>Spec: run ReAct executor
+    Note over Spec: LLMObs: specialist agent span
+    loop ReAct iterations
+        Spec->>MCP: tool call (MCP HTTP)
+        MCP->>Ext: ArcGIS / FEMA / EIA / EPA
+        Ext-->>MCP: raw records
+        MCP-->>Spec: structured data
+        Note over MCP: Datadog metric: mcp.tool.calls
+    end
+    Spec-->>API: answer + citations
+    API->>Redis: PUT updated session history
+    API-)Kafka: publish eval event (async)
+    API-->>User: {answer, sources, trace_id, span_id}
+    Note over User: Renders markdown, CitationPanel,<br/>SuggestionCards · RUM replay frame
+`} />
+
+### Async: faithfulness evaluation
+
+After the response is returned, a background task scores answer grounding:
+
+```
+Agent API background task
+  → LLMObs.task("faithfulness-eval")
+  → gpt-4.1-nano: score 0–1 based on source fidelity
+  → LLMObs.submit_evaluation("faithfulness", score)
+  → Appears under Evaluations tab in Datadog LLM Obs
+```
+
+---
+
+## Data ingestion pipeline
+
+Raw government data flows from external APIs through transformation into a searchable vector index.
+
+<Mermaid code={`
+flowchart TD
+    subgraph src["Government Sources"]
+        direction LR
+        A["FEMA\\nDaily 02:00 UTC"]
+        B["FHWA NBI\\nWeekly Sun 03:00 UTC"]
+        C["EIA\\nWeekly 04:00 UTC"]
+        D["TWDB + EPA\\nMonthly 1st 05:00 UTC"]
+        E["LLM Synthetic\\nOn-demand"]
+    end
+
+    subgraph dag["Airflow DAG Pattern (per source)"]
+        direction LR
+        F["1 · fetch_data\\npaginate external API\\nXCom push records"] --> G["2 · store_raw_parquet\\nDataFrame → Parquet\\nupload to Blob Storage"] --> H["3 · index_to_search\\nchunk · embed · upsert\\nAzure AI Search"]
+    end
+
+    subgraph az["Azure"]
+        I[("Blob Storage\\nraw-data/&lt;domain&gt;/YYYYMMDD.parquet")]
+        J[("AI Search Index\\n615k+ docs\\nhybrid BM25 + 1536-dim vector")]
+    end
+
+    A & B & C & D & E --> F
+    G --> I
+    H --> J
+`} />
+
+Each record goes through the same three-task Airflow pattern:
+
+1. **`fetch_data`** — paginates the external API and XCom-pushes a list of record dicts
+2. **`store_raw_parquet`** — converts to Pandas, serializes to Parquet, uploads to `raw-data/<domain>/filename_YYYYMMDD.parquet` via `dd_upload_blob()` (emits `azure.blob.upload` APM span)
+3. **`index_to_search`** — chunks (character window or tiktoken 512-token/64-overlap), embeds with `text-embedding-3-small`, and upserts in 100-doc batches
+
+---
+
+## Eval loop
+
+Synthetic load validates agent quality continuously, without requiring real user traffic.
+
+<Mermaid code={`
+flowchart LR
+    A["Load Generator\\nCronJob · every 5 min\\n70% happy · 20% edge · 10% adversarial"]
+    B[("Kafka\\ninfra.query.events")]
+    C["Agent API\\nKafka Consumer"]
+    D["run_agent()\\nfull pipeline"]
+    E["Faithfulness Eval\\ngpt-4.1-nano\\nscore 0–1"]
+    F[("Kafka\\ninfra.eval.results")]
+    G["Datadog\\nLLM Obs · DSM · monitors"]
+
+    A -- "publish query_id\\nsession_id · query\\ncorpus_type · domain" --> B
+    B -- "consume" --> C
+    C --> D
+    D -- "async" --> E
+    D -- "publish result\\nanswer · latency_ms\\ntools_called" --> F
+    E -- "submit_evaluation()\\nfaithfulness score" --> F
+    F --> G
+    G -. "alert if\\nmean < 0.75" .-> A
+`} />
+
+---
+
+## Session memory
+
+Redis stores two types of data for the Agent API:
+
+| Key pattern | TTL | Content |
+|---|---|---|
+| `infra-advisor:session:{uuid}:memory` | 86 400 s | JSON list of `HumanMessage` / `AIMessage` exchanges |
+| `infra-advisor:session:{uuid}:model` | 86 400 s | String: Azure OpenAI deployment name |
+| `infra-advisor:suggestions:pool` | none | Redis List: up to 80 AECOM-focused suggestions |
+
+The suggestion pool is maintained by a background asyncio task (`_pool_maintenance_loop`) that:
+
+- Seeds the pool on startup if empty
+- Refills to 80 items every 30 minutes when pool drops below 20
+- Uses 4 rotating batch prompts (Engineering / Construction / Operations / Management focus)
+
+Page loads draw 4 random items from the pool in ~1 ms with no LLM wait.
