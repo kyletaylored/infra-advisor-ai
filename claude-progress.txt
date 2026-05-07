@@ -1,3 +1,27 @@
+[2026-05-07] Fix LLM span attributes per DD OTel LLMObs spec (7 mismatches)
+  Audited docs.datadoghq.com/llm_observability/instrumentation/otel_instrumentation;
+  found 7 attributes that were wrong or missing causing zero spans in LLMObs UI:
+
+  1. gen_ai.input.messages JSON array replaces gen_ai.prompt.0.role/content
+     — prompt.0.* is not read by OTLP LLMObs ingestion path
+  2. gen_ai.output.messages JSON array replaces gen_ai.completion.0.role/content
+     — completion.0.* is not read by OTLP LLMObs ingestion path
+  3. gen_ai.conversation.id replaces session.id for session linking
+     — session.id becomes a key:value tag only; conversation.id maps to session_id
+  4. gen_ai.operation.name = "invoke_agent" replaces "run_agent"
+     — "run_agent" is unrecognised → defaults to workflow kind, not agent
+  5. gen_ai.provider.name added as primary; gen_ai.system kept as fallback
+  6. gen_ai.response.finish_reasons added as JSON array per spec
+  7. llm.latency_ms renamed gen_ai.latency_ms — llm.* namespace silently filtered
+  Removed wrong span event names (gen_ai.user.message, gen_ai.choice).
+  Docs rewritten: every attribute traced to spec with exact table.
+  Committed eb6662c; pushed.
+
+  Verified:
+  [x] dotnet build: 0 errors
+  [x] docs npm run build: 38 pages, 0 errors
+  [~] LLM spans visible in DD LLMObs: pending k8s deploy (3-5 min delay after deploy)
+
 [2026-05-06] Fix .NET LLM spans: span kinds, session correlation, trace hierarchy
   Seven root causes fixed in agent-api-dotnet observability:
 
