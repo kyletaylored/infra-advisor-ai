@@ -231,16 +231,20 @@ public class AgentService
         // Load session history
         var history = await _memory.LoadHistoryAsync(sessionId);
 
+        // Top-level agent span — parent for all router, specialist, and LLM child spans.
+        // dd.llmobs.span.kind="agent" makes this the root in the DD LLM Observability trace view.
+        using var agentActivity = LlmTelemetry.StartAgentActivity("infra-advisor", query, obsSessionId);
+
         // ── Router ────────────────────────────────────────────────────────────
         string specialist;
         string handoffContext;
 
         using (var routerActivity = _activitySource.StartActivity("router"))
         {
+            LlmTelemetry.TagWorkflow(routerActivity, obsSessionId);
             routerActivity?.SetTag("query.domain", queryDomain);
-            routerActivity?.SetTag("session.id", obsSessionId);
 
-            (specialist, handoffContext) = await RunRouterAsync(query, chatClient, ct);
+            (specialist, handoffContext) = await RunRouterAsync(query, chatClient, obsSessionId, ct);
 
             routerActivity?.SetTag("router.specialist", specialist);
             routerActivity?.SetTag("router.handoff_context", handoffContext.Length > 200
@@ -292,10 +296,10 @@ public class AgentService
 
         using (var specialistActivity = _activitySource.StartActivity($"specialist-{specialist}"))
         {
+            LlmTelemetry.TagWorkflow(specialistActivity, obsSessionId);
             specialistActivity?.SetTag("specialist", specialist);
             specialistActivity?.SetTag("specialist.tools_available", specialistTools.Count.ToString());
             specialistActivity?.SetTag("query.domain", queryDomain);
-            specialistActivity?.SetTag("session.id", obsSessionId);
 
             var options = new ChatCompletionOptions();
             foreach (var tool in chatTools)
@@ -308,10 +312,9 @@ public class AgentService
                 var promptText = lastUserMsg?.Content?.FirstOrDefault()?.Text ?? query;
                 using var llmSpan = LlmTelemetry.StartLlmActivity(
                     modelName: dep,
-                    prompt: promptText.Length > 200 ? promptText[..200] : promptText,
-                    taskType: $"specialist_{specialist}_iter{i}",
-                    provider: "azure");
-                llmSpan?.SetTag("llm.span_type", "specialist");
+                    prompt: promptText.Length > 500 ? promptText[..500] : promptText,
+                    sessionId: obsSessionId,
+                    provider: "azure_openai");
                 llmSpan?.SetTag("specialist", specialist);
                 llmSpan?.SetTag("iteration", i);
 
@@ -322,7 +325,8 @@ public class AgentService
                 if (completion.FinishReason == ChatFinishReason.ToolCalls)
                 {
                     LlmTelemetry.EndLlmActivity(llmSpan, "tool_calls", true, iterSw.ElapsedMilliseconds,
-                        completion.Usage?.InputTokenCount ?? 0, completion.Usage?.OutputTokenCount ?? 0);
+                        completion.Usage?.InputTokenCount ?? 0, completion.Usage?.OutputTokenCount ?? 0,
+                        finishReason: "tool_calls");
                     messages.Add(new AssistantChatMessage(completion));
 
                     foreach (var toolCall in completion.ToolCalls)
@@ -367,6 +371,9 @@ public class AgentService
             specialistActivity?.SetTag("tools_called", string.Join(",", toolsCalled));
             specialistActivity?.SetTag("sources.count", sources.Count.ToString());
         }
+
+        // Record final answer in the agent span output event before disposal.
+        LlmTelemetry.EndAgentActivity(agentActivity, answer, isSuccess: !string.IsNullOrEmpty(answer));
 
         // ── Faithfulness eval (fire-and-forget) ───────────────────────────────
         var capturedQuery = query;
@@ -415,7 +422,7 @@ public class AgentService
     // ── Router ────────────────────────────────────────────────────────────────
 
     private async Task<(string specialist, string handoffContext)> RunRouterAsync(
-        string query, ChatClient chatClient, CancellationToken ct)
+        string query, ChatClient chatClient, string sessionId, CancellationToken ct)
     {
         try
         {
@@ -433,9 +440,9 @@ public class AgentService
             using var llmActivity = LlmTelemetry.StartLlmActivity(
                 modelName: _defaultDeployment,
                 prompt: query,
-                taskType: "router",
-                provider: "azure");
-            llmActivity?.SetTag("llm.span_type", "router");
+                sessionId: sessionId,
+                provider: "azure_openai",
+                name: "chat router");
 
             var response = await chatClient.CompleteChatAsync(routerMessages, routerOptions, ct);
             sw.Stop();

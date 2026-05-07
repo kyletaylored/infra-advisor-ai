@@ -6,11 +6,7 @@
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
-    <!-- Must be >= 2.2.0-beta.4 to satisfy OpenInference.NET → SemanticKernel → Azure.AI.OpenAI transitive requirement -->
     <PackageReference Include="Azure.AI.OpenAI" Version="2.2.0-beta.4" />
-    <PackageReference Include="OpenInference.NET" Version="1.0.0" />
-    <!-- Override SemanticKernel.Core transitive dep to pick up GHSA-2ww3-72rp-wpp4 fix -->
-    <PackageReference Include="Microsoft.SemanticKernel.Core" Version="1.50.0" />
 
     <!-- 1.10.0 addresses moderate vulns in 1.9.0 (GHSA-g94r-2vxg-569j, GHSA-4625-4j76-fww9) -->
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.10.0" />
