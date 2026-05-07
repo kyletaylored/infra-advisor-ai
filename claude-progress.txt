@@ -1,3 +1,35 @@
+[2026-05-06] Fix .NET LLM spans: span kinds, session correlation, trace hierarchy
+  Seven root causes fixed in agent-api-dotnet observability:
+
+  1. dd.llmobs.span.kind missing from all spans — DD LLMObs ignores spans without this tag
+     regardless of gen_ai.* attributes. Added: agent="agent", router/specialist="workflow",
+     LLM calls="llm" via LlmTelemetry.TagWorkflow() and dd.llmobs.span.kind on StartLlmActivity.
+
+  2. No top-level agent span — router and specialist spans appeared as disconnected roots in
+     LLMObs (their HTTP parent was captured by DD bridge, not the OTLP LLMObs provider).
+     Added LlmTelemetry.StartAgentActivity("infra-advisor", query, sessionId) at top of
+     RunAgentAsync so all spans share a single "run_agent" root in LLMObs.
+
+  3. session.id never reached LLM spans — only router/specialist spans had it.
+     StartLlmActivity() now requires sessionId; sets both session.id and ml_app on every span.
+
+  4. gen_ai.system = "azure" → "azure_openai" at all call sites (OTel spec value).
+
+  5. Added OTel GenAI span events (gen_ai.user.message, gen_ai.choice, gen_ai.assistant.message)
+     alongside existing gen_ai.prompt.N.* attributes for full spec compliance + DD compat.
+
+  6. RunRouterAsync now receives sessionId so the router LLM span is session-tagged.
+
+  7. Removed dead OpenInference.NET dependency: package, DI registration (AddOpenInferenceTelemetry),
+     and metrics meter removed from csproj + TelemetrySetup.cs. SemanticKernel.Core override
+     also removed (was only there for OpenInference.NET transitive dep).
+
+  Committed 1c68429; pushed.
+
+  Verified:
+  [x] dotnet build: 0 errors, 6 pre-existing NU1902 warnings (OTel pkg vulns, unrelated)
+  [~] LLM spans visible in DD LLMObs with agent/workflow/llm hierarchy: pending k8s deploy
+
 [2026-05-06] Document .NET LLM Observability instrumentation (deep-dive)
   Created docs/src/content/docs/observability/llm-observability-dotnet.md — comprehensive
   page explaining manual OTel instrumentation for LLMObs in the ASP.NET Core agent.
