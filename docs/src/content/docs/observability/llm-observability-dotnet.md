@@ -1,303 +1,319 @@
 ---
 title: LLM Observability (.NET)
-description: How the .NET Agent API manually instruments LLM Observability using OpenTelemetry gen_ai.* semantic conventions — no ddtrace auto-instrumentation available
+description: Exact OTel attribute mapping for .NET LLM Observability — every attribute traced back to the Datadog spec
 ---
 
-The Python Agent API gets LLM Observability for free: `ddtrace` auto-instruments LangChain, LangGraph, and the OpenAI SDK, and the `LLMObs.*` decorator API creates the workflow/agent/task span hierarchy automatically.
+import { Aside } from '@astrojs/starlight/components';
 
-The .NET Agent API has neither. The Datadog .NET tracer does not auto-instrument the Azure OpenAI SDK for LLM Observability, and there is no `LLMObs.*` equivalent in C#. Every span must be created explicitly using the OpenTelemetry `Activity` API with the correct `gen_ai.*` semantic convention attributes.
+<Aside type="tip">
+**Spec source:** [Datadog OTel LLM Observability instrumentation](https://docs.datadoghq.com/llm_observability/instrumentation/otel_instrumentation) — every attribute choice below traces back to this page.
+</Aside>
 
-This page explains the full instrumentation architecture — from environment variables through export paths to the exact lines of code that produce each span.
-
----
-
-## Why manual instrumentation is required
-
-Datadog's Python tracer ships dedicated integrations for OpenAI, LangChain, and LangGraph that hook into those libraries at the call site and emit structured LLMObs spans automatically. The .NET tracer ships no equivalent integrations for Azure OpenAI or any other .NET LLM SDK.
-
-The approach taken here is to use [OpenTelemetry Gen AI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) (the `gen_ai.*` attribute namespace) on manually created `Activity` spans. Datadog recognises these conventions and maps them into the LLM Observability UI — the same way it would recognise spans produced by the Python SDK.
+The Python Agent API gets LLM Observability automatically via `ddtrace` auto-instrumentation of LangChain and the OpenAI SDK. The .NET Agent API has no equivalent — every span is created explicitly using the OpenTelemetry `Activity` API. This page documents exactly which attributes are set, why each one is required, and what the Datadog backend does with them.
 
 ---
 
-## Export architecture: two paths, two purposes
-
-The .NET Agent API sends span data via two independent paths:
+## Export path
 
 ```
-ActivitySource ("infra-advisor-agent-api-dotnet")
+ActivitySource("infra-advisor-agent-api-dotnet")
   │
   ├─► DD bridge (DD_TRACE_OTEL_ENABLED=true)
-  │     Datadog .NET tracer acts as global OTel TracerProvider
-  │     Captures all ActivitySource spans
-  │     Exports to DD Agent at port 8126 (Datadog APM)
+  │     .NET tracer becomes global OTel TracerProvider
+  │     Exports to DD Agent :8126 → Datadog APM
   │
-  └─► Second non-global TracerProvider (TelemetrySetup.cs)
-        Exports OTLP to https://api.datadoghq.com/v1/traces
+  └─► Non-global OTLP TracerProvider  [TelemetrySetup.cs]
+        POST https://api.datadoghq.com/v1/traces
         Headers: dd-api-key=<key>, dd-otlp-source=llmobs
-        Datadog routes to LLM Observability (not APM)
+        → Datadog LLM Observability (NOT APM)
 ```
 
-The same `Activity` object is captured by both paths simultaneously. APM sees it as a distributed trace span. LLMObs sees the same span's `gen_ai.*` attributes and renders the multi-level span tree in the LLM Observability UI.
+The `dd-otlp-source=llmobs` header is the routing key. Without it, spans go to APM. The same `Activity` object is captured by both paths simultaneously.
 
-The two paths are independent — you can view the same query in APM (distributed trace from browser to MCP to gov API) and in LLM Observability (span tree focused on LLM reasoning steps) with the trace ID linking them.
+**Required env vars** (`k8s/agent-api-dotnet/configmap.yaml` + secret):
 
----
-
-## Environment variables
-
-Set via `k8s/agent-api-dotnet/configmap.yaml` and the `agent-api-dotnet-secret` K8s secret:
-
-| Variable | Value | Purpose |
+| Variable | Value | Why |
 |---|---|---|
-| `DD_TRACE_OTEL_ENABLED` | `"true"` | DD tracer becomes global OTel TracerProvider, bridging all `ActivitySource` spans to APM |
-| `DD_LLMOBS_ENABLED` | `"1"` | Enables LLM Observability feature on the DD tracer |
-| `DD_LLMOBS_ML_APP` | `"infra-advisor"` | ML app name shown in LLM Observability UI |
-| `DD_SITE` | `"datadoghq.com"` | Used to construct the LLMObs OTLP endpoint when `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is not set |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `"https://api.datadoghq.com"` | Direct OTLP endpoint for the second (LLMObs) TracerProvider |
-| `DD_API_KEY` | (from K8s secret) | Injected as `dd-api-key` header on all OTLP traces to the LLMObs endpoint |
-| `DD_LOGS_INJECTION` | `"true"` | DD tracer injects `dd.trace_id`/`dd.span_id` into structured log output for log-trace correlation |
+| `DD_TRACE_OTEL_ENABLED` | `true` | Activates the DD bridge as global TracerProvider |
+| `DD_LLMOBS_ENABLED` | `1` | Enables LLMObs feature on the .NET tracer |
+| `DD_LLMOBS_ML_APP` | `infra-advisor` | ML app label in LLMObs UI |
+| `DD_SITE` | `datadoghq.com` | Fallback for constructing the OTLP endpoint |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `https://api.datadoghq.com` | Direct OTLP endpoint for the LLMObs provider |
+| `DD_API_KEY` | (K8s secret) | Injected as `dd-api-key` OTLP header |
 
 ---
 
-## `TelemetrySetup.cs` — the dual TracerProvider setup
+## Span kind resolution
 
-`services/agent-api-dotnet/Observability/TelemetrySetup.cs` wires up the two export paths:
+Datadog determines the LLM Observability span kind from `gen_ai.operation.name`. This is the **only** supported mechanism for OTLP spans — the mapping is exact:
+
+| `gen_ai.operation.name` value | LLMObs span kind |
+|---|---|
+| `chat`, `text_completion`, `completion`, `generate_content` | **llm** |
+| `invoke_agent`, `create_agent` | **agent** |
+| `execute_tool` | **tool** |
+| `embeddings`, `embedding` | **embedding** |
+| `rerank` or **absent/unrecognised** | **workflow** |
+
+`dd.llmobs.span.kind` is also set as a belt-and-suspenders hint for any fallback logic DD may apply.
+
+**Common mistake:** Using `"run_agent"` as the operation name maps to **workflow** (unrecognised default), not **agent**. Must be `"invoke_agent"` or `"create_agent"`.
+
+---
+
+## Session linking
+
+**Spec attribute:** `gen_ai.conversation.id`
+
+This is the **only** attribute the Datadog LLMObs backend reads for session correlation. Setting a custom tag like `session.id` makes it a plain `key:value` tag — it appears in tag search but does **not** populate the Sessions view.
+
+Every span (`StartAgentActivity`, `StartLlmActivity`, `TagWorkflow`) sets `gen_ai.conversation.id` to `obsSessionId` (which is `rumSessionId ?? sessionId`).
+
+---
+
+## Input and output messages
+
+**Spec attributes:** `gen_ai.input.messages` and `gen_ai.output.messages`
+
+Both must be **JSON-serialised arrays** of message objects. The format the backend reads:
+
+```json
+[{"role": "user", "content": "..."}]
+[{"role": "assistant", "content": "..."}]
+```
+
+**What does NOT work:**
+- `gen_ai.prompt.0.role` / `gen_ai.prompt.0.content` — not read by OTLP ingestion
+- `gen_ai.completion.0.role` / `gen_ai.completion.0.content` — not read by OTLP ingestion
+- Span events named `gen_ai.user.message` or `gen_ai.choice` — wrong event names
+
+**Span event fallback** (only if not using direct attributes): the event name must be `gen_ai.client.inference.operation.details` with `gen_ai.input.messages` and `gen_ai.output.messages` as event attributes. We use direct attributes (preferred path).
+
+---
+
+## Provider identification
+
+**Primary:** `gen_ai.provider.name` (spec primary attribute)  
+**Fallback:** `gen_ai.system` (read if `gen_ai.provider.name` is absent)
+
+Both are set to `"azure_openai"` on every LLM span.
+
+---
+
+## Filtered tag namespaces
+
+The following tag prefixes are **silently dropped** by the DD LLMObs backend and will never appear in the UI or evaluations:
+
+- `_dd.*`
+- `llm.*` ← **this means `llm.latency_ms` is silently dropped**
+- `ddtags`
+- `events`
+
+Latency is tracked as `gen_ai.latency_ms` (outside the filtered namespaces).
+
+---
+
+## `LlmTelemetry.cs` — attribute reference
+
+`services/agent-api-dotnet/Observability/LlmTelemetry.cs`
+
+### `StartAgentActivity(agentName, query, sessionId)`
+
+Creates the top-level span that wraps the entire query lifecycle.
 
 ```csharp
-public static void Configure(WebApplicationBuilder builder)
-{
-    // The DD bridge (DD_TRACE_OTEL_ENABLED=true) registers itself as the global
-    // OTel TracerProvider and captures all ActivitySource spans for APM.
-    // No WithTracing() call needed — adding one would conflict with the DD bridge.
-
-    // Metrics: OTLP to the on-cluster Datadog Agent.
-    builder.Services.AddOpenTelemetry()
-        .WithMetrics(metrics => metrics
-            .AddMeter(ActivitySourceName)
-            .AddOtlpExporter(otlp => {
-                otlp.Endpoint = new Uri($"{otlpEndpoint}/v1/metrics");
-                otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
-            })
-        );
-
-    // LLMObs: second non-global TracerProvider that exports the same ActivitySource spans
-    // directly to Datadog LLM Observability via OTLP (bypassing the DD Agent).
-    // The dd-otlp-source=llmobs header tells Datadog to route these to LLMObs, not APM.
-    if (!string.IsNullOrEmpty(ddApiKey))
-    {
-        var llmObsProvider = Sdk.CreateTracerProviderBuilder()
-            .AddSource(ActivitySourceName)           // same source as the DD bridge
-            .AddOtlpExporter(otlp => {
-                otlp.Endpoint = new Uri($"{llmObsEndpoint}/v1/traces");
-                otlp.Headers = $"dd-api-key={ddApiKey},dd-otlp-source=llmobs";
-                otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
-            })
-            .Build();
-
-        builder.Services.AddSingleton(llmObsProvider); // DI disposes on shutdown
-    }
-}
+var activity = ActivitySource.StartActivity("invoke_agent", ActivityKind.Internal);
 ```
 
-The key constraint: `Sdk.CreateTracerProviderBuilder()` creates a **non-global** provider. This is mandatory — calling `builder.Services.AddOpenTelemetry().WithTracing()` would attempt to register a second global provider and conflict with the DD bridge.
+| Attribute | Value | Spec basis |
+|---|---|---|
+| `gen_ai.operation.name` | `"invoke_agent"` | Maps to **agent** span kind |
+| `gen_ai.agent.name` | `"infra-advisor"` | OTel GenAI agent spans spec |
+| `gen_ai.conversation.id` | `sessionId` | Maps to `session_id` in LLMObs |
+| `dd.llmobs.span.kind` | `"agent"` | Belt-and-suspenders hint |
+| `ml_app` | `"infra-advisor"` | LLMObs ML app grouping |
+| `gen_ai.input.messages` | `[{"role":"user","content":query}]` (JSON) | Input for agent span |
 
----
-
-## `LlmTelemetry.cs` — the core instrumentation helper
-
-`services/agent-api-dotnet/Observability/LlmTelemetry.cs` encapsulates every `gen_ai.*` attribute in one place. Nothing in the rest of the codebase sets `gen_ai.*` tags directly.
+### `EndAgentActivity(activity, answer, isSuccess)`
 
 ```csharp
-public static class LlmTelemetry
-{
-    // Must use the same ActivitySource name as all other spans in the service.
-    // Using a new name (e.g. "infra-advisor.llm") would have no registered listener
-    // under DD_TRACE_OTEL_ENABLED=true and StartActivity() would silently return null.
-    public static readonly ActivitySource ActivitySource =
-        new(TelemetrySetup.ActivitySourceName, "1.0.0");
-
-    public static Activity? StartLlmActivity(
-        string modelName,
-        string prompt,
-        string taskType = "chat",
-        string provider = "azure_openai",
-        string? conversationId = null)
-    {
-        // Activity name must be "gen_ai.<operation>" per OTel Gen AI conventions.
-        // The DD bridge maps gen_ai.operation.name="chat" to LLM span type "llm".
-        var activity = ActivitySource.StartActivity(
-            $"gen_ai.{taskType}",
-            ActivityKind.Client);
-
-        if (activity is null) return null;
-
-        // OTel Gen AI semantic convention attributes — Datadog maps these to LLMObs fields.
-        activity.SetTag("gen_ai.operation.name", "chat");
-        activity.SetTag("gen_ai.system", provider);           // maps to model provider
-        activity.SetTag("gen_ai.request.model", modelName);   // maps to model name
-        activity.SetTag("gen_ai.prompt.0.role", "user");
-        activity.SetTag("gen_ai.prompt.0.content", prompt);
-
-        if (conversationId is not null)
-            activity.SetTag("gen_ai.conversation.id", conversationId);
-
-        // DD-specific: prompt tracking metadata for the LLMObs Prompt Tracking feature.
-        activity.SetTag("_dd.ml_obs.prompt_tracking", JsonSerializer.Serialize(new {
-            name = $"infra-advisor-{taskType}",
-            version = "v1",
-            template = prompt,
-        }));
-
-        return activity;
-    }
-
-    public static void EndLlmActivity(
-        Activity? activity,
-        string response,
-        bool isSuccess,
-        long latencyMs,
-        int inputTokens = 0,
-        int outputTokens = 0)
-    {
-        if (activity is null) return;
-
-        activity.SetTag("gen_ai.completion.0.role", "assistant");
-        activity.SetTag("gen_ai.completion.0.content", response);
-
-        // Token counts are only set when the SDK reports non-zero values.
-        if (inputTokens > 0)
-            activity.SetTag("gen_ai.usage.input_tokens", inputTokens);
-        if (outputTokens > 0)
-            activity.SetTag("gen_ai.usage.output_tokens", outputTokens);
-
-        activity.SetTag("llm.latency_ms", latencyMs);
-        activity.SetStatus(isSuccess ? ActivityStatusCode.Ok : ActivityStatusCode.Error);
-        activity.Dispose();
-    }
-}
+activity.SetTag("gen_ai.output.messages",
+    JsonSerializer.Serialize(new[] { new { role = "assistant", content = answer } }));
 ```
 
-### Why `ActivitySource.StartActivity()` can return null
+| Attribute | Value | Spec basis |
+|---|---|---|
+| `gen_ai.output.messages` | `[{"role":"assistant","content":answer}]` (JSON) | Output for agent span |
 
-`StartActivity()` returns `null` when no `ActivityListener` is registered for the named source. The DD bridge registers a listener for known sources when `DD_TRACE_OTEL_ENABLED=true`. It discovers sources that are registered before the bridge initialises.
+Disposed by the caller's `using` block — `EndAgentActivity` does **not** call `Dispose()`.
 
-**The critical constraint:** `LlmTelemetry.ActivitySource` must use `TelemetrySetup.ActivitySourceName` — the same name used by every other span in the service. If you use a new, distinct source name (e.g. `"infra-advisor.llm"`), the DD bridge will have no listener for it and `StartActivity()` returns `null` for every call, silently discarding all LLM spans with no error.
+### `TagWorkflow(activity, sessionId)`
 
-All `LlmTelemetry` code defensively null-checks the returned `Activity?` before calling any method on it.
+Tags the `router` and `specialist-*` spans as workflow kind. No `gen_ai.operation.name` is set (absent value → workflow default).
+
+| Attribute | Value | Spec basis |
+|---|---|---|
+| `gen_ai.conversation.id` | `sessionId` | Session linking |
+| `dd.llmobs.span.kind` | `"workflow"` | Explicit hint (no op name maps to workflow) |
+| `ml_app` | `"infra-advisor"` | LLMObs ML app grouping |
+
+### `StartLlmActivity(modelName, prompt, sessionId, operation, provider, name)`
+
+Creates one span per `CompleteChatAsync` call.
+
+```csharp
+var activity = ActivitySource.StartActivity(
+    name ?? $"{operation} {modelName}",
+    ActivityKind.Client);  // Client = outgoing request
+```
+
+| Attribute | Value | Spec basis |
+|---|---|---|
+| `gen_ai.operation.name` | `"chat"` | Maps to **llm** span kind |
+| `gen_ai.provider.name` | `"azure_openai"` | Primary provider attribute |
+| `gen_ai.system` | `"azure_openai"` | Fallback provider attribute |
+| `gen_ai.request.model` | deployment name | Model identifier in LLMObs |
+| `gen_ai.conversation.id` | `sessionId` | Session linking |
+| `dd.llmobs.span.kind` | `"llm"` | Belt-and-suspenders hint |
+| `ml_app` | `"infra-advisor"` | LLMObs ML app grouping |
+| `gen_ai.input.messages` | `[{"role":"user","content":prompt}]` (JSON) | Input shown in LLMObs |
+
+### `EndLlmActivity(activity, response, isSuccess, latencyMs, inputTokens, outputTokens, finishReason)`
+
+```csharp
+activity.SetTag("gen_ai.output.messages",
+    JsonSerializer.Serialize(new[] { new { role = "assistant", content = response } }));
+```
+
+| Attribute | Value | Spec basis |
+|---|---|---|
+| `gen_ai.output.messages` | `[{"role":"assistant","content":response}]` (JSON) | Output shown in LLMObs |
+| `gen_ai.usage.input_tokens` | `inputTokens` (if > 0) | Token count from SDK |
+| `gen_ai.usage.output_tokens` | `outputTokens` (if > 0) | Token count from SDK |
+| `gen_ai.response.finish_reasons` | `["stop"]` or `["tool_calls"]` (JSON array) | Finish reason per spec |
+| `gen_ai.latency_ms` | elapsed ms | Custom — avoids `llm.*` filtered namespace |
+
+Calls `activity.Dispose()` directly (callers use `using var` which double-disposes harmlessly — `Activity.Dispose()` is idempotent).
 
 ---
 
-## Span hierarchy produced
-
-The spans produced by a single query form this tree, which maps to the LLM Observability trace view:
+## Span hierarchy produced per query
 
 ```
-[HTTP: POST /query]                     ← auto-instrumented by DD ASP.NET Core integration
+invoke_agent  [kind=agent]
+  gen_ai.conversation.id = obsSessionId
+  gen_ai.input.messages  = [{"role":"user","content":query}]
+  gen_ai.output.messages = [{"role":"assistant","content":answer}]
   │
-  ├── [router]                           ← _activitySource.StartActivity("router")
-  │     Tags: query.domain, session.id, router.specialist, router.handoff_context
+  ├── router  [kind=workflow]
+  │     gen_ai.conversation.id = obsSessionId
+  │     query.domain, router.specialist, router.handoff_context
   │     │
-  │     └── [gen_ai.router]              ← LlmTelemetry.StartLlmActivity(taskType:"router")
-  │           gen_ai.request.model       → deployment name
-  │           gen_ai.prompt.0.content    → user query (first 200 chars)
-  │           gen_ai.completion.0.content → chosen specialist name
-  │           gen_ai.usage.input_tokens  → from CompleteChatAsync response
-  │           gen_ai.usage.output_tokens → from CompleteChatAsync response
-  │           llm.latency_ms             → wall-clock time for the LLM call
+  │     └── chat gpt-4.1-mini  [kind=llm, ActivityKind.Client]
+  │           gen_ai.operation.name    = "chat"
+  │           gen_ai.provider.name     = "azure_openai"
+  │           gen_ai.system            = "azure_openai"
+  │           gen_ai.request.model     = "gpt-4.1-mini"
+  │           gen_ai.conversation.id   = obsSessionId
+  │           gen_ai.input.messages    = [{"role":"user","content":query}]
+  │           gen_ai.output.messages   = [{"role":"assistant","content":"engineering"}]
+  │           gen_ai.usage.input_tokens / output_tokens
   │
-  └── [specialist-{name}]               ← _activitySource.StartActivity("specialist-{specialist}")
-        Tags: specialist, tools_available, query.domain, session.id, tools_called, sources.count
+  └── specialist-engineering  [kind=workflow]
+        gen_ai.conversation.id = obsSessionId
+        specialist, tools_available, tools_called, sources.count
         │
-        ├── [gen_ai.specialist_{name}_iter0]  ← StartLlmActivity per ReAct iteration
-        │     (same gen_ai.* tags as above)
-        │     gen_ai.completion.0.content     → "tool_calls" if tools invoked, else answer
-        │     llm.span_type: "specialist"
-        │     iteration: 0
+        ├── chat gpt-4.1-mini  [kind=llm, iter=0]
+        │     gen_ai.output.messages = [{"role":"assistant","content":"tool_calls"}]
+        │     gen_ai.response.finish_reasons = ["tool_calls"]
         │
-        └── [gen_ai.specialist_{name}_iter1]  ← next iteration after tool results injected
-              gen_ai.completion.0.content → final answer (first 500 chars)
+        └── chat gpt-4.1-mini  [kind=llm, iter=1]
+              gen_ai.output.messages = [{"role":"assistant","content":answer}]
+              gen_ai.response.finish_reasons = ["stop"]
 ```
-
-Kafka eval runs (from `KafkaConsumerService.cs`) produce the same tree, nested under an additional root span:
-
-```
-[eval.agent_run]                        ← LlmTelemetry.ActivitySource.StartActivity
-  Tags: eval.query_id, eval.session_id, eval.source="kafka"
-  └── [router] + [specialist-*]         ← same as above
-```
-
-This makes eval traces visually distinct from user-query traces in both APM and LLM Observability.
 
 ---
 
-## `AgentService.cs` — call sites in detail
+## `TelemetrySetup.cs` — non-global provider
 
-### Router LLM call (`RunRouterAsync`)
+`services/agent-api-dotnet/Observability/TelemetrySetup.cs`
+
+The LLMObs OTLP provider is **non-global** (`Sdk.CreateTracerProviderBuilder()`, not `AddOpenTelemetry().WithTracing()`). A global provider would conflict with the DD bridge. The non-global provider only fires when `DD_API_KEY` is non-empty:
 
 ```csharp
-var sw = Stopwatch.StartNew();
-
-// Span opened before the LLM call.
-using var llmActivity = LlmTelemetry.StartLlmActivity(
-    modelName: _defaultDeployment,
-    prompt: query,
-    taskType: "router",
-    provider: "azure");
-llmActivity?.SetTag("llm.span_type", "router");
-
-// Actual Azure OpenAI call.
-var response = await chatClient.CompleteChatAsync(routerMessages, routerOptions, ct);
-sw.Stop();
-
-// Span closed with token counts from the SDK response.
-LlmTelemetry.EndLlmActivity(
-    activity: llmActivity,
-    response: specialist,           // the chosen specialist label
-    isSuccess: true,
-    latencyMs: sw.ElapsedMilliseconds,
-    inputTokens: response.Value.Usage?.InputTokenCount ?? 0,
-    outputTokens: response.Value.Usage?.OutputTokenCount ?? 0);
+if (!string.IsNullOrEmpty(ddApiKey))
+{
+    var llmObsProvider = Sdk.CreateTracerProviderBuilder()
+        .AddSource(ActivitySourceName)          // same name as DD bridge
+        .ConfigureResource(r => r.AddService(serviceName)...)
+        .AddOtlpExporter(otlp => {
+            otlp.Endpoint = new Uri($"{llmObsEndpoint}/v1/traces");
+            otlp.Headers  = $"dd-api-key={ddApiKey},dd-otlp-source=llmobs";
+            otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
+        })
+        .Build();
+    builder.Services.AddSingleton(llmObsProvider); // DI disposes on shutdown
+}
 ```
 
-### Specialist ReAct loop
+**Why the same `ActivitySourceName`:** A different source name would require its own listener registration. Since the DD bridge automatically captures `ActivitySourceName`, sharing it means both providers see all spans without duplication in either sink.
+
+---
+
+## `AgentService.cs` — call sites
+
+`services/agent-api-dotnet/Services/AgentService.cs`
 
 ```csharp
-for (int i = 0; i < MaxIterations; i++)
-{
-    var iterSw = Stopwatch.StartNew();
-    var promptText = /* last user message text */;
+// Line ~234 — top of RunAgentAsync, after obsSessionId is computed:
+using var agentActivity = LlmTelemetry.StartAgentActivity("infra-advisor", query, obsSessionId);
 
-    // New span per iteration — traces each LLM call in the ReAct loop separately.
+// Line ~241 — router workflow span:
+using (var routerActivity = _activitySource.StartActivity("router"))
+{
+    LlmTelemetry.TagWorkflow(routerActivity, obsSessionId);
+    ...
+    (specialist, handoffContext) = await RunRouterAsync(query, chatClient, obsSessionId, ct);
+}
+
+// Line ~297 — specialist workflow span:
+using (var specialistActivity = _activitySource.StartActivity($"specialist-{specialist}"))
+{
+    LlmTelemetry.TagWorkflow(specialistActivity, obsSessionId);
+    ...
+    // ReAct loop — one LLM span per iteration:
     using var llmSpan = LlmTelemetry.StartLlmActivity(
         modelName: dep,
-        prompt: promptText.Length > 200 ? promptText[..200] : promptText,
-        taskType: $"specialist_{specialist}_iter{i}",
-        provider: "azure");
-    llmSpan?.SetTag("llm.span_type", "specialist");
-    llmSpan?.SetTag("specialist", specialist);
-    llmSpan?.SetTag("iteration", i);
+        prompt: promptText.Length > 500 ? promptText[..500] : promptText,
+        sessionId: obsSessionId,
+        provider: "azure_openai");
+    ...
+    LlmTelemetry.EndLlmActivity(llmSpan, response, isSuccess, elapsedMs,
+        completion.Usage?.InputTokenCount ?? 0,
+        completion.Usage?.OutputTokenCount ?? 0,
+        finishReason: "tool_calls" | "stop");
+}
 
-    var response = await chatClient.CompleteChatAsync(messages, options, ct);
-    iterSw.Stop();
+// After specialist block — record output on the agent span before disposal:
+LlmTelemetry.EndAgentActivity(agentActivity, answer, isSuccess: !string.IsNullOrEmpty(answer));
+// agentActivity disposed here by using block
+```
 
-    if (completion.FinishReason == ChatFinishReason.ToolCalls)
-    {
-        // Model wants to call tools — close span with "tool_calls" as the response.
-        LlmTelemetry.EndLlmActivity(llmSpan, "tool_calls", true,
-            iterSw.ElapsedMilliseconds,
-            completion.Usage?.InputTokenCount ?? 0,
-            completion.Usage?.OutputTokenCount ?? 0);
-        // ... dispatch tool calls via McpClientService, inject results into messages ...
-    }
-    else if (completion.FinishReason == ChatFinishReason.Stop)
-    {
-        // Model produced a final answer — close span with the answer text.
-        LlmTelemetry.EndLlmActivity(llmSpan, answer.Length > 500 ? answer[..500] : answer,
-            true, iterSw.ElapsedMilliseconds,
-            completion.Usage?.InputTokenCount ?? 0,
-            completion.Usage?.OutputTokenCount ?? 0);
-        break;
-    }
+```csharp
+// RunRouterAsync — receives sessionId so the router LLM span is session-tagged:
+private async Task<(string, string)> RunRouterAsync(
+    string query, ChatClient chatClient, string sessionId, CancellationToken ct)
+{
+    using var llmActivity = LlmTelemetry.StartLlmActivity(
+        modelName: _defaultDeployment,
+        prompt: query,
+        sessionId: sessionId,
+        provider: "azure_openai",
+        name: "chat router");              // stable span name instead of dynamic taskType
+    ...
+    LlmTelemetry.EndLlmActivity(llmActivity, specialist, true, elapsed,
+        response.Value.Usage?.InputTokenCount ?? 0,
+        response.Value.Usage?.OutputTokenCount ?? 0);
 }
 ```
 
@@ -305,109 +321,37 @@ for (int i = 0; i < MaxIterations; i++)
 
 ## Trace ID correlation with RUM
 
-The `/query` response includes `trace_id` and `span_id` so the browser can construct a deep-link into Datadog APM. The `x-datadog-trace-id` header is the authoritative source:
+`x-datadog-trace-id` header (injected by RUM Browser SDK) is the authoritative 64-bit decimal DD trace ID. It is read in the `/query` handler in `Program.cs` and returned to the browser so the UI can construct an APM deep-link.
 
-```csharp
-// In Program.cs — the helper used after every /query response.
-static string? GetDdTraceId(HttpContext ctx, Activity? activity)
-{
-    // RUM Browser SDK injects the authoritative 64-bit decimal DD trace ID
-    // into every request as x-datadog-trace-id. Use this first.
-    var header = ctx.Request.Headers["x-datadog-trace-id"].FirstOrDefault();
-    if (!string.IsNullOrWhiteSpace(header)) return header;
-
-    // Fallback for non-RUM requests (test tools, direct API calls):
-    // OTel TraceId is 128-bit hex; Datadog indexes by lower 64 bits as uint64 decimal.
-    var hex = activity?.TraceId.ToString();
-    if (hex is not { Length: 32 }) return hex;
-    return ulong.TryParse(hex[16..], NumberStyles.HexNumber, null, out var lo)
-        ? lo.ToString() : hex;
-}
-```
-
-The `X-DD-RUM-Session-ID` header (also injected by the RUM SDK) is passed through to `AgentService.RunAgentAsync` as `rumSessionId`, where it becomes the `session.id` tag on all spans. This is what enables the **RUM Sessions → LLM Observability** link in Datadog.
-
----
-
-## Prompt tracking
-
-Each LLM span carries `_dd.ml_obs.prompt_tracking` — a JSON attribute that tells Datadog LLM Observability to associate the span with a named, versioned prompt template:
-
-```csharp
-// Set inside StartLlmActivity() for every span.
-activity.SetTag("_dd.ml_obs.prompt_tracking", JsonSerializer.Serialize(new {
-    name = $"infra-advisor-{taskType}",  // e.g. "infra-advisor-router"
-    version = "v1",
-    template = prompt,                   // truncated prompt text used as template content
-}));
-```
-
-In **LLM Observability → Prompt Templates**, spans with the same `name` are grouped, allowing comparison of token usage and output quality across prompt versions.
-
----
-
-## Faithfulness score
-
-Unlike Python (which uses `LLMObs.submit_evaluation()`), the .NET stack records faithfulness as an OTel **metric** rather than a LLMObs evaluation:
-
-```csharp
-// In AgentService constructor:
-_faithfulnessHistogram = meter.CreateHistogram<double>(
-    "agent.faithfulness_score",
-    description: "Faithfulness evaluation score for agent responses");
-
-// After every query, fire-and-forget:
-_ = Task.Run(async () =>
-{
-    // gpt-4.1-nano scores answer faithfulness 0.0–1.0
-    if (double.TryParse(scoreText, ..., out var score))
-    {
-        score = Math.Clamp(score, 0.0, 1.0);
-        _faithfulnessHistogram.Record(score,
-            new KeyValuePair<string, object?>("session.id", capturedSessionId),
-            new KeyValuePair<string, object?>("query.domain", capturedDomain));
-    }
-});
-```
-
-The histogram is exported via the metrics OTLP path to the Datadog Agent and appears as `agent.faithfulness_score` in Datadog Metrics. The faithfulness monitor (`datadog/monitors/faithfulness-score.json`) alerts when the mean drops below 0.75 over a 1-hour window.
-
-> The Python stack submits faithfulness directly to LLMObs via `LLMObs.submit_evaluation()`, which makes it appear under the Evaluations tab on the specific span. In .NET, the score is a separate metric — it correlates by `session.id` and `query.domain` dimensions but does not attach to a specific LLMObs span.
+`X-DD-RUM-Session-ID` (also injected by RUM) becomes `rumSessionId`, which flows to `obsSessionId` and then to `gen_ai.conversation.id` on every span.
 
 ---
 
 ## Differences from the Python stack
 
-| Concern | Python (.NET tracer + LLMObs) | .NET (OTel + manual) |
+| Concern | Python | .NET |
 |---|---|---|
-| LLM call instrumentation | `ddtrace` auto-instruments Azure OpenAI SDK calls | Manually wrap each call in `LlmTelemetry.StartLlmActivity` / `EndLlmActivity` |
-| Span hierarchy | `LLMObs.workflow()` / `.agent()` / `.task()` / `.llm()` decorators | `ActivitySource.StartActivity()` for orchestration spans; `LlmTelemetry` for LLM spans |
-| Export to LLMObs | `ddtrace` routes LLMObs spans to DD Agent automatically | Second non-global `TracerProvider` with `dd-otlp-source=llmobs` OTLP header |
-| Token counting | Auto-extracted by ddtrace LangChain integration | Read from `response.Value.Usage?.InputTokenCount` / `OutputTokenCount` and passed to `EndLlmActivity` |
-| Faithfulness | `LLMObs.submit_evaluation("faithfulness", score)` — attaches to span in LLMObs UI | OTel `Histogram<double>` metric — appears in Datadog Metrics, correlated by dimension |
-| Prompt tracking | Not applicable (Python prompts tracked via LangChain auto-instrumentation) | `_dd.ml_obs.prompt_tracking` JSON attribute set manually in `StartLlmActivity` |
-| Session linking to RUM | `session.id` set via `LLMObs.agent()` context | `session.id` tag set on `ActivitySource` spans; `X-DD-RUM-Session-ID` header read in `/query` handler |
+| LLM call instrumentation | `ddtrace` auto-instruments LangChain/OpenAI SDK | Manual `LlmTelemetry.StartLlmActivity` / `EndLlmActivity` per call |
+| Span hierarchy | `LLMObs.workflow()` / `.agent()` / `.llm()` decorators | `ActivitySource.StartActivity()` + `LlmTelemetry` helpers |
+| Session linking | `LLMObs.agent()` `session_id` param | `gen_ai.conversation.id` tag on every Activity |
+| Input/output format | LLMObs SDK handles internally | `gen_ai.input.messages` / `gen_ai.output.messages` JSON arrays |
+| Export path to LLMObs | `ddtrace` routes automatically | Non-global OTLP provider with `dd-otlp-source=llmobs` header |
+| Faithfulness evaluation | `LLMObs.submit_evaluation()` — attaches to span | OTel `Histogram<double>` metric `agent.faithfulness_score` — correlates by dimension |
 
 ---
 
-## Debugging spans in production
+## Debugging
 
-**Verify spans are reaching Datadog APM:**
-
-```bash
-kubectl logs -n infra-advisor deploy/agent-api-dotnet --tail=50 | grep -E "trace|span|gen_ai"
-```
-
-Look for log lines with `dd.trace_id` and `dd.span_id` fields — `DD_LOGS_INJECTION=true` injects these into every structured log entry.
-
-**Verify LLM spans are non-null:**
-
-If `StartActivity()` returns `null`, no spans are emitted. Verify the `ActivitySource` name matches: it must be `"infra-advisor-agent-api-dotnet"` (the value of `TelemetrySetup.ActivitySourceName`). Any other name will produce null spans under the DD bridge unless explicitly registered with `AddSource()` in a TracerProvider.
-
-**Verify the LLMObs OTLP export:**
-
-The second TracerProvider only initialises when `DD_API_KEY` is non-empty in the pod environment. Confirm the secret is mounted:
-
+**Check pod has DD_API_KEY** (required for the LLMObs OTLP provider to initialise):
 ```bash
 kubectl exec -n infra-advisor deploy/agent-api-dotnet -- env | grep DD_API_KEY
 ```
+
+**Check spans reach APM** (confirms DD bridge is working):
+```bash
+kubectl logs -n infra-advisor deploy/agent-api-dotnet --tail=100 | grep dd.trace_id
+```
+
+**Expected 3–5 minute delay** before spans appear in LLMObs after first deploy.
+
+**Verify span kind** by querying APM for `gen_ai.operation.name:invoke_agent` — if the agent span appears in APM but not LLMObs, the OTLP provider is not initialising (missing `DD_API_KEY`).
