@@ -1,3 +1,21 @@
+[2026-05-07] Fix session ID propagation for LLMObs session grouping (e3e2116)
+  Problem: each query reported as a different LLMObs session.
+  Root cause: session ID sent as X-Session-ID header only; NGINX proxy rewrites
+  may not forward it, causing backend to fall back to Guid.NewGuid() each request.
+
+  Fix: resolve session_id = getRumSessionId() ?? getSessionId() in the frontend
+  and include it in the POST body. Body always reaches the backend regardless of
+  proxy header handling. RUM session ID preferred → gen_ai.conversation.id maps
+  directly to the Datadog RUM session (LLMObs ↔ RUM correlation).
+  Backend now prefers body.SessionId over header fallback.
+  Removed redundant rumSessionId parameter from RunAgentAsync.
+  NGINX now explicitly forwards all session-related headers.
+
+  Verified:
+  [x] dotnet build: 0 errors
+  [x] git push: e3e2116
+  [~] LLMObs sessions grouped by RUM session: pending k8s deploy
+
 [2026-05-07] Fix parts array message format + execute_tool spans (16d3745)
   Two LLMObs display issues resolved from live trace inspection:
 
