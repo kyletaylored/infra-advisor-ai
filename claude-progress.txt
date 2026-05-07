@@ -1,3 +1,21 @@
+[2026-05-07] Fix OTLP endpoint hostname + add span events (f622c74)
+  Root cause of zero LLM traces: OTLP endpoint was api.datadoghq.com — must be
+  otlp.datadoghq.com. Host resolves but silently rejects all LLMObs payloads.
+
+  Changes:
+  1. k8s/agent-api-dotnet/configmap.yaml: api.datadoghq.com → otlp.datadoghq.com
+  2. TelemetrySetup.cs: fallback $"https://api.{ddSite}" → $"https://otlp.{ddSite}"
+  3. LlmTelemetry.cs: added gen_ai.client.inference.operation.details span events
+     alongside direct gen_ai.input.messages / gen_ai.output.messages attributes
+     (belt-and-suspenders — covers both DD ingestion paths simultaneously)
+  4. llm-observability-dotnet.md: added endpoint caution block, silent failure
+     table, and full debugging checklist
+
+  Verified:
+  [x] dotnet build: 0 errors
+  [x] git push: f622c74
+  [~] LLM spans visible in DD LLMObs: pending k8s deploy (3-5 min delay after deploy)
+
 [2026-05-07] Fix LLM span attributes per DD OTel LLMObs spec (7 mismatches)
   Audited docs.datadoghq.com/llm_observability/instrumentation/otel_instrumentation;
   found 7 attributes that were wrong or missing causing zero spans in LLMObs UI:
