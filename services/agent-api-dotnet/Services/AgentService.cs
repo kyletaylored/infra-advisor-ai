@@ -336,16 +336,22 @@ public class AgentService
                         if (!toolsCalled.Contains(toolName))
                             toolsCalled.Add(toolName);
 
+                        var inputArgs = toolCall.FunctionArguments.ToString();
+                        using var toolSpan = LlmTelemetry.StartToolActivity(
+                            _activitySource, toolName, inputArgs, obsSessionId);
+
                         string toolResult;
                         try
                         {
                             using var argDoc = JsonDocument.Parse(toolCall.FunctionArguments);
                             toolResult = await _mcpClient.InvokeToolAsync(toolName, argDoc.RootElement.Clone(), ct);
+                            LlmTelemetry.EndToolActivity(toolSpan, toolResult, isSuccess: true);
                         }
                         catch (Exception ex)
                         {
                             _logger.LogWarning("Tool {ToolName} failed: {Error}", toolName, ex.Message);
                             toolResult = $"{{\"error\": \"{ex.Message}\"}}";
+                            LlmTelemetry.EndToolActivity(toolSpan, toolResult, isSuccess: false);
                         }
 
                         contextChunks.Add(toolResult.Length > 500 ? toolResult[..500] : toolResult);

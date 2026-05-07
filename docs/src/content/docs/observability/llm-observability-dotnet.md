@@ -83,16 +83,18 @@ Every span (`StartAgentActivity`, `StartLlmActivity`, `TagWorkflow`) sets `gen_a
 
 **Spec attributes:** `gen_ai.input.messages` and `gen_ai.output.messages`
 
-Both must be **JSON-serialised arrays** of message objects. The format the backend reads:
+Both must be **JSON-serialised arrays** of message objects using the **`parts` array format**. The flat `{"role","content"}` form produces `[No parts array - invalid otel message format]` in the LLMObs UI.
 
 ```json
-[{"role": "user", "content": "..."}]
-[{"role": "assistant", "content": "..."}]
+[{"role": "user",      "parts": [{"type": "text", "content": "..."}]}]
+[{"role": "assistant", "parts": [{"type": "text", "content": "..."}]}]
+[{"role": "tool",      "parts": [{"type": "text", "content": "..."}]}]
 ```
 
 **What does NOT work:**
 - `gen_ai.prompt.0.role` / `gen_ai.prompt.0.content` — not read by OTLP ingestion
 - `gen_ai.completion.0.role` / `gen_ai.completion.0.content` — not read by OTLP ingestion
+- `[{"role": "user", "content": "..."}]` — flat format shows as invalid in UI
 
 **Two delivery paths (both used for belt-and-suspenders):**
 
@@ -217,6 +219,26 @@ activity.AddEvent(new ActivityEvent("gen_ai.client.inference.operation.details",
 
 Calls `activity.Dispose()` directly (callers use `using var` which double-disposes harmlessly — `Activity.Dispose()` is idempotent).
 
+### `StartToolActivity(source, toolName, inputJson, sessionId)` / `EndToolActivity(activity, result, isSuccess)`
+
+Creates one span per MCP tool invocation. `gen_ai.operation.name = "execute_tool"` maps to **tool** span kind. These spans are created in `agent-api-dotnet` (not in `mcp-server-dotnet`) so they are first-class children of the specialist workflow span — tool calls as span links means they're not being created here and the MCP server spans are appearing from a separate trace context.
+
+```csharp
+using var toolSpan = LlmTelemetry.StartToolActivity(
+    _activitySource, toolName, inputArgs, obsSessionId);
+...
+LlmTelemetry.EndToolActivity(toolSpan, toolResult, isSuccess: true);
+```
+
+| Attribute | Value | Spec basis |
+|---|---|---|
+| `gen_ai.operation.name` | `"execute_tool"` | Maps to **tool** span kind |
+| `gen_ai.tool.name` | tool function name | Tool identifier |
+| `gen_ai.conversation.id` | `sessionId` | Session linking |
+| `dd.llmobs.span.kind` | `"tool"` | Belt-and-suspenders hint |
+| `gen_ai.input.messages` | `[{"role":"tool","parts":[{"type":"text","content":argsJson}]}]` | Tool arguments |
+| `gen_ai.output.messages` | `[{"role":"tool","parts":[{"type":"text","content":result}]}]` | Tool result (truncated at 2000 chars) |
+
 ---
 
 ## Span hierarchy produced per query
@@ -246,11 +268,16 @@ invoke_agent  [kind=agent]
         specialist, tools_available, tools_called, sources.count
         │
         ├── chat gpt-4.1-mini  [kind=llm, iter=0]
-        │     gen_ai.output.messages = [{"role":"assistant","content":"tool_calls"}]
+        │     gen_ai.output.messages = [{"role":"assistant","parts":[...]}]
         │     gen_ai.response.finish_reasons = ["tool_calls"]
+        │     │
+        │     └── execute_tool get_disaster_history  [kind=tool]
+        │           gen_ai.tool.name = "get_disaster_history"
+        │           gen_ai.input.messages  = [{"role":"tool","parts":[{"type":"text","content":argsJson}]}]
+        │           gen_ai.output.messages = [{"role":"tool","parts":[{"type":"text","content":result}]}]
         │
         └── chat gpt-4.1-mini  [kind=llm, iter=1]
-              gen_ai.output.messages = [{"role":"assistant","content":answer}]
+              gen_ai.output.messages = [{"role":"assistant","parts":[...]}]
               gen_ai.response.finish_reasons = ["stop"]
 ```
 
@@ -398,6 +425,8 @@ kubectl logs -n infra-advisor deploy/agent-api-dotnet --tail=100 | grep dd.trace
 | No LLM traces at all | Wrong OTLP endpoint host (`api.` instead of `otlp.`) or wrong site (`datadoghq.com` instead of `us3.datadoghq.com`) |
 | Spans in APM but not LLMObs | Missing `DD_API_KEY` or non-global OTLP provider not initialising |
 | LLM spans appear as "span links" | Two `ActivitySource` instances with the same name — spans start new traces instead of inheriting HTTP context |
+| Tool calls appear as "span links" | Tool spans not created in `agent-api-dotnet`; MCP server spans are in a separate trace. Fix: `StartToolActivity` / `EndToolActivity` around each `InvokeToolAsync` call |
+| Input/output shows "[No parts array - invalid otel message format]" | Message format missing `parts` array — use `[{"role","parts":[{"type","content"}]}]` not flat `[{"role","content"}]` |
 | Sessions not appearing | Using `session.id` instead of `gen_ai.conversation.id` |
 | Spans appear as "workflow" not "llm" | Wrong `gen_ai.operation.name` (e.g. `"run_agent"` instead of `"invoke_agent"`) |
 | Input/output missing in LLMObs | Using `gen_ai.prompt.0.*` / `gen_ai.completion.0.*` attribute names |
