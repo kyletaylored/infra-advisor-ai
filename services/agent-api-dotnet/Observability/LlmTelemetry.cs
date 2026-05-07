@@ -15,9 +15,10 @@ namespace InfraAdvisor.AgentApi.Observability;
 //
 // Session linking: gen_ai.conversation.id → session_id in LLMObs
 // Input/output:   gen_ai.input.messages / gen_ai.output.messages (JSON arrays) — preferred
-//                 Fallback event name: gen_ai.client.inference.operation.details
+//                 Belt-and-suspenders: also emitted as gen_ai.client.inference.operation.details span event
 // Provider:       gen_ai.provider.name (primary), gen_ai.system (fallback)
 // Filtered tags:  _dd.*, llm.*, ddtags, events — silently dropped by DD backend
+// OTLP endpoint:  https://otlp.datadoghq.com/v1/traces (NOT api.datadoghq.com)
 
 public static class LlmTelemetry
 {
@@ -54,10 +55,16 @@ public static class LlmTelemetry
         activity.SetTag(SpanKindTag, "agent");
         activity.SetTag("ml_app", MlApp);
 
-        // Input: gen_ai.input.messages JSON array — preferred over span events.
-        // Spec: https://docs.datadoghq.com/llm_observability/instrumentation/otel_instrumentation
-        activity.SetTag("gen_ai.input.messages",
-            JsonSerializer.Serialize(new[] { new { role = "user", content = query } }));
+        // Input: gen_ai.input.messages JSON array — preferred direct attribute.
+        // Also emitted as span event for belt-and-suspenders compatibility.
+        var inputJson = JsonSerializer.Serialize(new[] { new { role = "user", content = query } });
+        activity.SetTag("gen_ai.input.messages", inputJson);
+        activity.AddEvent(new ActivityEvent(
+            "gen_ai.client.inference.operation.details",
+            tags: new ActivityTagsCollection(new[] {
+                KeyValuePair.Create<string, object?>("gen_ai.input.messages", inputJson)
+            })
+        ));
 
         return activity;
     }
@@ -66,11 +73,18 @@ public static class LlmTelemetry
     {
         if (activity is null) return;
 
-        // Output: gen_ai.output.messages JSON array — preferred over span events.
-        activity.SetTag("gen_ai.output.messages",
-            JsonSerializer.Serialize(new[] {
-                new { role = "assistant", content = answer.Length > 4000 ? answer[..4000] : answer }
-            }));
+        // Output: gen_ai.output.messages JSON array — preferred direct attribute.
+        // Also emitted as span event for belt-and-suspenders compatibility.
+        var outputJson = JsonSerializer.Serialize(new[] {
+            new { role = "assistant", content = answer.Length > 4000 ? answer[..4000] : answer }
+        });
+        activity.SetTag("gen_ai.output.messages", outputJson);
+        activity.AddEvent(new ActivityEvent(
+            "gen_ai.client.inference.operation.details",
+            tags: new ActivityTagsCollection(new[] {
+                KeyValuePair.Create<string, object?>("gen_ai.output.messages", outputJson)
+            })
+        ));
 
         activity.SetStatus(isSuccess ? ActivityStatusCode.Ok : ActivityStatusCode.Error);
         // Disposed by the caller's using block; do NOT call Dispose() here.
@@ -121,10 +135,17 @@ public static class LlmTelemetry
         activity.SetTag(SpanKindTag, "llm");
         activity.SetTag("ml_app", MlApp);
 
-        // Input: gen_ai.input.messages JSON array.
-        // NOT gen_ai.prompt.0.role / gen_ai.prompt.0.content — those are not read by OTLP ingestion.
-        activity.SetTag("gen_ai.input.messages",
-            JsonSerializer.Serialize(new[] { new { role = "user", content = prompt } }));
+        // Input: gen_ai.input.messages JSON array — preferred direct attribute.
+        // NOT gen_ai.prompt.0.role / gen_ai.prompt.0.content — not read by OTLP ingestion.
+        // Also emitted as span event for belt-and-suspenders compatibility.
+        var inputJson = JsonSerializer.Serialize(new[] { new { role = "user", content = prompt } });
+        activity.SetTag("gen_ai.input.messages", inputJson);
+        activity.AddEvent(new ActivityEvent(
+            "gen_ai.client.inference.operation.details",
+            tags: new ActivityTagsCollection(new[] {
+                KeyValuePair.Create<string, object?>("gen_ai.input.messages", inputJson)
+            })
+        ));
 
         return activity;
     }
@@ -140,10 +161,17 @@ public static class LlmTelemetry
     {
         if (activity is null) return;
 
-        // Output: gen_ai.output.messages JSON array.
+        // Output: gen_ai.output.messages JSON array — preferred direct attribute.
         // NOT gen_ai.completion.0.role / gen_ai.completion.0.content.
-        activity.SetTag("gen_ai.output.messages",
-            JsonSerializer.Serialize(new[] { new { role = "assistant", content = response } }));
+        // Also emitted as span event for belt-and-suspenders compatibility.
+        var outputJson = JsonSerializer.Serialize(new[] { new { role = "assistant", content = response } });
+        activity.SetTag("gen_ai.output.messages", outputJson);
+        activity.AddEvent(new ActivityEvent(
+            "gen_ai.client.inference.operation.details",
+            tags: new ActivityTagsCollection(new[] {
+                KeyValuePair.Create<string, object?>("gen_ai.output.messages", outputJson)
+            })
+        ));
 
         // Token counts — spec attribute names (gen_ai.usage.*).
         if (inputTokens > 0) activity.SetTag("gen_ai.usage.input_tokens", inputTokens);

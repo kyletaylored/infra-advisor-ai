@@ -23,12 +23,16 @@ ActivitySource("infra-advisor-agent-api-dotnet")
   │     Exports to DD Agent :8126 → Datadog APM
   │
   └─► Non-global OTLP TracerProvider  [TelemetrySetup.cs]
-        POST https://api.datadoghq.com/v1/traces
+        POST https://otlp.datadoghq.com/v1/traces   ← NOT api.datadoghq.com
         Headers: dd-api-key=<key>, dd-otlp-source=llmobs
         → Datadog LLM Observability (NOT APM)
 ```
 
 The `dd-otlp-source=llmobs` header is the routing key. Without it, spans go to APM. The same `Activity` object is captured by both paths simultaneously.
+
+<Aside type="caution">
+**Critical endpoint distinction:** The LLMObs OTLP ingestion host is `otlp.datadoghq.com`, **not** `api.datadoghq.com`. Using `api.datadoghq.com` silently drops all spans — the host resolves but the endpoint rejects the payload with no error surfaced in logs.
+</Aside>
 
 **Required env vars** (`k8s/agent-api-dotnet/configmap.yaml` + secret):
 
@@ -38,7 +42,7 @@ The `dd-otlp-source=llmobs` header is the routing key. Without it, spans go to A
 | `DD_LLMOBS_ENABLED` | `1` | Enables LLMObs feature on the .NET tracer |
 | `DD_LLMOBS_ML_APP` | `infra-advisor` | ML app label in LLMObs UI |
 | `DD_SITE` | `datadoghq.com` | Fallback for constructing the OTLP endpoint |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `https://api.datadoghq.com` | Direct OTLP endpoint for the LLMObs provider |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `https://otlp.datadoghq.com` | Direct OTLP endpoint for the LLMObs provider |
 | `DD_API_KEY` | (K8s secret) | Injected as `dd-api-key` OTLP header |
 
 ---
@@ -85,9 +89,13 @@ Both must be **JSON-serialised arrays** of message objects. The format the backe
 **What does NOT work:**
 - `gen_ai.prompt.0.role` / `gen_ai.prompt.0.content` — not read by OTLP ingestion
 - `gen_ai.completion.0.role` / `gen_ai.completion.0.content` — not read by OTLP ingestion
-- Span events named `gen_ai.user.message` or `gen_ai.choice` — wrong event names
 
-**Span event fallback** (only if not using direct attributes): the event name must be `gen_ai.client.inference.operation.details` with `gen_ai.input.messages` and `gen_ai.output.messages` as event attributes. We use direct attributes (preferred path).
+**Two delivery paths (both used for belt-and-suspenders):**
+
+1. **Direct span attributes** (preferred): `activity.SetTag("gen_ai.input.messages", jsonString)`
+2. **Span events** (belt-and-suspenders): `activity.AddEvent(new ActivityEvent("gen_ai.client.inference.operation.details", tags: ...))` with `gen_ai.input.messages` / `gen_ai.output.messages` as event attributes
+
+Both paths are used in `LlmTelemetry.cs`. The event name must be exactly `gen_ai.client.inference.operation.details` — other names are ignored by the DD backend.
 
 ---
 
@@ -132,18 +140,23 @@ var activity = ActivitySource.StartActivity("invoke_agent", ActivityKind.Interna
 | `gen_ai.conversation.id` | `sessionId` | Maps to `session_id` in LLMObs |
 | `dd.llmobs.span.kind` | `"agent"` | Belt-and-suspenders hint |
 | `ml_app` | `"infra-advisor"` | LLMObs ML app grouping |
-| `gen_ai.input.messages` | `[{"role":"user","content":query}]` (JSON) | Input for agent span |
+| `gen_ai.input.messages` | `[{"role":"user","content":query}]` (JSON) | Input for agent span — also emitted as span event |
 
 ### `EndAgentActivity(activity, answer, isSuccess)`
 
 ```csharp
 activity.SetTag("gen_ai.output.messages",
     JsonSerializer.Serialize(new[] { new { role = "assistant", content = answer } }));
+activity.AddEvent(new ActivityEvent("gen_ai.client.inference.operation.details",
+    tags: new ActivityTagsCollection(new[] {
+        KeyValuePair.Create<string, object?>("gen_ai.output.messages", outputJson)
+    })
+));
 ```
 
 | Attribute | Value | Spec basis |
 |---|---|---|
-| `gen_ai.output.messages` | `[{"role":"assistant","content":answer}]` (JSON) | Output for agent span |
+| `gen_ai.output.messages` | `[{"role":"assistant","content":answer}]` (JSON) | Output for agent span — also emitted as span event |
 
 Disposed by the caller's `using` block — `EndAgentActivity` does **not** call `Dispose()`.
 
@@ -176,18 +189,23 @@ var activity = ActivitySource.StartActivity(
 | `gen_ai.conversation.id` | `sessionId` | Session linking |
 | `dd.llmobs.span.kind` | `"llm"` | Belt-and-suspenders hint |
 | `ml_app` | `"infra-advisor"` | LLMObs ML app grouping |
-| `gen_ai.input.messages` | `[{"role":"user","content":prompt}]` (JSON) | Input shown in LLMObs |
+| `gen_ai.input.messages` | `[{"role":"user","content":prompt}]` (JSON) | Input shown in LLMObs — also emitted as span event |
 
 ### `EndLlmActivity(activity, response, isSuccess, latencyMs, inputTokens, outputTokens, finishReason)`
 
 ```csharp
 activity.SetTag("gen_ai.output.messages",
     JsonSerializer.Serialize(new[] { new { role = "assistant", content = response } }));
+activity.AddEvent(new ActivityEvent("gen_ai.client.inference.operation.details",
+    tags: new ActivityTagsCollection(new[] {
+        KeyValuePair.Create<string, object?>("gen_ai.output.messages", outputJson)
+    })
+));
 ```
 
 | Attribute | Value | Spec basis |
 |---|---|---|
-| `gen_ai.output.messages` | `[{"role":"assistant","content":response}]` (JSON) | Output shown in LLMObs |
+| `gen_ai.output.messages` | `[{"role":"assistant","content":response}]` (JSON) | Output shown in LLMObs — also emitted as span event |
 | `gen_ai.usage.input_tokens` | `inputTokens` (if > 0) | Token count from SDK |
 | `gen_ai.usage.output_tokens` | `outputTokens` (if > 0) | Token count from SDK |
 | `gen_ai.response.finish_reasons` | `["stop"]` or `["tool_calls"]` (JSON array) | Finish reason per spec |
@@ -247,7 +265,7 @@ if (!string.IsNullOrEmpty(ddApiKey))
         .AddSource(ActivitySourceName)          // same name as DD bridge
         .ConfigureResource(r => r.AddService(serviceName)...)
         .AddOtlpExporter(otlp => {
-            otlp.Endpoint = new Uri($"{llmObsEndpoint}/v1/traces");
+            otlp.Endpoint = new Uri($"{llmObsEndpoint.TrimEnd('/')}/v1/traces");
             otlp.Headers  = $"dd-api-key={ddApiKey},dd-otlp-source=llmobs";
             otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
         })
@@ -255,6 +273,8 @@ if (!string.IsNullOrEmpty(ddApiKey))
     builder.Services.AddSingleton(llmObsProvider); // DI disposes on shutdown
 }
 ```
+
+`llmObsEndpoint` resolves to `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` env var (configmap: `https://otlp.datadoghq.com`) or falls back to `https://otlp.{DD_SITE}`. The code appends `/v1/traces`, giving the final URL `https://otlp.datadoghq.com/v1/traces`.
 
 **Why the same `ActivitySourceName`:** A different source name would require its own listener registration. Since the DD bridge automatically captures `ActivitySourceName`, sharing it means both providers see all spans without duplication in either sink.
 
@@ -334,24 +354,42 @@ private async Task<(string, string)> RunRouterAsync(
 | LLM call instrumentation | `ddtrace` auto-instruments LangChain/OpenAI SDK | Manual `LlmTelemetry.StartLlmActivity` / `EndLlmActivity` per call |
 | Span hierarchy | `LLMObs.workflow()` / `.agent()` / `.llm()` decorators | `ActivitySource.StartActivity()` + `LlmTelemetry` helpers |
 | Session linking | `LLMObs.agent()` `session_id` param | `gen_ai.conversation.id` tag on every Activity |
-| Input/output format | LLMObs SDK handles internally | `gen_ai.input.messages` / `gen_ai.output.messages` JSON arrays |
+| Input/output format | LLMObs SDK handles internally | `gen_ai.input.messages` / `gen_ai.output.messages` JSON arrays + span events |
 | Export path to LLMObs | `ddtrace` routes automatically | Non-global OTLP provider with `dd-otlp-source=llmobs` header |
 | Faithfulness evaluation | `LLMObs.submit_evaluation()` — attaches to span | OTel `Histogram<double>` metric `agent.faithfulness_score` — correlates by dimension |
 
 ---
 
-## Debugging
+## Debugging checklist
 
-**Check pod has DD_API_KEY** (required for the LLMObs OTLP provider to initialise):
+**1. Verify endpoint is correct** (root cause of zero LLM traces if wrong):
+```bash
+kubectl get configmap agent-api-dotnet-config -n infra-advisor -o jsonpath='{.data.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT}'
+# Must print: https://otlp.datadoghq.com
+# NOT:        https://api.datadoghq.com
+```
+
+**2. Check pod has DD_API_KEY** (required for the LLMObs OTLP provider to initialise):
 ```bash
 kubectl exec -n infra-advisor deploy/agent-api-dotnet -- env | grep DD_API_KEY
 ```
 
-**Check spans reach APM** (confirms DD bridge is working):
+**3. Check spans reach APM** (confirms DD bridge is working):
 ```bash
 kubectl logs -n infra-advisor deploy/agent-api-dotnet --tail=100 | grep dd.trace_id
 ```
 
+**4. Verify span kind** by querying APM for `gen_ai.operation.name:invoke_agent` — if the agent span appears in APM but not LLMObs, the OTLP provider is not initialising (missing `DD_API_KEY` or wrong endpoint).
+
 **Expected 3–5 minute delay** before spans appear in LLMObs after first deploy.
 
-**Verify span kind** by querying APM for `gen_ai.operation.name:invoke_agent` — if the agent span appears in APM but not LLMObs, the OTLP provider is not initialising (missing `DD_API_KEY`).
+### Common silent failures
+
+| Symptom | Root cause |
+|---|---|
+| No LLM traces at all | Wrong OTLP endpoint host (`api.` instead of `otlp.`) |
+| Spans in APM but not LLMObs | Missing `DD_API_KEY` or non-global OTLP provider not initialising |
+| Sessions not appearing | Using `session.id` instead of `gen_ai.conversation.id` |
+| Spans appear as "workflow" not "llm" | Wrong `gen_ai.operation.name` (e.g. `"run_agent"` instead of `"invoke_agent"`) |
+| Input/output missing in LLMObs | Using `gen_ai.prompt.0.*` / `gen_ai.completion.0.*` attribute names |
+| Tags silently missing | Using `llm.*` or `_dd.*` prefix — filtered by DD backend |

@@ -49,7 +49,7 @@ public static class TelemetrySetup
         var ddApiKey = Environment.GetEnvironmentVariable("DD_API_KEY") ?? "";
         var ddSite = Environment.GetEnvironmentVariable("DD_SITE") ?? "datadoghq.com";
         var llmObsEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
-            ?? $"https://api.{ddSite}";
+            ?? $"https://otlp.{ddSite}";
 
         if (!string.IsNullOrEmpty(ddApiKey))
         {
