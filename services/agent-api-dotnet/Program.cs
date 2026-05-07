@@ -58,7 +58,11 @@ Environment.SetEnvironmentVariable("KAFKA_BOOTSTRAP_SERVERS", kafkaBootstrapServ
 TelemetrySetup.Configure(builder);
 
 // ── ActivitySource (custom spans) ─────────────────────────────────────────────
-builder.Services.AddSingleton(new ActivitySource(TelemetrySetup.ActivitySourceName));
+// Use the same ActivitySource instance as LlmTelemetry so all spans — agent,
+// router, specialist, and LLM — share one instance and are captured together
+// by the DD bridge listener. Two instances with the same name can produce
+// disconnected trace contexts when the DD bridge tracks by instance reference.
+builder.Services.AddSingleton(LlmTelemetry.ActivitySource);
 
 // ── AppState singleton ────────────────────────────────────────────────────────
 builder.Services.AddSingleton(new AppState());

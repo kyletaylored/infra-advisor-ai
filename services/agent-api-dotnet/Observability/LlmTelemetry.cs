@@ -18,13 +18,17 @@ namespace InfraAdvisor.AgentApi.Observability;
 //                 Belt-and-suspenders: also emitted as gen_ai.client.inference.operation.details span event
 // Provider:       gen_ai.provider.name (primary), gen_ai.system (fallback)
 // Filtered tags:  _dd.*, llm.*, ddtags, events — silently dropped by DD backend
-// OTLP endpoint:  https://otlp.datadoghq.com/v1/traces (NOT api.datadoghq.com)
+// OTLP endpoint:  https://otlp.us3.datadoghq.com/v1/traces (US3)
+//
+// ActivitySource: callers pass the DI singleton ActivitySource so all spans share
+// one instance. Two ActivitySource instances with the same name can produce
+// disconnected trace contexts in the DD bridge.
 
 public static class LlmTelemetry
 {
-    // Shares the service ActivitySource so both the DD bridge (APM via :8126,
-    // DD_TRACE_OTEL_ENABLED=true) and the non-global OTLP LLMObs provider capture
-    // every span in the same trace without a separate AddSource() registration.
+    // The shared ActivitySource — registered in DI (Program.cs) and injected into
+    // AgentService. All LlmTelemetry methods receive this instance as a parameter
+    // so agent, router, specialist, and LLM spans all belong to the same trace.
     public static readonly ActivitySource ActivitySource =
         new(TelemetrySetup.ActivitySourceName, "1.0.0");
 
@@ -38,10 +42,14 @@ public static class LlmTelemetry
     // Wraps the entire query lifecycle. gen_ai.operation.name = "invoke_agent"
     // maps this to the "agent" span kind in DD LLMObs.
 
-    public static Activity? StartAgentActivity(string agentName, string query, string sessionId)
+    public static Activity? StartAgentActivity(
+        ActivitySource source,
+        string agentName,
+        string query,
+        string sessionId)
     {
         // Span name matches gen_ai.operation.name per OTel GenAI agent spans spec.
-        var activity = ActivitySource.StartActivity("invoke_agent", ActivityKind.Internal);
+        var activity = source.StartActivity("invoke_agent", ActivityKind.Internal);
         if (activity is null) return null;
 
         // Required: operation name drives span kind resolution in LLMObs.
@@ -109,6 +117,7 @@ public static class LlmTelemetry
     // are set; DD reads whichever is present.
 
     public static Activity? StartLlmActivity(
+        ActivitySource source,
         string modelName,
         string prompt,
         string sessionId,
@@ -116,7 +125,7 @@ public static class LlmTelemetry
         string provider = "azure_openai",
         string? name = null)
     {
-        var activity = ActivitySource.StartActivity(
+        var activity = source.StartActivity(
             name ?? $"{operation} {modelName}",
             ActivityKind.Client);
         if (activity is null) return null;

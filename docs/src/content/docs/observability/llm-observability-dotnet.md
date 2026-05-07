@@ -16,14 +16,14 @@ The Python Agent API gets LLM Observability automatically via `ddtrace` auto-ins
 ## Export path
 
 ```
-ActivitySource("infra-advisor-agent-api-dotnet")
+ActivitySource("infra-advisor-agent-api-dotnet")  ← SINGLE shared instance (DI singleton)
   │
   ├─► DD bridge (DD_TRACE_OTEL_ENABLED=true)
   │     .NET tracer becomes global OTel TracerProvider
   │     Exports to DD Agent :8126 → Datadog APM
   │
   └─► Non-global OTLP TracerProvider  [TelemetrySetup.cs]
-        POST https://otlp.datadoghq.com/v1/traces   ← NOT api.datadoghq.com
+        POST https://otlp.us3.datadoghq.com/v1/traces
         Headers: dd-api-key=<key>, dd-otlp-source=llmobs
         → Datadog LLM Observability (NOT APM)
 ```
@@ -31,7 +31,11 @@ ActivitySource("infra-advisor-agent-api-dotnet")
 The `dd-otlp-source=llmobs` header is the routing key. Without it, spans go to APM. The same `Activity` object is captured by both paths simultaneously.
 
 <Aside type="caution">
-**Critical endpoint distinction:** The LLMObs OTLP ingestion host is `otlp.datadoghq.com`, **not** `api.datadoghq.com`. Using `api.datadoghq.com` silently drops all spans — the host resolves but the endpoint rejects the payload with no error surfaced in logs.
+**Two endpoint pitfalls:**
+1. Host: use `otlp.{DD_SITE}` not `api.{DD_SITE}` — `api.` silently drops all LLMObs payloads
+2. Site: US3 is `us3.datadoghq.com`, US1 is `datadoghq.com` — mixing sites sends spans to the wrong org
+
+**ActivitySource must be a single shared instance.** Two `ActivitySource` objects with the same name produce disconnected trace contexts — spans from one instance appear as "span links" in APM instead of children of the HTTP request span. `Program.cs` registers `LlmTelemetry.ActivitySource` as the DI singleton and all `LlmTelemetry` methods accept it as a parameter.
 </Aside>
 
 **Required env vars** (`k8s/agent-api-dotnet/configmap.yaml` + secret):
@@ -41,8 +45,8 @@ The `dd-otlp-source=llmobs` header is the routing key. Without it, spans go to A
 | `DD_TRACE_OTEL_ENABLED` | `true` | Activates the DD bridge as global TracerProvider |
 | `DD_LLMOBS_ENABLED` | `1` | Enables LLMObs feature on the .NET tracer |
 | `DD_LLMOBS_ML_APP` | `infra-advisor` | ML app label in LLMObs UI |
-| `DD_SITE` | `datadoghq.com` | Fallback for constructing the OTLP endpoint |
-| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `https://otlp.datadoghq.com` | Direct OTLP endpoint for the LLMObs provider |
+| `DD_SITE` | `us3.datadoghq.com` | US3 site — used as fallback for OTLP endpoint construction |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | `https://otlp.us3.datadoghq.com` | Direct OTLP endpoint for the LLMObs provider |
 | `DD_API_KEY` | (K8s secret) | Injected as `dd-api-key` OTLP header |
 
 ---
@@ -125,12 +129,12 @@ Latency is tracked as `gen_ai.latency_ms` (outside the filtered namespaces).
 
 `services/agent-api-dotnet/Observability/LlmTelemetry.cs`
 
-### `StartAgentActivity(agentName, query, sessionId)`
+### `StartAgentActivity(source, agentName, query, sessionId)`
 
-Creates the top-level span that wraps the entire query lifecycle.
+Creates the top-level span that wraps the entire query lifecycle. `source` must be the DI singleton — **not** `LlmTelemetry.ActivitySource` directly — so the span is parented under the HTTP request Activity that the DD bridge is already tracking.
 
 ```csharp
-var activity = ActivitySource.StartActivity("invoke_agent", ActivityKind.Internal);
+var activity = source.StartActivity("invoke_agent", ActivityKind.Internal);
 ```
 
 | Attribute | Value | Spec basis |
@@ -170,7 +174,7 @@ Tags the `router` and `specialist-*` spans as workflow kind. No `gen_ai.operatio
 | `dd.llmobs.span.kind` | `"workflow"` | Explicit hint (no op name maps to workflow) |
 | `ml_app` | `"infra-advisor"` | LLMObs ML app grouping |
 
-### `StartLlmActivity(modelName, prompt, sessionId, operation, provider, name)`
+### `StartLlmActivity(source, modelName, prompt, sessionId, operation, provider, name)`
 
 Creates one span per `CompleteChatAsync` call.
 
@@ -365,8 +369,12 @@ private async Task<(string, string)> RunRouterAsync(
 **1. Verify endpoint is correct** (root cause of zero LLM traces if wrong):
 ```bash
 kubectl get configmap agent-api-dotnet-config -n infra-advisor -o jsonpath='{.data.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT}'
-# Must print: https://otlp.datadoghq.com
-# NOT:        https://api.datadoghq.com
+# Must print: https://otlp.us3.datadoghq.com   (US3)
+# NOT:        https://api.datadoghq.com          (wrong host)
+# NOT:        https://otlp.datadoghq.com          (wrong site — US1 not US3)
+
+kubectl get configmap agent-api-dotnet-config -n infra-advisor -o jsonpath='{.data.DD_SITE}'
+# Must print: us3.datadoghq.com
 ```
 
 **2. Check pod has DD_API_KEY** (required for the LLMObs OTLP provider to initialise):
@@ -387,8 +395,9 @@ kubectl logs -n infra-advisor deploy/agent-api-dotnet --tail=100 | grep dd.trace
 
 | Symptom | Root cause |
 |---|---|
-| No LLM traces at all | Wrong OTLP endpoint host (`api.` instead of `otlp.`) |
+| No LLM traces at all | Wrong OTLP endpoint host (`api.` instead of `otlp.`) or wrong site (`datadoghq.com` instead of `us3.datadoghq.com`) |
 | Spans in APM but not LLMObs | Missing `DD_API_KEY` or non-global OTLP provider not initialising |
+| LLM spans appear as "span links" | Two `ActivitySource` instances with the same name — spans start new traces instead of inheriting HTTP context |
 | Sessions not appearing | Using `session.id` instead of `gen_ai.conversation.id` |
 | Spans appear as "workflow" not "llm" | Wrong `gen_ai.operation.name` (e.g. `"run_agent"` instead of `"invoke_agent"`) |
 | Input/output missing in LLMObs | Using `gen_ai.prompt.0.*` / `gen_ai.completion.0.*` attribute names |

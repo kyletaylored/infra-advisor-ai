@@ -233,7 +233,7 @@ public class AgentService
 
         // Top-level agent span — parent for all router, specialist, and LLM child spans.
         // dd.llmobs.span.kind="agent" makes this the root in the DD LLM Observability trace view.
-        using var agentActivity = LlmTelemetry.StartAgentActivity("infra-advisor", query, obsSessionId);
+        using var agentActivity = LlmTelemetry.StartAgentActivity(_activitySource, "infra-advisor", query, obsSessionId);
 
         // ── Router ────────────────────────────────────────────────────────────
         string specialist;
@@ -311,6 +311,7 @@ public class AgentService
                 var lastUserMsg = messages.OfType<UserChatMessage>().LastOrDefault();
                 var promptText = lastUserMsg?.Content?.FirstOrDefault()?.Text ?? query;
                 using var llmSpan = LlmTelemetry.StartLlmActivity(
+                    source: _activitySource,
                     modelName: dep,
                     prompt: promptText.Length > 500 ? promptText[..500] : promptText,
                     sessionId: obsSessionId,
@@ -438,6 +439,7 @@ public class AgentService
 
             var sw = Stopwatch.StartNew();
             using var llmActivity = LlmTelemetry.StartLlmActivity(
+                source: _activitySource,
                 modelName: _defaultDeployment,
                 prompt: query,
                 sessionId: sessionId,
