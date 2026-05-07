@@ -206,7 +206,11 @@ app.MapPost("/query", async (
     var rumSessionId = httpContext.Request.Headers["X-DD-RUM-Session-ID"].FirstOrDefault();
     var conversationId = httpContext.Request.Headers["X-Conversation-ID"].FirstOrDefault();
     var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
-    var sessionId = headerSessionId ?? body.SessionId ?? Guid.NewGuid().ToString();
+    // body.SessionId is the canonical source: the frontend resolves
+    // getRumSessionId() ?? getSessionId() before serialising the body, so it
+    // already contains the best available session anchor. Headers are a fallback
+    // in case the request comes from a client that doesn't set the body field.
+    var sessionId = body.SessionId ?? headerSessionId ?? Guid.NewGuid().ToString();
 
     // Resolve model: request body > session memory > default
     string deployment;
@@ -229,7 +233,6 @@ app.MapPost("/query", async (
             query: body.Query,
             sessionId: sessionId,
             deployment: deployment,
-            rumSessionId: rumSessionId,
             ct: httpContext.RequestAborted);
     }
     catch (Exception ex)

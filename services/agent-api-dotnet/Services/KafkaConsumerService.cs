@@ -114,7 +114,6 @@ public class KafkaConsumerService : BackgroundService
                         query: evt.Query,
                         sessionId: evt.SessionId,
                         deployment: "",
-                        rumSessionId: null,
                         ct: stoppingToken);
                 }
                 catch (Exception ex)

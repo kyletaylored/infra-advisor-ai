@@ -128,16 +128,23 @@ export async function sendQuery(
   conversationId?: string,
   userId?: string,
 ): Promise<QueryResponse> {
+  // Prefer the Datadog RUM session ID so gen_ai.conversation.id in LLMObs maps
+  // directly to the RUM session — enabling LLMObs ↔ RUM correlation in Datadog.
+  // Fall back to the localStorage-persisted UUID when RUM is not initialised.
+  const sessionId = getRumSessionId() ?? getSessionId();
+
   const response = await fetch(`${getApiBase()}/query`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "X-Session-ID": getSessionId(),
+      "X-Session-ID": sessionId,
       ...(conversationId ? { "X-Conversation-ID": conversationId } : {}),
       ...(userId ? { "X-User-ID": userId } : {}),
       ...rumHeaders(),
     },
-    body: JSON.stringify({ query, ...(model ? { model } : {}) }),
+    // session_id in the body is the canonical source — headers can be stripped
+    // by proxies but the POST body always reaches the backend.
+    body: JSON.stringify({ query, session_id: sessionId, ...(model ? { model } : {}) }),
   });
 
   if (!response.ok) {

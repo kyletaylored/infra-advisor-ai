@@ -220,10 +220,11 @@ public class AgentService
         string query,
         string sessionId,
         string deployment,
-        string? rumSessionId = null,
         CancellationToken ct = default)
     {
-        var obsSessionId = rumSessionId ?? sessionId;
+        // sessionId is the resolved session anchor from the caller (Program.cs):
+        // body.session_id (RUM session ID or localStorage UUID) → header → Guid.NewGuid().
+        var obsSessionId = sessionId;
         var queryDomain = ClassifyDomain(query);
         var dep = string.IsNullOrWhiteSpace(deployment) ? _defaultDeployment : deployment;
         var chatClient = _azureClient.GetChatClient(dep);
