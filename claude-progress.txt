@@ -1,3 +1,24 @@
+[2026-05-07] Fix US3 endpoint + ActivitySource split causing span links (6b85b92)
+  Two root causes identified from exported trace (test-spans.json analysis):
+
+  1. Wrong site: configmap had DD_SITE=datadoghq.com (US1), OTLP endpoint was
+     otlp.datadoghq.com. User is on US3 → changed both to us3.datadoghq.com.
+     Spans were being sent to the wrong org's ingestion endpoint.
+
+  2. Split ActivitySource: LlmTelemetry.ActivitySource (static) was a DIFFERENT
+     instance from the DI singleton ActivitySource used by router/specialist spans.
+     Even with the same name, two instances caused the DD bridge to track them
+     separately — invoke_agent spans started new root traces instead of inheriting
+     the HTTP request context. Result: LLM spans appeared as "span links" in APM,
+     not as children of POST /query.
+     Fix: Program.cs registers LlmTelemetry.ActivitySource as the DI singleton;
+     StartAgentActivity/StartLlmActivity now accept source as a parameter.
+
+  Verified:
+  [x] dotnet build: 0 errors
+  [x] git push: 6b85b92
+  [~] LLM spans visible in DD LLMObs US3: pending k8s deploy
+
 [2026-05-07] Fix OTLP endpoint hostname + add span events (f622c74)
   Root cause of zero LLM traces: OTLP endpoint was api.datadoghq.com — must be
   otlp.datadoghq.com. Host resolves but silently rejects all LLMObs payloads.
