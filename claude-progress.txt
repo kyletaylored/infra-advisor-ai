@@ -1,3 +1,22 @@
+[2026-05-07] Fix parts array message format + execute_tool spans (16d3745)
+  Two LLMObs display issues resolved from live trace inspection:
+
+  1. Message format: [No parts array - invalid otel message format] in LLMObs UI.
+     DD backend requires: [{"role","parts":[{"type":"text","content":"..."}]}]
+     Flat {role, content} format is silently invalid. All LlmTelemetry message
+     serialization updated; extracted into SetInputMessages/SetOutputMessages helpers.
+
+  2. Tool call span links: MCP tool calls appeared as "span links" because
+     mcp-server-dotnet spans live in a separate trace. Fixed by adding
+     StartToolActivity/EndToolActivity in agent-api-dotnet around each
+     _mcpClient.InvokeToolAsync call. gen_ai.operation.name=execute_tool
+     maps to "tool" kind in LLMObs. Now first-class children of specialist span.
+
+  Verified:
+  [x] dotnet build: 0 errors
+  [x] git push: 16d3745
+  [~] LLM spans with correct format visible in DD LLMObs US3: pending k8s deploy
+
 [2026-05-07] Fix US3 endpoint + ActivitySource split causing span links (6b85b92)
   Two root causes identified from exported trace (test-spans.json analysis):
 
