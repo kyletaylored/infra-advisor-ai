@@ -128,14 +128,16 @@ create-agent-api-secret: ## Create agent-api-secret K8s Secret (Azure OpenAI key
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ agent-api-secret created in namespace $(NAMESPACE)"
 
-create-agent-api-dotnet-secret: ## Create agent-api-dotnet-secret K8s Secret (Azure OpenAI keys + DATABASE_URL)
+create-agent-api-dotnet-secret: ## Create agent-api-dotnet-secret K8s Secret (Azure OpenAI keys + DATABASE_URL + DD_API_KEY)
 	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ]; then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set"; exit 1; fi
 	@if [ -z "$(AZURE_OPENAI_API_KEY)" ];  then echo "ERROR: AZURE_OPENAI_API_KEY is not set";  exit 1; fi
+	@if [ -z "$(DD_API_KEY)" ];            then echo "WARN: DD_API_KEY not set — LLM Observability OTLP export will be disabled"; fi
 	@if [ -z "$(DATABASE_URL)" ]; then echo "WARN: DATABASE_URL not set — conversation persistence will be disabled"; fi
 	kubectl create secret generic agent-api-dotnet-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
 		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
+		$(if $(DD_API_KEY),--from-literal=DD_API_KEY=$(DD_API_KEY),) \
 		$(if $(DATABASE_URL),--from-literal=DATABASE_URL=$(DATABASE_URL),) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ agent-api-dotnet-secret created in namespace $(NAMESPACE)"
