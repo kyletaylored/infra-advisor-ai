@@ -1,3 +1,26 @@
+[2026-05-08] Fix LLMObs OTLP export: switch to .WithTracing() hosting integration (34ec6bc)
+  Root cause: non-global Sdk.CreateTracerProviderBuilder() provider's BatchExportProcessor
+  background flush loop never started correctly alongside DD_TRACE_OTEL_ENABLED=true.
+  Smoking gun: pod logs showed OtlpMetricExporter making HTTP calls every ~60s but zero
+  OtlpTraceExporter calls despite real agent queries running (MCP tool HTTP logs visible).
+
+  The metrics exporter works because it uses .WithMetrics() in the AddOpenTelemetry()
+  hosting chain, which registers the periodic reader via ASP.NET Core IHostedService.
+  The trace exporter used Sdk.CreateTracerProviderBuilder().Build() + AddSingleton —
+  the BatchExportProcessor started but its flush loop was not properly integrated with
+  the hosted service lifecycle, so spans accumulated but were never sent.
+
+  Fix: moved LLMObs OTLP trace provider into .WithTracing() on the same
+  AddOpenTelemetry() builder. ASP.NET Core's IHostedService now manages the
+  BatchExportProcessor flush loop the same way it manages metrics.
+  AlwaysOnSampler and dd-otlp-source=llmobs header unchanged.
+
+  Verified:
+  [x] dotnet build: 0 errors
+  [x] git push: 34ec6bc (CI building agent-api-dotnet image)
+  [~] OtlpTraceExporter HTTP calls visible in pod logs after deploy: pending CI
+  [~] UI LLM prompt traces visible in DD LLMObs US3: pending CI deploy + live query
+
 [2026-05-08] UI refactor: sources panel inside chat, icons, nav cleanup, debug labels (94d8b64)
   Four changes to improve UI usability and debuggability:
 
