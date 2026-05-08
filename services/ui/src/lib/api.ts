@@ -87,6 +87,12 @@ export function newConversation(): string {
   return _sessionId;
 }
 
+/** Set the session ID to an explicit value (e.g. a conversation ID loaded from URL or DB). */
+export function setSessionId(id: string): void {
+  _sessionId = id;
+  localStorage.setItem(SESSION_STORAGE_KEY, id);
+}
+
 function rumHeaders(): Record<string, string> {
   const rumSessionId = getRumSessionId();
   return rumSessionId ? { "X-DD-RUM-Session-ID": rumSessionId } : {};

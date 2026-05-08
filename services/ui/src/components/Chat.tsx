@@ -20,7 +20,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Gauge, HardHat, ShieldCheck, Briefcase, Compass, ExternalLink, ChartNoAxesGantt, SquarePen, ChevronLeft } from "lucide-react";
 import { hasSeenTour, startTour } from "../lib/tour";
-import { ApiError, BackendType, BridgeData, Citation, ConversationDetail, ConversationSummary, FeedbackRating, QueryResponse, SuggestionItem, createConversation, deleteConversation, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, getBackend, getConversation, getModel, newConversation, sendQuery, setBackend, setModel, submitFeedback } from "../lib/api";
+import { ApiError, BackendType, BridgeData, Citation, ConversationDetail, ConversationSummary, FeedbackRating, QueryResponse, SuggestionItem, createConversation, deleteConversation, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, getBackend, getConversation, getModel, newConversation, sendQuery, setBackend, setModel, setSessionId, submitFeedback } from "../lib/api";
 import {
   trackBridgeCardRendered,
   trackMessageCopied,
@@ -514,6 +514,57 @@ export function Chat() {
     });
   }, []);
 
+  // Load a conversation by raw ID (used for ?c= URL param on mount)
+  async function loadConversationById(id: string) {
+    if (!user?.id) return;
+    const detail: ConversationDetail | null = await getConversation(id, user.id);
+    if (!detail) return;
+
+    setConversationId(detail.id);
+    setActiveCitations([]);
+    setError(null);
+    setInput("");
+
+    const loaded: Message[] = detail.messages.map((m) => ({
+      role: m.role as "user" | "assistant",
+      content: m.content,
+      sources: m.sources,
+      citations: m.sources.map(sourceToCitation),
+      bridges: [],
+      traceId: m.trace_id,
+      spanId: m.span_id,
+    }));
+    setMessages(loaded);
+
+    const lastAiIdx = [...loaded].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === "assistant");
+    if (lastAiIdx) {
+      setActiveCitations(lastAiIdx.m.citations);
+      setActiveMsgIdx(lastAiIdx.i);
+    }
+
+    if (detail.model && availableModels.includes(detail.model)) setSelectedModel(detail.model);
+    if (detail.backend) setSelectedBackend(detail.backend as BackendType);
+
+    setRecommendations(getFollowUpSuggestions(lastAiIdx?.m.sources ?? []));
+  }
+
+  // On mount: read ?c= from the URL and load that conversation
+  useEffect(() => {
+    const cId = new URLSearchParams(window.location.search).get('c');
+    if (cId && user?.id) loadConversationById(cId);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps — intentionally runs once
+
+  // Keep the URL ?c= param in sync with the active conversationId
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    if (conversationId) {
+      url.searchParams.set('c', conversationId);
+    } else {
+      url.searchParams.delete('c');
+    }
+    window.history.replaceState(null, '', url.toString());
+  }, [conversationId]);
+
   // Core submit logic — accepts query directly so pills can auto-submit without
   // relying on `input` state (avoids React batching issues).
   async function submit(query: string) {
@@ -599,6 +650,7 @@ export function Chat() {
     if (!detail) return;
 
     setConversationId(conv.id);
+    setSessionId(conv.id);
     setActiveCitations([]);
     setError(null);
     setInput("");
@@ -707,7 +759,7 @@ export function Chat() {
             color="gray.400"
             _hover={{ color: "green.600", bg: "green.50" }}
             onClick={() => {
-              newConversation();
+              setSessionId(newConversation());
               setMessages([]);
               setActiveCitations([]);
               setActiveMsgIdx(null);
@@ -804,7 +856,7 @@ export function Chat() {
             activeId={conversationId}
             onSelect={handleSelectConversation}
             onNew={() => {
-              newConversation();
+              setSessionId(newConversation());
               setMessages([]);
               setActiveCitations([]);
               setActiveMsgIdx(null);

@@ -1,3 +1,26 @@
+[2026-05-07] Fix missing UI LLM traces: AlwaysOnSampler on non-global OTLP provider (e7ab3c5)
+  Problem: UI-originated LLM traces absent from DD LLMObs; Kafka eval traces visible.
+  Root cause: non-global OTLP TracerProvider used default ParentBasedSampler.
+  For UI requests, DD bridge holds the HTTP span as Activity.Current parent and can
+  set Recorded=0 on its OTel-facing activity. ParentBasedSampler inherits that flag
+  on invoke_agent and all child spans → SetTag() becomes a no-op → spans export with
+  zero gen_ai.* attributes → DD LLMObs silently drops them.
+  Kafka traces were immune: eval.agent_run has no parent (background thread) →
+  ParentBasedSampler root case fires → AlwaysOnSampler → all spans recorded.
+  Also fixed: DD_API_KEY missing from agent-api-dotnet-secret (ff959c2) — the
+  non-global OTLP TracerProvider was never created without it.
+
+  Fix: .SetSampler(new AlwaysOnSampler()) on the non-global OTLP TracerProvider in
+  TelemetrySetup.cs. Forces recording of all spans from our ActivitySource regardless
+  of the DD bridge's sampling decision for the HTTP parent span.
+  Updated Makefile + k8s/secrets/agent-api-dotnet-secret.yaml to include DD_API_KEY
+  so future deploys don't drop the key.
+
+  Verified:
+  [x] dotnet build: 0 errors
+  [x] git push: e7ab3c5 (CI building agent-api-dotnet image)
+  [~] UI LLM prompt traces visible in DD LLMObs US3: pending CI deploy + live query
+
 [2026-05-07] Fix session ID propagation for LLMObs session grouping (e3e2116)
   Problem: each query reported as a different LLMObs session.
   Root cause: session ID sent as X-Session-ID header only; NGINX proxy rewrites

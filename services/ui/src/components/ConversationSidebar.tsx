@@ -8,7 +8,7 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
-import { MessageSquarePlus, Trash2 } from "lucide-react";
+import { Check, MessageSquarePlus, Trash2, X } from "lucide-react";
 import { ConversationSummary, deleteConversation, listConversations } from "../lib/api";
 
 interface Props {
@@ -23,6 +23,7 @@ export function ConversationSidebar({ userId, activeId, onSelect, onNew, refresh
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmingId, setConfirmingId] = useState<string | null>(null);
 
   useEffect(() => {
     setLoading(true);
@@ -32,15 +33,26 @@ export function ConversationSidebar({ userId, activeId, onSelect, onNew, refresh
     });
   }, [userId, refreshTrigger]);
 
-  async function handleDelete(e: React.MouseEvent, id: string) {
+  useEffect(() => {
+    if (!confirmingId) return;
+    const t = setTimeout(() => setConfirmingId(null), 4000);
+    return () => clearTimeout(t);
+  }, [confirmingId]);
+
+  async function handleDeleteClick(e: React.MouseEvent, id: string) {
     e.stopPropagation();
-    setDeletingId(id);
-    const ok = await deleteConversation(id, userId);
-    if (ok) {
-      setConversations((prev) => prev.filter((c) => c.id !== id));
-      if (activeId === id) onNew();
+    if (confirmingId === id) {
+      setConfirmingId(null);
+      setDeletingId(id);
+      const ok = await deleteConversation(id, userId);
+      if (ok) {
+        setConversations((prev) => prev.filter((c) => c.id !== id));
+        if (activeId === id) onNew();
+      }
+      setDeletingId(null);
+    } else {
+      setConfirmingId(id);
     }
-    setDeletingId(null);
   }
 
   function formatDate(iso: string): string {
@@ -110,42 +122,79 @@ export function ConversationSidebar({ userId, activeId, onSelect, onNew, refresh
                 role="option"
                 aria-selected={activeId === conv.id}
               >
-                <Flex justify="space-between" align="flex-start" gap={1}>
-                  <VStack gap={0} align="flex-start" flex={1} minW={0}>
-                    <Text fontSize="xs" fontWeight={activeId === conv.id ? "semibold" : "normal"} color="gray.700" lineClamp={2}>
-                      {conv.title}
+                {confirmingId === conv.id ? (
+                  <Flex w="full" align="center" justify="space-between" gap={1}>
+                    <Text fontSize="xs" color="red.600" fontWeight="medium" flex={1} truncate>
+                      Delete?
                     </Text>
-                    <HStack gap={1.5} mt={0.5}>
-                      <Text fontSize="10px" color="gray.400" fontFamily="mono">
-                        {formatDate(conv.updated_at)}
-                      </Text>
-                      <Text
-                        fontSize="10px"
-                        color={conv.backend === "dotnet" ? "teal.500" : "gray.400"}
-                        fontFamily="mono"
+                    <HStack gap={0.5}>
+                      <IconButton
+                        aria-label="Confirm delete"
+                        size="xs"
+                        variant="ghost"
+                        colorPalette="red"
+                        borderRadius="sm"
+                        h="18px"
+                        w="18px"
+                        minW="18px"
+                        loading={deletingId === conv.id}
+                        onClick={(e) => handleDeleteClick(e, conv.id)}
                       >
-                        {conv.backend === "dotnet" ? ".NET" : "PY"}
-                      </Text>
+                        <Check size={11} />
+                      </IconButton>
+                      <IconButton
+                        aria-label="Cancel delete"
+                        size="xs"
+                        variant="ghost"
+                        colorPalette="gray"
+                        borderRadius="sm"
+                        h="18px"
+                        w="18px"
+                        minW="18px"
+                        onClick={(e) => { e.stopPropagation(); setConfirmingId(null); }}
+                      >
+                        <X size={11} />
+                      </IconButton>
                     </HStack>
-                  </VStack>
-                  <IconButton
-                    aria-label="Delete"
-                    size="xs"
-                    variant="ghost"
-                    colorPalette="red"
-                    borderRadius="sm"
-                    h="18px"
-                    w="18px"
-                    minW="18px"
-                    flexShrink={0}
-                    opacity={0.3}
-                    _hover={{ opacity: 1 }}
-                    onClick={(e) => handleDelete(e, conv.id)}
-                    loading={deletingId === conv.id}
-                  >
-                    <Trash2 size={11} />
-                  </IconButton>
-                </Flex>
+                  </Flex>
+                ) : (
+                  <Flex justify="space-between" align="flex-start" gap={1}>
+                    <VStack gap={0} align="flex-start" flex={1} minW={0}>
+                      <Text fontSize="xs" fontWeight={activeId === conv.id ? "semibold" : "normal"} color="gray.700" lineClamp={2}>
+                        {conv.title}
+                      </Text>
+                      <HStack gap={1.5} mt={0.5}>
+                        <Text fontSize="10px" color="gray.400" fontFamily="mono">
+                          {formatDate(conv.updated_at)}
+                        </Text>
+                        <Text
+                          fontSize="10px"
+                          color={conv.backend === "dotnet" ? "teal.500" : "gray.400"}
+                          fontFamily="mono"
+                        >
+                          {conv.backend === "dotnet" ? ".NET" : "PY"}
+                        </Text>
+                      </HStack>
+                    </VStack>
+                    <IconButton
+                      aria-label="Delete"
+                      size="xs"
+                      variant="ghost"
+                      colorPalette="red"
+                      borderRadius="sm"
+                      h="18px"
+                      w="18px"
+                      minW="18px"
+                      flexShrink={0}
+                      opacity={0.3}
+                      _hover={{ opacity: 1 }}
+                      onClick={(e) => handleDeleteClick(e, conv.id)}
+                      loading={deletingId === conv.id}
+                    >
+                      <Trash2 size={11} />
+                    </IconButton>
+                  </Flex>
+                )}
               </Box>
             ))}
           </VStack>
