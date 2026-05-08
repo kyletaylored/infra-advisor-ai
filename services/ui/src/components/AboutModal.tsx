@@ -9,6 +9,8 @@ import {
   Text,
   VStack,
 } from "@chakra-ui/react";
+import { MapPin, BarChart2, FileText, Lightbulb, RefreshCw, X } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 
 const DATA_SOURCES = [
   { label: "FHWA NBI",       color: "orange", desc: "National Bridge Inventory — structural ratings & ADT" },
@@ -21,12 +23,12 @@ const DATA_SOURCES = [
   { label: "Internal KB",     color: "gray",   desc: "Firm case studies, risk frameworks & templates" },
 ];
 
-const TIPS = [
-  { icon: "📍", text: "Specify geography — \"Harris County, TX\" returns tighter results than \"Texas\"." },
-  { icon: "📊", text: "Add thresholds — e.g. \"ADT over 10,000\" or \"inspection before 2022\"." },
-  { icon: "📝", text: "Ask for documents — \"Draft a scope of work for…\" generates a structured template." },
-  { icon: "💡", text: "Use the suggestion pills after a response to explore related data dimensions." },
-  { icon: "🔁", text: "Follow up in the same session — the agent remembers context across turns." },
+const TIPS: { Icon: LucideIcon; text: string }[] = [
+  { Icon: MapPin,     text: "Specify geography — \"Harris County, TX\" returns tighter results than \"Texas\"." },
+  { Icon: BarChart2,  text: "Add thresholds — e.g. \"ADT over 10,000\" or \"inspection before 2022\"." },
+  { Icon: FileText,   text: "Ask for documents — \"Draft a scope of work for…\" generates a structured template." },
+  { Icon: Lightbulb,  text: "Use the suggestion pills after a response to explore related data dimensions." },
+  { Icon: RefreshCw,  text: "Follow up in the same session — the agent remembers context across turns." },
 ];
 
 export function AboutModal() {
@@ -65,7 +67,7 @@ export function AboutModal() {
                 </VStack>
                 <Dialog.CloseTrigger asChild>
                   <Button size="xs" variant="ghost" colorPalette="gray" borderRadius="md" px={2} h="26px">
-                    ✕
+                    <X size={12} />
                   </Button>
                 </Dialog.CloseTrigger>
               </HStack>
@@ -118,9 +120,11 @@ export function AboutModal() {
                     Tips for better results
                   </Text>
                   <VStack align="stretch" gap={1.5}>
-                    {TIPS.map((tip) => (
-                      <HStack key={tip.icon} align="start" gap={2}>
-                        <Text fontSize="sm" flexShrink={0}>{tip.icon}</Text>
+                    {TIPS.map((tip, i) => (
+                      <HStack key={i} align="start" gap={2}>
+                        <Box color="gray.400" flexShrink={0} mt="1px">
+                          <tip.Icon size={13} />
+                        </Box>
                         <Text fontSize="xs" color="gray.600" lineHeight="tall">{tip.text}</Text>
                       </HStack>
                     ))}

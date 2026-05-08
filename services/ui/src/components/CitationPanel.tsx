@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Badge, Box, Flex, Link, Separator, Text, VStack } from "@chakra-ui/react";
-import { ChevronDown, ChevronUp, ExternalLink } from "lucide-react";
+import { ChevronDown, ChevronUp, ExternalLink, Waves, Zap, Droplets, Route, FileText, ClipboardList, Wrench, Waypoints, Search } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { Citation } from "../lib/api";
 import { trackCitationExpanded } from "../lib/datadog-rum";
 
@@ -19,21 +20,21 @@ const DOCTYPE_PALETTE: Record<string, string> = {
   Tool:           "gray",
 };
 
-const DOCTYPE_ICON: Record<string, string> = {
-  Bridge:         "🌉",
-  Disaster:       "🌊",
-  Energy:         "⚡",
-  Water:          "💧",
-  Transportation: "🛣️",
-  Document:       "📄",
-  Procurement:    "📋",
-  Tool:           "🔧",
+const DOCTYPE_ICON: Record<string, LucideIcon> = {
+  Bridge:         Waypoints,
+  Disaster:       Waves,
+  Energy:         Zap,
+  Water:          Droplets,
+  Transportation: Route,
+  Document:       FileText,
+  Procurement:    ClipboardList,
+  Tool:           Wrench,
 };
 
 function SourceItem({ citation, index }: { citation: Citation; index: number }) {
   const [expanded, setExpanded] = useState(false);
   const palette = DOCTYPE_PALETTE[citation.document_type] ?? "gray";
-  const icon = DOCTYPE_ICON[citation.document_type] ?? "🔧";
+  const Icon = DOCTYPE_ICON[citation.document_type] ?? Wrench;
   const hasDetail = !!(citation.data_notes || citation.source_url);
 
   function handleToggle() {
@@ -42,7 +43,14 @@ function SourceItem({ citation, index }: { citation: Citation; index: number }) 
   }
 
   return (
-    <Box borderRadius="lg" overflow="hidden" _hover={{ bg: "gray.50" }} transition="background 0.1s">
+    <Box
+      data-testid="source-item"
+      data-source-type={citation.document_type}
+      borderRadius="lg"
+      overflow="hidden"
+      _hover={{ bg: "gray.50" }}
+      transition="background 0.1s"
+    >
       <Flex
         gap={3}
         align="flex-start"
@@ -59,9 +67,8 @@ function SourceItem({ citation, index }: { citation: Citation; index: number }) 
           align="center"
           justify="center"
           flexShrink={0}
-          fontSize="sm"
         >
-          {icon}
+          <Icon size={14} color={`var(--chakra-colors-${palette}-500)`} />
         </Flex>
         <Box flex={1} minW={0}>
           <Flex align="center" justify="space-between" gap={1} mb={0.5}>
@@ -142,7 +149,7 @@ export function CitationPanel({ citations }: Props) {
 
       {citations.length === 0 ? (
         <Flex flex={1} align="center" justify="center" direction="column" gap={2} py={8}>
-          <Text fontSize="xl">🔍</Text>
+          <Search size={20} color="var(--chakra-colors-gray-300)" />
           <Text fontSize="xs" color="gray.400" textAlign="center" lineHeight="snug">
             Tools used by the agent will appear here after a query.
           </Text>

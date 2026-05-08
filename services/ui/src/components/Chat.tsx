@@ -18,7 +18,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import ReactMarkdown from "react-markdown";
-import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Gauge, HardHat, ShieldCheck, Briefcase, Compass, ExternalLink, ChartNoAxesGantt, SquarePen, ChevronLeft } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Gauge, HardHat, ShieldCheck, Briefcase, Compass, ExternalLink, ChartNoAxesGantt, ChevronLeft } from "lucide-react";
 import { hasSeenTour, startTour } from "../lib/tour";
 import { ApiError, BackendType, BridgeData, Citation, ConversationDetail, ConversationSummary, FeedbackRating, QueryResponse, SuggestionItem, createConversation, deleteConversation, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, getBackend, getConversation, getModel, newConversation, sendQuery, setBackend, setModel, setSessionId, submitFeedback } from "../lib/api";
 import {
@@ -216,6 +216,11 @@ function sourceToCitation(tool: string): Citation {
     source_url: meta?.source_url,
     data_notes: meta?.data_notes,
   };
+}
+
+function mergeCitations(existing: Citation[], incoming: Citation[]): Citation[] {
+  const seen = new Set(existing.map((c) => c.tool_name));
+  return [...existing, ...incoming.filter((c) => !seen.has(c.tool_name))];
 }
 
 // ── Domain tiles shown in the empty state ────────────────────────────────────
@@ -538,9 +543,12 @@ export function Chat() {
 
     const lastAiIdx = [...loaded].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === "assistant");
     if (lastAiIdx) {
-      setActiveCitations(lastAiIdx.m.citations);
       setActiveMsgIdx(lastAiIdx.i);
     }
+    const allCitations = loaded
+      .filter((m) => m.role === "assistant")
+      .reduce((acc: Citation[], m) => mergeCitations(acc, m.citations), []);
+    setActiveCitations(allCitations);
 
     if (detail.model && availableModels.includes(detail.model)) setSelectedModel(detail.model);
     if (detail.backend) setSelectedBackend(detail.backend as BackendType);
@@ -610,7 +618,7 @@ export function Chat() {
         setActiveMsgIdx(next.length - 1);
         return next;
       });
-      setActiveCitations(aiMessage.citations);
+      setActiveCitations((prev) => mergeCitations(prev, aiMessage.citations));
       if (resp.model && resp.model !== selectedModel) setSelectedModel(resp.model);
       // Show static domain follow-ups immediately, then upgrade to LLM-generated ones
       setRecommendations(getFollowUpSuggestions(resp.sources));
@@ -666,12 +674,14 @@ export function Chat() {
     }));
     setMessages(loaded);
 
-    // Show citations from the last assistant message
     const lastAiIdx = [...loaded].map((m, i) => ({ m, i })).reverse().find(({ m }) => m.role === "assistant");
     if (lastAiIdx) {
-      setActiveCitations(lastAiIdx.m.citations);
       setActiveMsgIdx(lastAiIdx.i);
     }
+    const allCitations = loaded
+      .filter((m) => m.role === "assistant")
+      .reduce((acc: Citation[], m) => mergeCitations(acc, m.citations), []);
+    setActiveCitations(allCitations);
 
     // Restore model/backend from conversation metadata
     if (detail.model && availableModels.includes(detail.model)) setSelectedModel(detail.model);
@@ -697,6 +707,25 @@ export function Chat() {
         flexShrink={0}
       >
         <HStack gap={3}>
+          {user && (
+            <IconButton
+              data-testid="sidebar-toggle"
+              aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+              title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
+              size="xs"
+              variant="ghost"
+              colorPalette="gray"
+              borderRadius="md"
+              h="24px"
+              w="24px"
+              minW="24px"
+              color="gray.400"
+              _hover={{ color: "gray.600", bg: "gray.100" }}
+              onClick={() => setSidebarOpen((v) => !v)}
+            >
+              <ChevronLeft size={14} style={{ transform: sidebarOpen ? "none" : "rotate(180deg)", transition: "transform 0.2s" }} />
+            </IconButton>
+          )}
           <img src="/favicon.svg" width={32} height={32} alt="InfraAdvisor AI" style={{ flexShrink: 0 }} />
           <Box>
             <Text fontWeight="semibold" color="gray.800" fontSize="sm" lineHeight="shorter">
@@ -710,26 +739,38 @@ export function Chat() {
 
         {/* ── View tabs ──────────────────────────────────────────────────── */}
         <HStack gap={0.5} bg="gray.100" borderRadius="lg" p={0.5}>
-          {(["chat", "sandbox"] as const).map((view) => (
-            <Button
-              key={view}
-              data-tour={view === "sandbox" ? "sandbox-tab" : undefined}
-              size="xs"
-              variant={activeView === view ? "solid" : "ghost"}
-              colorPalette={activeView === view ? "blue" : "gray"}
-              borderRadius="md"
-              fontWeight={activeView === view ? "semibold" : "normal"}
-              fontSize="xs"
-              px={3}
-              h="24px"
-              onClick={() => setActiveView(view)}
-              textTransform="capitalize"
-            >
-              {view === "chat" ? "Chat" : "Sandbox"}
-            </Button>
-          ))}
+          <Button
+            data-testid="tab-chat"
+            size="xs"
+            variant={activeView === "chat" ? "solid" : "ghost"}
+            colorPalette={activeView === "chat" ? "blue" : "gray"}
+            borderRadius="md"
+            fontWeight={activeView === "chat" ? "semibold" : "normal"}
+            fontSize="xs"
+            px={3}
+            h="24px"
+            onClick={() => setActiveView("chat")}
+          >
+            Chat
+          </Button>
+          <Button
+            data-testid="tab-sandbox"
+            data-tour="sandbox-tab"
+            size="xs"
+            variant={activeView === "sandbox" ? "solid" : "ghost"}
+            colorPalette={activeView === "sandbox" ? "blue" : "gray"}
+            borderRadius="md"
+            fontWeight={activeView === "sandbox" ? "semibold" : "normal"}
+            fontSize="xs"
+            px={3}
+            h="24px"
+            onClick={() => setActiveView("sandbox")}
+          >
+            Sandbox
+          </Button>
           {user?.is_admin && (
             <Button
+              data-testid="tab-admin"
               size="xs"
               variant={activeView === "admin" ? "solid" : "ghost"}
               colorPalette={activeView === "admin" ? "purple" : "gray"}
@@ -746,32 +787,6 @@ export function Chat() {
         </HStack>
 
         <HStack gap={2}>
-          <IconButton
-            aria-label="New conversation"
-            title="New conversation"
-            size="xs"
-            variant="ghost"
-            colorPalette="gray"
-            borderRadius="md"
-            h="24px"
-            w="24px"
-            minW="24px"
-            color="gray.400"
-            _hover={{ color: "green.600", bg: "green.50" }}
-            onClick={() => {
-              setSessionId(newConversation());
-              setMessages([]);
-              setActiveCitations([]);
-              setActiveMsgIdx(null);
-              setRecommendations(INITIAL_SUGGESTIONS);
-              setError(null);
-              setInput("");
-              setConversationId(null);
-              setSidebarRefresh((n) => n + 1);
-            }}
-          >
-            <SquarePen size={14} />
-          </IconButton>
           <IconButton
             data-tour="tour-button"
             aria-label="Take product tour"
@@ -872,7 +887,7 @@ export function Chat() {
         {/* CENTER: chat column */}
         <Flex direction="column" flex={1} minW={0}>
           {/* Message thread */}
-          <Box flex={1} overflowY="auto" px={5} py={6}>
+          <Box data-testid="message-thread" flex={1} overflowY="auto" px={5} py={6}>
             {messages.length === 0 ? (
               <EmptyState onSelect={submit} />
             ) : (
@@ -897,12 +912,6 @@ export function Chat() {
                         boxShadow={msg.role === "assistant" ? "xs" : "none"}
                         borderWidth={msg.role === "assistant" ? "1px" : 0}
                         borderColor={msg.role === "assistant" && activeMsgIdx === i ? "blue.300" : "gray.200"}
-                        cursor={msg.role === "assistant" && msg.citations.length > 0 ? "pointer" : undefined}
-                        onClick={msg.role === "assistant" && msg.citations.length > 0 ? () => {
-                          setActiveCitations(msg.citations);
-                          setActiveMsgIdx(i);
-                        } : undefined}
-                        _hover={msg.role === "assistant" && msg.citations.length > 0 ? { borderColor: "blue.200" } : undefined}
                       >
                         {msg.role === "assistant" ? (
                           <MarkdownContent content={msg.content} />
@@ -996,8 +1005,27 @@ export function Chat() {
             )}
           </Box>
 
+          {/* ── Sources strip ──────────────────────────────────────────────── */}
+          {activeCitations.length > 0 && (
+            <Box
+              data-testid="sources-panel"
+              data-tour="citation-sidebar"
+              borderTopWidth="1px"
+              borderColor="gray.100"
+              bg="gray.50"
+              px={5}
+              py={2}
+              flexShrink={0}
+              maxH="180px"
+              overflowY="auto"
+            >
+              <CitationPanel citations={activeCitations} />
+            </Box>
+          )}
+
           {/* ── Input bar ──────────────────────────────────────────────────── */}
           <Box
+            data-testid="input-bar"
             borderTopWidth="1px"
             borderColor="gray.200"
             bg="white"
@@ -1100,21 +1128,6 @@ export function Chat() {
             </VStack>
           </Box>
         </Flex>
-
-        {/* ── Citation sidebar ───────────────────────────────────────────── */}
-        <Box
-          data-tour="citation-sidebar"
-          w="72"
-          borderLeftWidth="1px"
-          borderColor="gray.200"
-          bg="white"
-          p={4}
-          overflowY="auto"
-          flexShrink={0}
-          display={{ base: "none", lg: "block" }}
-        >
-          <CitationPanel citations={activeCitations} />
-        </Box>
       </Flex>
     </Flex>
   );

@@ -6,6 +6,7 @@ import {
   IconButton,
   Spinner,
   Text,
+  Tooltip,
   VStack,
 } from "@chakra-ui/react";
 import { Check, MessageSquarePlus, Trash2, X } from "lucide-react";
@@ -66,6 +67,7 @@ export function ConversationSidebar({ userId, activeId, onSelect, onNew, refresh
 
   return (
     <Flex
+      data-testid="conversation-sidebar"
       direction="column"
       w="220px"
       flexShrink={0}
@@ -81,19 +83,27 @@ export function ConversationSidebar({ userId, activeId, onSelect, onNew, refresh
         <Text fontSize="xs" fontWeight="semibold" color="gray.500" textTransform="uppercase" letterSpacing="wide">
           History
         </Text>
-        <IconButton
-          aria-label="New conversation"
-          size="xs"
-          variant="ghost"
-          colorPalette="blue"
-          borderRadius="md"
-          h="22px"
-          w="22px"
-          minW="22px"
-          onClick={onNew}
-        >
-          <MessageSquarePlus size={13} />
-        </IconButton>
+        <Tooltip.Root positioning={{ placement: "right" }}>
+          <Tooltip.Trigger asChild>
+            <IconButton
+              data-testid="new-conversation-btn"
+              aria-label="New conversation"
+              size="xs"
+              variant="ghost"
+              colorPalette="blue"
+              borderRadius="md"
+              h="22px"
+              w="22px"
+              minW="22px"
+              onClick={onNew}
+            >
+              <MessageSquarePlus size={13} />
+            </IconButton>
+          </Tooltip.Trigger>
+          <Tooltip.Positioner>
+            <Tooltip.Content>New conversation</Tooltip.Content>
+          </Tooltip.Positioner>
+        </Tooltip.Root>
       </Flex>
 
       {/* List */}
@@ -109,6 +119,8 @@ export function ConversationSidebar({ userId, activeId, onSelect, onNew, refresh
             {conversations.map((conv) => (
               <Box
                 key={conv.id}
+                data-testid="conversation-item"
+                data-conversation-id={conv.id}
                 as="button"
                 w="full"
                 textAlign="left"
