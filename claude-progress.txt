@@ -1,3 +1,34 @@
+[2026-05-08] UI refactor: sources panel inside chat, icons, nav cleanup, debug labels (94d8b64)
+  Four changes to improve UI usability and debuggability:
+
+  1. Sources panel moved inside chat column (between messages and input bar).
+     Removed the right-side Citation sidebar Box. New strip conditionally renders
+     when activeCitations.length > 0, bounded to 180px max-height with overflow scroll.
+     Citations now aggregate across the entire conversation (all assistant messages),
+     not just the last/clicked message. mergeCitations() deduplicates by tool_name.
+
+  2. All emoji icons replaced with lucide-react throughout:
+     CitationPanel: Bridge→Waypoints, Disaster→Waves, Energy→Zap, Water→Droplets,
+     Transportation→Route, Document→FileText, Procurement→ClipboardList, Tool→Wrench,
+     empty state 🔍→Search.
+     AboutModal: 📍→MapPin, 📊→BarChart2, 📝→FileText, 💡→Lightbulb, 🔁→RefreshCw.
+
+  3. "New Conversation" button removed from main nav header. The sidebar's
+     MessageSquarePlus button is the single entry point; Tooltip "New conversation"
+     added (Chakra v3 compound Tooltip.Root / Trigger / Positioner / Content pattern).
+
+  4. data-testid labels added to key elements: tab-chat/sandbox/admin, sidebar-toggle,
+     message-thread, input-bar, sources-panel, conversation-item (+ data-conversation-id),
+     new-conversation-btn, source-item (+ data-source-type).
+
+  Also: URL ?c=<id> conversation linking + setSessionId() wiring (2636885).
+
+  Verified:
+  [x] npx tsc --noEmit: 0 errors
+  [x] No emoji characters remain in CitationPanel, AboutModal, or Chat
+  [x] git push: 94d8b64
+  [~] Sources panel and icon changes visible in deployed UI: pending CI
+
 [2026-05-07] Fix missing UI LLM traces: AlwaysOnSampler on non-global OTLP provider (e7ab3c5)
   Problem: UI-originated LLM traces absent from DD LLMObs; Kafka eval traces visible.
   Root cause: non-global OTLP TracerProvider used default ParentBasedSampler.
