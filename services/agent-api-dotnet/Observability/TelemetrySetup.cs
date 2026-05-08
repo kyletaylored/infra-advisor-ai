@@ -55,6 +55,13 @@ public static class TelemetrySetup
         {
             var llmObsProvider = Sdk.CreateTracerProviderBuilder()
                 .AddSource(ActivitySourceName)
+                // AlwaysOnSampler ignores the parent's sampling flag.
+                // Without this the default ParentBasedSampler inherits the DD bridge's
+                // HTTP span sampling decision, which can be Recorded=0 for UI requests,
+                // making SetTag() a no-op and producing attribute-less spans that
+                // DD LLMObs silently drops. Kafka traces were immune because their
+                // root span (eval.agent_run) has no parent → AlwaysOn fires automatically.
+                .SetSampler(new AlwaysOnSampler())
                 .ConfigureResource(r => r
                     .AddService(serviceName)
                     .AddAttributes(new Dictionary<string, object> {
