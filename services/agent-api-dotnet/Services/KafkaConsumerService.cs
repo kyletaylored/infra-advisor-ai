@@ -14,6 +14,14 @@ public class KafkaConsumerService : BackgroundService
     private const string ProducerTopic = "infra.eval.results";
     private const string GroupId = "infra-advisor-agent-api";
 
+    // Toggle: KAFKA_TRACING_ENABLED=true to emit APM + LLMObs spans for eval-loop
+    // messages. Default false because the eval load-generator runs continuously and
+    // would otherwise flood both interfaces with eval traces, drowning out real
+    // user queries. Read once at startup; flip via configmap + pod restart.
+    private static readonly bool KafkaTracingEnabled =
+        (Environment.GetEnvironmentVariable("KAFKA_TRACING_ENABLED") ?? "false")
+            .Equals("true", StringComparison.OrdinalIgnoreCase);
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -103,13 +111,21 @@ public class KafkaConsumerService : BackgroundService
                 {
                     using var scope = _serviceProvider.CreateScope();
                     var agentService = scope.ServiceProvider.GetRequiredService<AgentService>();
-                    // Run within a clearly-labelled eval activity so DD LLMObs spans
-                    // from this background re-run are distinguishable from user queries.
-                    using var evalActivity = LlmTelemetry.ActivitySource.StartActivity(
-                        "eval.agent_run", ActivityKind.Internal);
+
+                    // When tracing is disabled, suppress at the AsyncLocal scope level so
+                    // every nested ActivitySource.StartActivity (router/specialist/llm/tool)
+                    // returns null and nothing reaches APM or LLMObs.
+                    using var suppressScope = KafkaTracingEnabled ? null : TracingScope.Suppress();
+
+                    // Eval activity: only created when tracing is enabled. Tags help
+                    // distinguish background re-runs from real user queries in DD.
+                    using var evalActivity = KafkaTracingEnabled
+                        ? LlmTelemetry.ActivitySource.StartActivity("eval.agent_run", ActivityKind.Internal)
+                        : null;
                     evalActivity?.SetTag("eval.query_id", evt.QueryId);
                     evalActivity?.SetTag("eval.session_id", evt.SessionId);
                     evalActivity?.SetTag("eval.source", "kafka");
+
                     result = await agentService.RunAgentAsync(
                         query: evt.Query,
                         sessionId: evt.SessionId,

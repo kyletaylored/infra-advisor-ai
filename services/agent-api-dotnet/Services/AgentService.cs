@@ -240,7 +240,7 @@ public class AgentService
         string specialist;
         string handoffContext;
 
-        using (var routerActivity = _activitySource.StartActivity("router"))
+        using (var routerActivity = TracingScope.IsSuppressed ? null : _activitySource.StartActivity("router"))
         {
             LlmTelemetry.TagWorkflow(routerActivity, obsSessionId);
             routerActivity?.SetTag("query.domain", queryDomain);
@@ -295,7 +295,7 @@ public class AgentService
         var sources = new List<string>();
         const int MaxIterations = 10;
 
-        using (var specialistActivity = _activitySource.StartActivity($"specialist-{specialist}"))
+        using (var specialistActivity = TracingScope.IsSuppressed ? null : _activitySource.StartActivity($"specialist-{specialist}"))
         {
             LlmTelemetry.TagWorkflow(specialistActivity, obsSessionId);
             specialistActivity?.SetTag("specialist", specialist);

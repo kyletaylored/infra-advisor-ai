@@ -26,6 +26,10 @@ data:
   OTEL_SERVICE_NAME: "infra-advisor-agent-api-dotnet"
   OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=dev,service.version=latest,service.name=infra-advisor-agent-api-dotnet"
   KAFKA_BOOTSTRAP_SERVERS: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"
+  # Toggle: set to "true" to emit APM + LLMObs spans for Kafka eval-loop runs.
+  # Default false because the eval load-generator runs continuously and floods
+  # the trace interface, drowning out real UI-originated queries.
+  KAFKA_TRACING_ENABLED: "false"
   AZURE_OPENAI_DEPLOYMENT: "gpt-4.1-mini"
   AZURE_OPENAI_EVAL_DEPLOYMENT: "gpt-4.1-mini"
   AVAILABLE_MODELS: "gpt-4.1-mini,gpt-4.1,gpt-5.4-mini"

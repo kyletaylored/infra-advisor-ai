@@ -78,7 +78,30 @@ public static class LlmTelemetry
         string query,
         string sessionId)
     {
-        var activity = source.StartActivity("invoke_agent", ActivityKind.Internal);
+        if (TracingScope.IsSuppressed) return null;
+
+        // Capture the APM (HTTP) trace ID before breaking the parent chain so we can
+        // tag it for cross-product correlation between APM and LLMObs in the DD UI.
+        var apmTraceId = Activity.Current?.TraceId.ToString();
+
+        // Start invoke_agent as a NEW root trace. The DD bridge HTTP span (the natural
+        // parent for UI requests) is captured for APM but is NOT exported to LLMObs.
+        // Keeping it as parent makes invoke_agent appear with parentSpanId pointing to
+        // a span that DD LLMObs cannot find in the OTLP batch — symptom: the OTLP POST
+        // returns 202 Accepted but the trace never appears in the LLMObs UI. Kafka
+        // traces work because eval.agent_run is a true root with no parent.
+        // Fix: pass an ActivityContext with a fresh TraceId and zero SpanId so the new
+        // activity is a true root in the OTLP export (parentSpanId absent in the proto).
+        var rootContext = new ActivityContext(
+            ActivityTraceId.CreateRandom(),
+            default,
+            ActivityTraceFlags.Recorded,
+            isRemote: false);
+
+        var activity = source.StartActivity(
+            "invoke_agent",
+            ActivityKind.Internal,
+            rootContext);
         if (activity is null) return null;
 
         activity.SetTag("gen_ai.operation.name", "invoke_agent");
@@ -86,6 +109,8 @@ public static class LlmTelemetry
         activity.SetTag("gen_ai.conversation.id", sessionId);
         activity.SetTag(SpanKindTag, "agent");
         activity.SetTag("ml_app", MlApp);
+        if (!string.IsNullOrEmpty(apmTraceId))
+            activity.SetTag("apm.trace_id", apmTraceId);
         SetInputMessages(activity, "user", query);
 
         return activity;
@@ -119,6 +144,8 @@ public static class LlmTelemetry
         string provider = "azure_openai",
         string? name = null)
     {
+        if (TracingScope.IsSuppressed) return null;
+
         var activity = source.StartActivity(
             name ?? $"{operation} {modelName}",
             ActivityKind.Client);
@@ -170,6 +197,8 @@ public static class LlmTelemetry
         string inputJson,
         string sessionId)
     {
+        if (TracingScope.IsSuppressed) return null;
+
         var activity = source.StartActivity($"execute_tool {toolName}", ActivityKind.Internal);
         if (activity is null) return null;
 
