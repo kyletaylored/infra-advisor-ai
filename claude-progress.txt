@@ -1,3 +1,47 @@
+[2026-05-08] Fix UI LLM traces (orphaned-parent) + add Kafka tracing toggle (47cdf6d)
+  Two issues fixed:
+
+  1. UI LLM traces still missing after 34ec6bc despite OTLP exports firing.
+     Pod logs confirmed OtlpTraceExporter HTTP requests to otlp.us3.datadoghq.com
+     returning 202 Accepted, but DD LLMObs UI showed no UI-originated traces.
+
+     Root cause: invoke_agent for UI requests has parentSpanId pointing to the
+     DD bridge HTTP span, which goes to APM only — it is NOT in the OTLP batch
+     sent to LLMObs. DD LLMObs sees a span with a dangling parent reference
+     (parent span not in batch) and drops the trace. Kafka eval traces work
+     because eval.agent_run is a true root span (no parent) and is included
+     in the batch with the rest of the eval children.
+
+     Fix: in LlmTelemetry.StartAgentActivity, pass an ActivityContext with a
+     fresh TraceId and zero SpanId so invoke_agent is a true root span in the
+     OTLP export (parentSpanId absent in the proto). The HTTP/APM trace ID is
+     preserved on the span as apm.trace_id for cross-product correlation
+     between APM and LLMObs in the DD UI.
+
+  2. Kafka eval-loop tracing was polluting APM + LLMObs interfaces because
+     the load-generator runs continuously, drowning out real user queries.
+
+     Added TracingScope (AsyncLocal<bool> suppression flag) honored by every
+     Start*Activity site in LlmTelemetry and the direct _activitySource
+     StartActivity calls in AgentService (router, specialist). When suppressed,
+     no Activity is created, so neither the DD bridge (APM) nor the OTel
+     provider (LLMObs) have anything to capture.
+
+     KafkaConsumerService reads KAFKA_TRACING_ENABLED at startup (default
+     false) and wraps each message processing in TracingScope.Suppress()
+     when disabled. The eval.agent_run wrapper is also skipped.
+
+     Toggle via configmap KAFKA_TRACING_ENABLED: "false" (default) or "true".
+     Configmap applied to cluster immediately so toggle is in effect for
+     the new image rollout.
+
+  Verified:
+  [x] dotnet build: 0 errors
+  [x] kubectl apply -f configmap.yaml: configured
+  [x] git push: 47cdf6d (CI building agent-api-dotnet image)
+  [~] UI LLM prompt traces visible in DD LLMObs US3 with apm.trace_id tag: pending CI deploy
+  [~] No new Kafka eval traces in APM or LLMObs after deploy: pending CI deploy
+
 [2026-05-08] Fix LLMObs OTLP export: switch to .WithTracing() hosting integration (34ec6bc)
   Root cause: non-global Sdk.CreateTracerProviderBuilder() provider's BatchExportProcessor
   background flush loop never started correctly alongside DD_TRACE_OTEL_ENABLED=true.
