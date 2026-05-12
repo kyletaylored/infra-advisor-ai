@@ -1,3 +1,148 @@
+[2026-05-12] Migrate authdb users → infraadvisor + fix Kafka JMX integration
+
+  Two unrelated cleanups in one session.
+
+  User migration (resolved the "all my users are gone" diagnostic below):
+  - Schemas in authdb.users and infraadvisor.users matched exactly
+    (same 8 columns, same constraints) so the migration was a clean
+    INSERT … SELECT via pg_dump.
+  - Step 1: DELETE the placeholder admin (created today) from
+    infraadvisor.users so the migration didn't collide on the email
+    UNIQUE constraint.
+  - Step 2: pg_dump -U authuser --data-only --table=users authdb |
+            psql -U authuser -d infraadvisor
+  - Result: COPY 7. All 7 original users now in infraadvisor.users
+    with original UUIDs, password hashes, admin flags, and
+    created_at timestamps preserved. Original kyle.taylor admin
+    (since 2026-04-20) is authoritative again. Conversations,
+    sessions, reset_tokens NOT migrated — explicitly out of scope
+    per user direction (dev environment).
+  - authdb is left in place. Not deleted in case any forgotten data
+    surfaces; can be dropped manually later.
+
+  Kafka JMX integration (commit 92f6abd):
+  - Error symptom: `exec: "java": executable file not found in $PATH`
+    when the node-agent tried to spawn JMXFetch on the node hosting
+    the Kafka broker.
+  - Root cause: two missing pieces — (a) the node-agent was running
+    the non-JMX image (no JVM), (b) the Kafka broker had no JMX
+    listener exposed for the agent to connect to. Autodiscovery
+    annotations on the broker pod were already correct from earlier.
+  - Fix 1 (datadog/datadog-agent.yaml):
+      override.nodeAgent.image.jmxEnabled=true
+      → switches node-agent image to the JMX variant (Java in PATH).
+  - Fix 2 (k8s/kafka/strimzi-kafka-cluster.yaml):
+      spec.kafka.jmxOptions={}
+      → Strimzi exposes JMX on :9999 on every broker pod, no auth
+        (pod-network-only, dev cluster).
+  - Bonus: added new_gc_metrics: true to the existing
+    ad.datadoghq.com/kafka init_configs annotation per the upstream
+    integration conf example. Gives the namespaced GC metric names
+    (jvm.gc.minor_collection_count etc.) instead of the legacy
+    jvm.gc.cms.count form.
+
+  Verified:
+  [x] kubectl apply on both manifests reported "configured"
+  [x] DD operator started rolling node-agent (g4gmn Terminating
+      after apply); Strimzi rolled the kafka broker (age 7s after apply)
+  [~] Kafka integration check status visible in DD: pending agent +
+      broker rollouts to settle (1-3 min)
+  [~] kafka.* metrics flowing in DD Metrics Explorer: pending
+
+[2026-05-12] Diagnose: "all my users are gone" — DATABASE_URL pointing at wrong DB
+  Triggered by the MailHog diagnostic above. User noticed the auth DB held
+  only one user (themselves, created today) and reasonably concluded the
+  data had been wiped. No code committed — turned out to be a config
+  misdirection from earlier in the project, not data loss.
+
+  Investigation:
+  - postgres-pvc: Bound, 5Gi, age 22 days (since 2026-04-20). NEVER
+    recreated. Underlying data is intact.
+  - postgres pod: 0 restarts since 2026-05-10 (last recreation, PVC
+    preserved across it).
+  - `\l` revealed TWO databases on this Postgres instance:
+      authdb       (owner authuser, the ORIGINAL)
+      infraadvisor (owner infraadvisor, created 2026-05-05)
+  - SELECT FROM authdb.users:        7 rows, registrations from 2026-04-20
+    through 2026-04-28 — all untouched.
+  - SELECT FROM infraadvisor.users:  1 row (kyle.taylor@datadoghq.com,
+    created today at 20:23 UTC when the user logged in/registered
+    against the running system).
+  - auth-api DATABASE_URL currently:
+      postgresql://infraadvisor:infraadvisor@.../infraadvisor
+
+  Root cause (reconstructed from the [2026-05-04] and [2026-05-05]
+  progress entries):
+  - 2026-05-04: conversation-persistence work added DATABASE_URL to
+    agent-api-secret, agent-api-dotnet-secret, AND auth-api-secret,
+    standardised on the infraadvisor:infraadvisor@.../infraadvisor
+    connection string. The infraadvisor database did not exist yet.
+  - 2026-05-05: debugging the resulting auth failures, we ran
+    "CREATE ROLE infraadvisor + CREATE DATABASE infraadvisor" inside
+    the pod (logged in the [2026-05-05] entry "Fix: .NET backend
+    503/500 + contextual sources panel"). The fix made the connection
+    succeed against an empty new database — but we never migrated the
+    original users or pointed back at authdb. The original 7 users
+    stayed in authdb, untouched, for the past week.
+
+  Verified:
+  [x] All 7 original users present in authdb (queried directly)
+  [x] PVC age 22 days, no recreation events
+  [x] auth-api DATABASE_URL confirmed pointing at the new (empty)
+      infraadvisor database, NOT authdb
+
+  Fix options offered (no code applied — awaiting user decision):
+  - Option A (quickest, zero data risk): repoint auth-api-secret
+    DATABASE_URL to authuser:<original_pw>@.../authdb and roll the
+    deployment. Auth queries land back on the populated database.
+    Trade-off: two databases for two concerns on the same Postgres.
+  - Option B (cleaner): migrate the 7 rows from authdb.users into
+    infraadvisor.users via pg_dump --data-only --table=users.
+    Also audit authdb for other populated tables that should move
+    (sessions, reset_tokens, etc.) before declaring the DB obsolete.
+    Recommended after Option A confirms everything works.
+
+[2026-05-12] Diagnose: forgot-password emails "not being sent" via MailHog
+  User reported MailHog running but "forgot emails" not arriving.
+  No code committed — turned out to be two non-bugs converging:
+
+  Finding 1: SMTP path is healthy end-to-end.
+    services/auth-api/src/main.py _send_reset_email() function works:
+    SMTP_HOST=mailhog.infra-advisor.svc.cluster.local, port 1025, TLS off
+    (all wired in k8s/auth-api/configmap.yaml). Verified by port-forwarding
+    auth-api and curl'ing /forgot-password with the known-registered email
+    `kyle.taylor@datadoghq.com` — auth-api logged
+    "Password reset email sent to kyle.taylor@datadoghq.com" and MailHog's
+    /mailhog/api/v2/messages showed total: 1 with the expected subject.
+
+  Finding 2: /forgot-password silently no-ops for unknown emails.
+    Endpoint at services/auth-api/src/main.py:218 always returns 200 (by
+    design — avoids leaking which emails are registered). But if
+    get_user_by_email() returns None it ALSO doesn't log anything, so
+    "POST /forgot-password 200 OK" in the logs tells you nothing about
+    whether mail was actually sent. The auth DB had exactly one user
+    (kyle.taylor@datadoghq.com); the user was likely typing a typo'd /
+    differently-cased / non-registered email and hitting the no-op path.
+
+  Finding 3: MailHog UI is at /mailhog/, not /.
+    Deployment env sets MH_UI_WEB_PATH=/mailhog. Hitting the LoadBalancer
+    or port-forward at / returns 404 — UI lives at /mailhog/. Likely
+    contributed to the "MailHog is empty" perception.
+
+  Verified:
+  [x] SMTP path proven working (auth-api → MailHog) with a curl test;
+      one message visible in MailHog API at /mailhog/api/v2/messages
+
+  Optional follow-ups proposed to user (no commitment, not in scope of
+  this phase — would only happen on explicit ask):
+  - Add a dev-visible log line in /forgot-password when get_user_by_email
+    returns None. Keep HTTP response unchanged; just make the silent
+    no-op observable in stdout so future "MailHog is empty" reports
+    diagnose themselves.
+  - Either drop MH_UI_WEB_PATH=/mailhog so MailHog serves at root, or
+    add a redirect in NGINX so / → /mailhog/, so the UI is reachable
+    at the obvious URL.
+
 [2026-05-12] Refactor POC to pure OTel — remove vendor-specific code (34ba427)
   User observed two issues after first run: (1) /chat produced multiple
   separate traces per request, (2) RUM applicationId was empty so the
