@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>InfraAdvisor OTel POC</title>
+
+  <!-- RUM config from server env (no secrets in HTML) -->
+  <script src="/config.js"></script>
+
+  <!-- DD Browser RUM SDK (auto-injects x-datadog-trace-id / x-datadog-parent-id
+       headers into fetch() calls, so the same trace continues from browser → server). -->
+  <script src="https://www.datadoghq-browser-agent.com/us3/v6/datadog-rum.js"></script>
+  <script>
+    if (window.RUM_CONFIG && window.RUM_CONFIG.applicationId) {
+      window.DD_RUM.init({
+        ...window.RUM_CONFIG,
+        // Tracing fetch() to /chat propagates browser RUM context to the server,
+        // which then becomes the apm.trace_id tag on invoke_agent.
+        allowedTracingUrls: [window.location.origin],
+      });
+      window.DD_RUM.startSessionReplayRecording();
+    }
+  </script>
+
+  <style>
+    body { font-family: ui-sans-serif, system-ui, sans-serif; max-width: 720px;
+           margin: 2rem auto; padding: 0 1rem; color: #1f2937; line-height: 1.5; }
+    h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+    p.sub { color: #6b7280; font-size: 0.9rem; margin-top: 0; }
+    form { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 1.5rem; }
+    textarea { width: 100%; min-height: 4rem; padding: 0.6rem;
+               font: inherit; border: 1px solid #d1d5db; border-radius: 6px;
+               box-sizing: border-box; resize: vertical; }
+    button { align-self: flex-start; padding: 0.5rem 1rem; font: inherit;
+             background: #2563eb; color: white; border: 0; border-radius: 6px;
+             cursor: pointer; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    .answer { white-space: pre-wrap; background: #f9fafb; border: 1px solid #e5e7eb;
+              border-radius: 6px; padding: 0.8rem; margin-top: 1rem; }
+    .meta { font-family: ui-monospace, monospace; font-size: 0.78rem;
+            color: #6b7280; margin-top: 0.75rem; word-break: break-all; }
+    .meta a { color: #2563eb; }
+  </style>
+</head>
+<body>
+  <h1>InfraAdvisor .NET OTel POC</h1>
+  <p class="sub">Microsoft.Extensions.AI · Azure OpenAI · OTLP → Datadog LLM Observability</p>
+
+  <form id="chat-form">
+    <textarea id="query"
+              placeholder="Try: what time is it? — or — give me a quote about persistence"
+              autofocus></textarea>
+    <button type="submit" id="send-btn">Send</button>
+  </form>
+
+  <div id="answer" class="answer" hidden></div>
+  <div id="meta" class="meta"></div>
+
+  <script>
+    const form    = document.getElementById('chat-form');
+    const queryEl = document.getElementById('query');
+    const answer  = document.getElementById('answer');
+    const meta    = document.getElementById('meta');
+    const sendBtn = document.getElementById('send-btn');
+
+    // Session ID anchors the gen_ai.conversation.id tag on all spans for this
+    // browser session. Persists across reloads so a refresh continues the same
+    // LLMObs conversation.
+    const sessionId = (() => {
+      let id = sessionStorage.getItem('otelpoc-session');
+      if (!id) { id = crypto.randomUUID(); sessionStorage.setItem('otelpoc-session', id); }
+      return id;
+    })();
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const query = queryEl.value.trim();
+      if (!query) return;
+
+      sendBtn.disabled = true;
+      answer.hidden = true;
+      meta.textContent = 'Thinking…';
+
+      try {
+        const resp = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ query, sessionId }),
+        });
+        const json = await resp.json();
+        answer.hidden = false;
+        answer.textContent = json.answer || '(empty response)';
+        meta.innerHTML = `session_id=${sessionId} · apm_trace_id=${json.apmTraceId ?? '(none)'}`;
+      } catch (err) {
+        answer.hidden = false;
+        answer.textContent = `Error: ${err.message}`;
+        meta.textContent = '';
+      } finally {
+        sendBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
