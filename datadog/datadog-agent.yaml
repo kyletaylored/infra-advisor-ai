@@ -124,6 +124,8 @@ spec:
       enabled: true
   override:
     nodeAgent:
+      image:
+        jmxEnabled: true
       env:
         - name: DD_POSTGRES_PASSWORD
           valueFrom:

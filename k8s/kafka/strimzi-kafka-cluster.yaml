@@ -19,8 +19,13 @@ spec:
     pod:
       metadata:
         annotations:
+          # Datadog autodiscovery for the Kafka JMX integration. Requires the
+          # node-agent to be running the JMX-enabled image (Java in $PATH) —
+          # that's wired in datadog/datadog-agent.yaml via override.nodeAgent.image.jmxEnabled=true.
+          # The broker exposes JMX on :9999 because spec.kafka.jmxOptions={}
+          # is set on the Kafka CR below.
           ad.datadoghq.com/kafka.check_names: '["kafka"]'
-          ad.datadoghq.com/kafka.init_configs: '[{"is_jmx": true, "collect_default_metrics": true}]'
+          ad.datadoghq.com/kafka.init_configs: '[{"is_jmx": true, "collect_default_metrics": true, "new_gc_metrics": true}]'
           ad.datadoghq.com/kafka.instances: '[{"host": "%%host%%", "port": "9999"}]'
           ad.datadoghq.com/kafka.logs: '[{"source": "kafka", "service": "kafka-cluster"}]'
 ---
@@ -39,6 +44,10 @@ metadata:
 spec:
   kafka:
     version: 4.1.0
+    # Expose JMX on every broker pod at :9999 (the port the DD autodiscovery
+    # annotation above points at). Empty object = JMX with no authentication,
+    # acceptable here because :9999 is only reachable on the pod network.
+    jmxOptions: {}
     listeners:
       - name: plain
         port: 9092
