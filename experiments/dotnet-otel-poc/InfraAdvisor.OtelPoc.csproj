@@ -26,9 +26,8 @@
          that affected the previous 1.10.0 pin. -->
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
-    <!-- Auto-instrumentation for ASP.NET Core + HttpClient metrics
-         (http.server.request.duration, http.client.*, etc.). -->
+    <!-- Auto-instrumentation for ASP.NET Core HTTP server spans, which become
+         the trace root that invoke_agent → chat → execute_tool nest under. -->
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
   </ItemGroup>
 </Project>
