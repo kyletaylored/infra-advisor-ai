@@ -459,8 +459,15 @@ run-otel-poc: ## Run the .NET OTel POC only (assumes collector already running)
 	@echo "  OTLP target: $${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}"
 	@echo "  Service: $${OTEL_SERVICE_NAME:-otel-genai-poc}"
 	@echo ""
+	@# RUM env passthrough: the main UI's .env uses VITE_DD_RUM_APP_ID /
+	@# VITE_DD_RUM_CLIENT_TOKEN. Map those onto the POC's expected
+	@# DD_RUM_APPLICATION_ID / DD_RUM_CLIENT_TOKEN if the POC-prefixed
+	@# names aren't explicitly set.
 	@cd experiments/dotnet-otel-poc && \
 		ASPNETCORE_URLS=http://localhost:$(OTEL_POC_PORT) \
+		DD_RUM_APPLICATION_ID="$${DD_RUM_APPLICATION_ID:-$$VITE_DD_RUM_APP_ID}" \
+		DD_RUM_CLIENT_TOKEN="$${DD_RUM_CLIENT_TOKEN:-$$VITE_DD_RUM_CLIENT_TOKEN}" \
+		DD_SITE="$${DD_SITE:-$$VITE_DD_RUM_SITE}" \
 		dotnet run
 
 build-otel-poc: ## Build the .NET OTel POC without running (compile-check only)

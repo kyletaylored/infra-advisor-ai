@@ -45,6 +45,12 @@ var azureApiKey   = Req("AZURE_OPENAI_API_KEY");
 var deployment    = Opt("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini");
 var serviceName   = Opt("OTEL_SERVICE_NAME", "otel-genai-poc");
 var otlpEndpoint  = Opt("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4318");
+// Datadog RUM is browser-side telemetry — used only by the /config.js
+// endpoint and the index.html SDK init. The server-side OTel pipeline
+// above is vendor-neutral; RUM here is a deliberate, scoped exception
+// because there's no widely-adopted OTel browser-SDK equivalent that
+// auto-propagates W3C trace context into fetch() calls.
+var ddRumSite     = Opt("DD_SITE", "us3.datadoghq.com");
 
 // One ActivitySource for everything — our manual spans AND the
 // Microsoft.Extensions.AI OpenTelemetry decorator. A single AddSource()
@@ -145,6 +151,32 @@ var app = builder.Build();
 // ── Static UI ────────────────────────────────────────────────────────────────
 app.UseDefaultFiles();
 app.UseStaticFiles();
+
+// Serves DD RUM config to the browser from server env vars so no secrets
+// are baked into the HTML. wwwroot/index.html reads window.RUM_CONFIG.
+app.MapGet("/config.js", () =>
+{
+    var rumAppId = Opt("DD_RUM_APPLICATION_ID", "");
+    var rumToken = Opt("DD_RUM_CLIENT_TOKEN", "");
+    var js =
+        $$"""
+        window.RUM_CONFIG = {
+          applicationId: "{{rumAppId}}",
+          clientToken: "{{rumToken}}",
+          site: "{{ddRumSite}}",
+          service: "{{serviceName}}",
+          env: "{{Opt("OTEL_DEPLOYMENT_ENV", "dev")}}",
+          version: "{{Opt("OTEL_SERVICE_VERSION", "1.0.0")}}",
+          sessionSampleRate: 100,
+          sessionReplaySampleRate: 100,
+          trackUserInteractions: true,
+          trackResources: true,
+          trackLongTasks: true,
+          defaultPrivacyLevel: "mask-user-input",
+        };
+        """;
+    return Results.Content(js, "application/javascript");
+});
 
 // ── Chat endpoint ─────────────────────────────────────────────────────────────
 app.MapPost("/chat", async (ChatRequest req, IChatClient chatClient) =>

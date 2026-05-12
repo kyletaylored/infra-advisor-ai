@@ -6,6 +6,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>OTel GenAI POC</title>
 
+  <!-- RUM config from server env vars (so DD_RUM_APPLICATION_ID and
+       DD_RUM_CLIENT_TOKEN never appear in committed HTML). -->
+  <script src="/config.js"></script>
+
+  <!-- DD Browser RUM SDK. Initialised with allowedTracingUrls so it
+       auto-injects W3C traceparent + DD x-datadog-* headers into fetch()
+       calls — the browser-side trace context continues into the server's
+       OTel-instrumented HTTP span without any custom JS. -->
+  <script src="https://www.datadoghq-browser-agent.com/us3/v6/datadog-rum.js"></script>
+  <script>
+    if (window.RUM_CONFIG && window.RUM_CONFIG.applicationId) {
+      window.DD_RUM.init({
+        ...window.RUM_CONFIG,
+        allowedTracingUrls: [window.location.origin],
+      });
+      window.DD_RUM.startSessionReplayRecording();
+    }
+  </script>
+
   <style>
     body {
       font-family: ui-sans-serif, system-ui, sans-serif;
@@ -69,18 +88,6 @@
       return id;
     })();
 
-    // Generate a W3C Trace Context `traceparent` header per request:
-    //   version-traceId-parentSpanId-flags  (00-{32hex}-{16hex}-01)
-    // The server's ASP.NET Core instrumentation respects an incoming
-    // traceparent and uses it as the root of the server-side trace.
-    // This is the OTel-native way to propagate trace context from browser
-    // to backend — no SDK required.
-    function makeTraceparent() {
-      const hex = (bytes) => [...crypto.getRandomValues(new Uint8Array(bytes))]
-        .map(b => b.toString(16).padStart(2, '0')).join('');
-      return `00-${hex(16)}-${hex(8)}-01`;
-    }
-
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       const query = queryEl.value.trim();
@@ -90,23 +97,20 @@
       answer.hidden = true;
       meta.textContent = 'Thinking…';
 
-      const traceparent = makeTraceparent();
       try {
+        // RUM injects W3C traceparent + DD x-datadog-* headers for us
+        // because we set allowedTracingUrls=[window.location.origin]
+        // above — no manual header construction needed.
         const resp = await fetch('/chat', {
           method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            'traceparent': traceparent,
-          },
+          headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ query, sessionId }),
         });
         const json = await resp.json();
         answer.hidden = false;
         answer.textContent = json.answer || '(empty response)';
         meta.innerHTML =
-          `session_id=${sessionId} · ` +
-          `client_trace=${traceparent.split('-')[1]} · ` +
-          `server_trace=${json.traceId ?? '(none)'}`;
+          `session_id=${sessionId} · trace_id=${json.traceId ?? '(none)'}`;
       } catch (err) {
         answer.hidden = false;
         answer.textContent = `Error: ${err.message}`;
