@@ -1,3 +1,161 @@
+[2026-05-12] Single-command Make entry point for the POC stack
+  Added `make otel-poc` — one command that starts the local OTel Collector
+  (docker compose up -d), runs the .NET POC in the foreground, and tears the
+  collector back down on Ctrl+C / normal exit / error exit. Uses a shell
+  trap on EXIT/INT/TERM so the collector container is never left orphaned.
+
+  The five lower-level targets (run-otel-poc, build-otel-poc,
+  start/stop/logs-otel-collector) remain available for cases where you want
+  to inspect a single piece — e.g. `make logs-otel-collector` in a second
+  terminal while `make otel-poc` runs in the first.
+
+  Also documented the functional diff between our experiments/otel-collector/
+  config.yaml and the upstream contrib datadog-exporter example (linked by
+  the user). Load-bearing differences:
+  - 0.0.0.0 receiver bind (Docker port-forward requires it; localhost
+    would only accept container-local connections)
+  - otlphttp/llmobs exporter (DD `datadog` exporter routes to APM only;
+    LLMObs is a separate product with its own OTLP intake + routing header)
+  - logs pipeline (the upstream example is trace-metrics only)
+  - debug exporter at verbosity: detailed (local stdout visibility)
+
+  Added on top of the initial collector config:
+  - datadog/connector — consumes spans, emits APM stats metrics (request
+    rate, p95/p99 latency, error rate per service+operation) into the
+    metrics pipeline. Populates DD APM Service page + Service Map + trace
+    search facets. Wired in two places: as an exporter on the traces
+    pipeline, and as a receiver on the metrics pipeline (alongside the
+    direct OTLP metrics from the POC).
+
+  Skipped from upstream (could add later):
+  - probabilistic_sampler at 20% — cost control. Skipped because POC
+    wants 100% sampling to verify every span lands correctly.
+
+  Verified:
+  [x] `make help` shows all 6 POC/collector targets
+  [x] Trap registers on EXIT/INT/TERM in the otel-poc recipe so the
+      collector is always stopped when the POC exits
+  [x] datadog/connector wired as exporter on traces + receiver on metrics
+
+[2026-05-12] Local OTel Collector + traces/metrics/logs pipeline for the .NET POC
+  Extended the POC to mirror production's OTel pipeline locally so the
+  collector-mediated routing path can be validated end-to-end before
+  changing anything in the main service. Mirrors the otelCollector section
+  of datadog/datadog-agent.yaml (simplified — no infraattributes processor
+  since that's DD-distribution-only and adds no value on a single host).
+
+  New files (under experiments/otel-collector/):
+  - config.yaml: OTLP receivers (gRPC 4317, HTTP 4318) → batch processor
+    → three exporters:
+      * debug (verbosity: detailed) — `docker logs` shows full span/metric/log
+        bodies including all gen_ai.* attributes and parent_span_id, which
+        is the easiest place to confirm the orphaned-parent fix locally
+        (invoke_agent should show parent_span_id: 0000000000000000)
+      * datadog — APM traces + metrics + logs via DD trace-agent intake
+        (same exporter the prod DatadogAgent CR uses)
+      * otlphttp/llmobs — DD LLMObs OTLP intake at https://otlp.${DD_SITE}
+        with dd-api-key + dd-otlp-source=llmobs headers
+    Three pipelines: traces fan out to all three exporters; metrics+logs
+    go to debug + datadog only (no LLMObs counterpart for those signals).
+  - docker-compose.yml: otel/opentelemetry-collector-contrib:0.115.1,
+    mounts config, publishes :4317/:4318, validates DD_API_KEY via ${VAR:?msg}
+
+  POC updates (experiments/dotnet-otel-poc/):
+  - Program.cs: reads OTEL_EXPORTER_OTLP_ENDPOINT (default http://localhost:4318).
+    Auto-detects DD direct mode when host suffix matches datadoghq.com and
+    adds dd-api-key + dd-otlp-source=llmobs headers automatically. Added
+    .WithMetrics() (ASP.NET Core + HttpClient instrumentation) and
+    builder.Logging.AddOpenTelemetry() — three OTLP exporters on the same
+    endpoint, one per signal.
+  - InfraAdvisor.OtelPoc.csproj: added OpenTelemetry.Instrumentation.AspNetCore
+    1.10.1 and OpenTelemetry.Instrumentation.Http 1.10.0 (needed for the
+    metrics-side AddAspNetCoreInstrumentation/AddHttpClientInstrumentation —
+    these are split from the trace-side extension methods).
+
+  Makefile targets:
+  - start-otel-collector: cd experiments/otel-collector && docker compose up -d
+  - stop-otel-collector: docker compose down
+  - logs-otel-collector: docker logs -f otel-collector-poc (tails detailed
+    debug exporter output — span bodies, attribute values, parent IDs)
+  - run-otel-poc: now warns with `nc -z localhost 4318` if collector isn't
+    listening, suggesting either `make start-otel-collector` or setting
+    OTEL_EXPORTER_OTLP_ENDPOINT to direct-DD intake
+
+  Verified:
+  [x] dotnet build -c Release: 0 errors after adding the two instrumentation
+      packages (initial build failed with CS1061 on AddAspNetCoreInstrumentation
+      for MeterProviderBuilder — separate from the TracerProviderBuilder
+      extension; both packages provide both)
+  [x] docker compose config: parses cleanly; ${DD_API_KEY:?...} guard fires
+      correctly when var is unset
+  [x] All 5 new Makefile targets appear in `make help`
+  [~] Live verification: pending `make start-otel-collector` + `make run-otel-poc`
+      with real DD_API_KEY + Azure OpenAI credentials. Expected in
+      `make logs-otel-collector`: a trace export batch per /chat call showing
+      all 6 spans (invoke_agent / router / specialist / prepare-context /
+      chat / execute_tool) with invoke_agent's parent_span_id zeroed out.
+
+[2026-05-12] Standalone .NET OTel GenAI POC under experiments/dotnet-otel-poc/
+  Built a minimal ASP.NET Core + Microsoft.Extensions.AI app to validate the
+  .NET → OTLP → DD LLMObs path in isolation from the main service. Goal: stop
+  diagnosing inside the 200-file production codebase and prove the patterns on
+  a single Program.cs first.
+
+  Stack:
+  - Microsoft.Extensions.AI 9.5.0 (provider-neutral .NET LLM abstraction —
+    NOT Azure-specific; modelled like Microsoft.Extensions.Logging)
+  - Microsoft.Extensions.AI.OpenAI 9.5.0-preview (AzureOpenAIClient adapter:
+    azureClient.GetChatClient(deployment).AsIChatClient())
+  - Azure.AI.OpenAI 2.2.0-beta.4 (same as main service)
+  - OpenTelemetry hosting 1.10.0 with .WithTracing() + AlwaysOnSampler
+
+  IChatClient pipeline: .UseFunctionInvocation() → .UseOpenTelemetry()
+  - .UseOpenTelemetry() emits OTel GenAI semantic-convention `chat` spans
+    automatically with EnableSensitiveData=true (parts-array messages,
+    gen_ai.usage.*, finish_reasons) — replaces our custom LlmTelemetry helper
+    for the LLM span.
+  - .UseFunctionInvocation() emits `execute_tool` spans automatically — DD
+    LLMObs maps gen_ai.operation.name=execute_tool to the "tool" kind.
+
+  Demonstrates all 5 LLMObs span kinds via POST /chat:
+    invoke_agent       (manual, agent kind, TRUE ROOT — fresh ActivityContext)
+    ├── router         (manual, workflow kind)
+    └── specialist-X   (manual, workflow kind)
+        ├── prepare-context  (manual, task kind)
+        └── chat <model>     (M.E.AI, llm kind)
+            └── execute_tool (M.E.AI, tool kind)
+
+  Other validation surfaces:
+  - Orphaned-parent fix carried over: invoke_agent starts with a fresh TraceId
+    and zero parent SpanId so it's a true root in OTLP. apm.trace_id tag carries
+    the HTTP trace for cross-product correlation.
+  - DD RUM v6 in wwwroot/index.html. Browser sessionId flows into
+    gen_ai.conversation.id on every span; RUM SDK propagates x-datadog-* headers
+    via allowedTracingUrls so APM traces link back to RUM sessions.
+  - /config.js endpoint serves DD_RUM_* from server env so no secrets in HTML.
+
+  Files (all under experiments/dotnet-otel-poc/):
+    InfraAdvisor.OtelPoc.csproj, Program.cs (~210 LOC), wwwroot/index.html,
+    .env.example, README.md
+
+  Verified:
+  [x] dotnet build -c Release: 0 errors
+  [x] All five LLMObs span kinds wired in Program.cs (agent/workflow/task
+      manual; llm/tool via Microsoft.Extensions.AI)
+  [x] invoke_agent uses fresh ActivityContext (carried fix from 47cdf6d)
+  [x] RUM config served from server env vars, no hardcoded secrets in HTML
+  [x] macOS run path documented (.NET 10 SDK already installed; AirPlay
+      port-5000 conflict handled via ASPNETCORE_URLS=http://localhost:5005)
+  [x] Local .env populated via user-run one-liner (greps secrets from the
+      repo-root .env in-place; tool-context permission rules block direct
+      Read/Bash on .env so no secret values pass through assistant context)
+  [~] Live verification: pending `dotnet run` with real DD_API_KEY +
+      Azure OpenAI credentials; expect HTTP 202 from otlp.us3.datadoghq.com
+      and the full trace tree visible under ml_app:infra-advisor-otel-poc
+
+  Not committed yet — experimental scratch code; user will iterate locally
+  before deciding what to fold back into the main service.
+
 [2026-05-08] Fix UI LLM traces (orphaned-parent) + add Kafka tracing toggle (47cdf6d)
   Two issues fixed:
 
