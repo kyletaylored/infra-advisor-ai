@@ -1,3 +1,30 @@
+[2026-05-12] Bump POC packages; clear all NU1902 advisories (43131d9)
+  Three NuGet advisories flagged on the POC, all in OpenTelemetry 1.10.x:
+    - OpenTelemetry.Api 1.10.0:  GHSA-8785-wc3w-h8q6, GHSA-g94r-2vxg-569j
+    - OpenTelemetry.Exporter.OpenTelemetryProtocol 1.10.0: GHSA-4625-4j76-fww9
+  All moderate severity, all transitively / directly pinned by the
+  experiments/dotnet-otel-poc csproj.
+
+  Upgrades:
+    OpenTelemetry.Extensions.Hosting             1.10.0 → 1.15.3
+    OpenTelemetry.Exporter.OpenTelemetryProtocol 1.10.0 → 1.15.3
+    OpenTelemetry.Instrumentation.AspNetCore     1.10.1 → 1.15.2
+    OpenTelemetry.Instrumentation.Http           1.10.0 → 1.15.1
+    Microsoft.Extensions.AI                      9.5.0  → 10.5.2 (major)
+    Microsoft.Extensions.AI.OpenAI               9.5.0-preview → 10.5.2 (now stable)
+    Azure.AI.OpenAI                              2.2.0-beta.4 → 2.9.0-beta.1
+
+  M.E.AI 9 → 10 was source-compatible for every API the POC uses
+  (ChatClientBuilder, AsIChatClient, UseFunctionInvocation,
+  UseOpenTelemetry, GetResponseAsync, AIFunctionFactory.Create).
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors
+  [x] dotnet list package --vulnerable --include-transitive: empty
+  [~] Same OTel 1.10 advisories likely apply to the main
+      services/agent-api-dotnet csproj — left untouched in this commit
+      since it's a production change that warrants its own scoped commit.
+
 [2026-05-12] Single-command Make entry point for the POC stack
   Added `make otel-poc` — one command that starts the local OTel Collector
   (docker compose up -d), runs the .NET POC in the foreground, and tears the
