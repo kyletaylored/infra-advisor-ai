@@ -1,0 +1,92 @@
+# Local OpenTelemetry Collector for the .NET OTel POC.
+#
+# Mirrors the otelCollector section of datadog/datadog-agent.yaml, simplified
+# for laptop use:
+#   - No infraattributes processor (DD-distribution-only — does nothing useful
+#     on a single host without K8s/cloud metadata to enrich).
+#   - No prometheus scrape (the prod collector scrapes the DD agent's own
+#     :8888 metrics endpoint; we don't have one running locally).
+#   - Adds an otlphttp/llmobs exporter. The standard datadog exporter routes
+#     spans only to APM — the POC's gen_ai.* spans need DD's LLMObs OTLP
+#     intake with the dd-otlp-source=llmobs header to land in the LLMObs UI.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 10s
+
+# Connectors sit between pipelines — they receive from one signal type and
+# emit to another. datadog/connector consumes spans and produces APM stats
+# metrics (request rate, p95/p99 latency, error rate per service+operation).
+# These power the DD APM "Service" page, Service Map, and trace search facets.
+# Without this, the trace data still reaches DD but the aggregated views
+# won't have anything to render.
+connectors:
+  datadog/connector: {}
+
+exporters:
+  # Stdout — `docker logs otel-collector-poc` shows every span/metric/log body
+  # received so we can debug what the POC is emitting without leaving the
+  # terminal. Verbosity "detailed" prints attribute values too.
+  debug:
+    verbosity: detailed
+
+  # APM traces + metrics + logs (DD trace-agent intake protocol).
+  # Same exporter the prod DatadogAgent CR uses.
+  datadog:
+    api:
+      key: ${env:DD_API_KEY}
+      site: ${env:DD_SITE}
+    sending_queue:
+      batch:
+        flush_timeout: 10s
+
+  # DD LLM Observability OTLP intake.
+  # Tagged with dd-otlp-source=llmobs so spans land in the LLMObs UI instead
+  # of (or in addition to) APM. The traces pipeline fans out to BOTH this and
+  # the datadog exporter — APM still gets the trace tree, LLMObs gets the
+  # gen_ai.* span analysis.
+  otlphttp/llmobs:
+    endpoint: https://otlp.${env:DD_SITE}
+    headers:
+      dd-api-key: ${env:DD_API_KEY}
+      dd-otlp-source: llmobs
+
+service:
+  pipelines:
+    # Traces fan out four ways:
+    #   debug              — stdout, for local inspection of every span
+    #   datadog            — raw spans → APM trace view
+    #   datadog/connector  — extracts APM stats metrics (req rate, latency,
+    #                        errors) and emits them into the metrics pipeline
+    #                        below, populating DD's APM Service page / map
+    #   otlphttp/llmobs    — same spans → LLMObs intake (gen_ai.* UI)
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, datadog, datadog/connector, otlphttp/llmobs]
+
+    # Metrics pipeline receives both:
+    #   otlp              — direct ASP.NET Core / HttpClient / custom meter
+    #                       metrics from the POC
+    #   datadog/connector — trace-derived APM stats from the pipeline above
+    # Both flow through batch → debug + datadog.
+    metrics:
+      receivers: [otlp, datadog/connector]
+      processors: [batch]
+      exporters: [debug, datadog]
+
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [debug, datadog]
+  telemetry:
+    logs:
+      level: info

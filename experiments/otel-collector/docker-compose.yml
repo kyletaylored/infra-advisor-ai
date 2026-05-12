@@ -1,0 +1,25 @@
+# Local OTel Collector for the .NET OTel POC.
+#
+# Publishes :4317 (OTLP gRPC) and :4318 (OTLP HTTP) on the host. The POC
+# defaults to OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318, so nothing
+# else needs to know this exists once it's running.
+#
+# DD_API_KEY and DD_SITE come from the repo-root .env (the Makefile's
+# start-otel-collector target exports them before invoking docker compose).
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.152.0
+    container_name: otel-collector-poc
+    command: ["--config=/etc/otel/config.yaml"]
+    environment:
+      # ${VAR:?msg} aborts the container if VAR is unset rather than silently
+      # exporting empty values that fail later at DD ingestion time.
+      DD_API_KEY: ${DD_API_KEY:?DD_API_KEY must be set in your environment}
+      DD_SITE: ${DD_SITE:-us3.datadoghq.com}
+    volumes:
+      - ./config.yaml:/etc/otel/config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    restart: unless-stopped
