@@ -1,68 +1,86 @@
 # .NET OTel GenAI POC
 
-Minimal ASP.NET Core + Microsoft.Extensions.AI app that validates the path from
-**.NET application code → OTLP → Datadog LLM Observability** in isolation from
-the main service. Throwaway — lives under `experiments/` and is not wired into
-CI/CD or Kubernetes.
-
-## What it demonstrates
-
-A single `POST /chat` call exercises every LLMObs span kind:
+Minimal ASP.NET Core + `Microsoft.Extensions.AI` reference app for
+instrumenting an LLM .NET application with OpenTelemetry. Vendor-neutral
+by design — the app speaks pure OTLP and uses only OTel GenAI semantic
+conventions. All backend-specific routing (Datadog, Honeycomb, Grafana
+Cloud, self-hosted, …) lives in the **collector config**, not in the
+application code.
 
 ```
-invoke_agent                   (kind: agent      | manual ActivitySource span)
-└── router                     (kind: workflow   | manual ActivitySource span)
-└── specialist-{name}          (kind: workflow   | manual ActivitySource span)
-    └── prepare-context        (kind: task       | manual ActivitySource span)
-    └── chat <model>           (kind: llm        | Microsoft.Extensions.AI)
-        └── execute_tool ...   (kind: tool       | Microsoft.Extensions.AI / UseFunctionInvocation)
+[ Browser ]  --(W3C traceparent header)-->  [ ASP.NET POC ]
+                                                 │  OTLP HTTP/protobuf
+                                                 ▼
+                                       [ OTel Collector ]
+                                                 │  vendor-specific exporters
+                                                 ▼
+                                    [ Any OTel-compatible backend ]
 ```
 
-Key design choices, all in `Program.cs`:
+## Span hierarchy emitted per `POST /chat`
 
-- **`Microsoft.Extensions.AI`** wraps the LLM call with `.UseOpenTelemetry()` so
-  `chat` spans get correct OTel GenAI semantic-convention attributes for free —
-  no hand-rolled `gen_ai.*` tagging code.
-- **`.UseFunctionInvocation()`** runs the tool loop and emits an `execute_tool`
-  span per call, so the tool kind drops out of the framework for free too.
-- **One shared `ActivitySource`** (`infra-advisor-otel-poc`) is passed to both
-  the M.E.AI decorator and the manual agent/workflow/task spans, so a single
-  `AddSource(...)` call covers the whole pipeline.
-- **`invoke_agent` is a true root span** (fresh `TraceId`, zero parent `SpanId`)
-  — this is the fix for the orphaned-parent issue from the main service where
-  DD LLMObs silently dropped UI-originated traces because their parent (the
-  ASP.NET HTTP span) wasn't in the OTLP batch. The APM trace ID is kept on the
-  span as `apm.trace_id` for cross-product correlation.
-- **Browser RUM** in `wwwroot/index.html` correlates UI sessions to LLMObs via
-  the `sessionId` → `gen_ai.conversation.id` tag.
+```
+HTTP server span              ← ASP.NET Core instrumentation
+└── invoke_agent              ← manual; gen_ai.operation.name=invoke_agent
+    ├── router                ← manual; non-LLM workflow step
+    └── specialist-{name}     ← manual; non-LLM workflow step
+        ├── prepare-context   ← manual; sub-task
+        └── chat <model>      ← Microsoft.Extensions.AI .UseOpenTelemetry()
+            └── execute_tool  ← Microsoft.Extensions.AI .UseFunctionInvocation()
+```
+
+The natural parent chain stays intact — the whole tree lives in **one
+trace**. Browser-generated `traceparent` continues the trace from the UI
+into the server (W3C Trace Context, no SDK required).
+
+## OTel GenAI attributes used
+
+Only attributes defined by (or proposed for) the OTel GenAI semantic
+conventions. No vendor extensions:
+
+- `gen_ai.operation.name` — `invoke_agent`, `chat`, `execute_tool`
+- `gen_ai.agent.name`
+- `gen_ai.conversation.id` — session linking
+- `gen_ai.input.messages` / `gen_ai.output.messages` — parts-array format
+- `gen_ai.request.model`
+- `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens`
+- `gen_ai.response.finish_reasons`
+
+(All the `gen_ai.*` `chat` and `execute_tool` attributes come for free
+from `.UseOpenTelemetry()` + `.UseFunctionInvocation()` — the app code
+only sets the agent / workflow / task attributes manually.)
 
 ## Running locally
 
+From the repo root:
+
 ```bash
-cd experiments/dotnet-otel-poc
-cp .env.example .env
-# edit .env with your Azure OpenAI + DD_API_KEY values
-set -a; source .env; set +a
-dotnet run
+make otel-poc           # starts collector + runs POC; Ctrl+C tears both down
 ```
 
-Open <http://localhost:5000> in a browser, type a query, hit Send.
+Or:
 
-## Verifying in Datadog (US3)
+```bash
+make start-otel-collector   # docker, terminal 1
+make run-otel-poc           # POC, terminal 2
+make logs-otel-collector    # collector stdout (every span body), terminal 3
+make stop-otel-collector    # cleanup
+```
 
-1. **Trace export firing** — pod stdout / `dotnet run` output shows OTLP HTTP
-   POST to `https://otlp.us3.datadoghq.com/v1/traces` with `202 Accepted`:
-   ```
-   info: System.Net.Http.HttpClient.OtlpTraceExporter.LogicalHandler[101]
-         End processing HTTP request after 137ms - 202
-   ```
-2. **LLMObs UI** — go to LLM Observability → Traces, filter by
-   `ml_app:infra-advisor-otel-poc`. Each `/chat` call should produce one trace
-   with the full hierarchy above. The displayed `session_id` matches the
-   `gen_ai.conversation.id` shown in the browser footer.
-3. **APM ↔ LLMObs correlation** — the `apm.trace_id` tag on `invoke_agent` links
-   back to the HTTP request's APM trace (different trace ID, since the parent
-   chain was broken to make `invoke_agent` a root in LLMObs).
+Open `http://localhost:5005`, type a query, hit Send.
+
+## Pointing at a different backend
+
+The OTLP endpoint is the only knob. Point it at any OTel-compatible
+collector — vendor-specific routing is the collector's job.
+
+```bash
+# Default: local collector in experiments/otel-collector/
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+
+# Or hit any other OTLP endpoint directly:
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.example.com
+```
 
 ## Package versions
 
@@ -71,7 +89,7 @@ If NuGet can't resolve `Microsoft.Extensions.AI` /
 
 ```bash
 dotnet add package Microsoft.Extensions.AI
-dotnet add package Microsoft.Extensions.AI.OpenAI --prerelease
+dotnet add package Microsoft.Extensions.AI.OpenAI
 ```
 
 …to update the `.csproj` to whatever's latest.

@@ -442,29 +442,25 @@ otel-poc: ## Start collector + run POC (single entry point — Ctrl+C stops both
 run-otel-poc: ## Run the .NET OTel POC only (assumes collector already running)
 	@# Shell-level $$VAR (not Make's $(VAR)) so secrets aren't expanded into
 	@# the recipe text at parse time — keeps them out of `make -n` output.
-	@if [ -z "$$AZURE_OPENAI_ENDPOINT" ] || [ -z "$$AZURE_OPENAI_API_KEY" ] || [ -z "$$DD_API_KEY" ]; then \
-		echo "ERROR: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, and DD_API_KEY must be set in root .env"; \
+	@if [ -z "$$AZURE_OPENAI_ENDPOINT" ] || [ -z "$$AZURE_OPENAI_API_KEY" ]; then \
+		echo "ERROR: AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY must be set in root .env"; \
 		exit 1; \
 	fi
 	@# The POC defaults to OTLP → http://localhost:4318 (local OTel Collector).
-	@# Friendly warning if nothing's listening there — the user probably forgot
-	@# `make start-otel-collector` first. Override OTEL_EXPORTER_OTLP_ENDPOINT
-	@# to send direct to DD's intake instead (collector not required).
+	@# Warn if nothing is listening there. Override OTEL_EXPORTER_OTLP_ENDPOINT
+	@# to point at any other OTLP-compatible endpoint instead.
 	@if [ -z "$$OTEL_EXPORTER_OTLP_ENDPOINT" ] && ! nc -z localhost 4318 2>/dev/null; then \
-		echo "WARN: Nothing listening on localhost:4318 — the POC won't reach Datadog."; \
+		echo "WARN: Nothing listening on localhost:4318 — telemetry will fail to export."; \
 		echo "      Run `make start-otel-collector` first, OR set"; \
-		echo "      OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.$${DD_SITE:-us3.datadoghq.com}"; \
-		echo "      to send direct to DD (traces only, no metrics/logs)."; \
+		echo "      OTEL_EXPORTER_OTLP_ENDPOINT to point at another OTLP endpoint."; \
 		echo ""; \
 	fi
 	@echo "→ Starting .NET OTel POC on http://localhost:$(OTEL_POC_PORT)  (Ctrl+C to stop)"
 	@echo "  OTLP target: $${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}"
-	@echo "  Service: $${OTEL_SERVICE_NAME:-infra-advisor-otel-poc}"
+	@echo "  Service: $${OTEL_SERVICE_NAME:-otel-genai-poc}"
 	@echo ""
 	@cd experiments/dotnet-otel-poc && \
 		ASPNETCORE_URLS=http://localhost:$(OTEL_POC_PORT) \
-		DD_RUM_APPLICATION_ID="$${DD_RUM_APPLICATION_ID:-$$VITE_DD_RUM_APPLICATION_ID}" \
-		DD_RUM_CLIENT_TOKEN="$${DD_RUM_CLIENT_TOKEN:-$$VITE_DD_RUM_CLIENT_TOKEN}" \
 		dotnet run
 
 build-otel-poc: ## Build the .NET OTel POC without running (compile-check only)

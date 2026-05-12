@@ -1,56 +1,53 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>InfraAdvisor OTel POC</title>
-
-  <!-- RUM config from server env (no secrets in HTML) -->
-  <script src="/config.js"></script>
-
-  <!-- DD Browser RUM SDK (auto-injects x-datadog-trace-id / x-datadog-parent-id
-       headers into fetch() calls, so the same trace continues from browser → server). -->
-  <script src="https://www.datadoghq-browser-agent.com/us3/v6/datadog-rum.js"></script>
-  <script>
-    if (window.RUM_CONFIG && window.RUM_CONFIG.applicationId) {
-      window.DD_RUM.init({
-        ...window.RUM_CONFIG,
-        // Tracing fetch() to /chat propagates browser RUM context to the server,
-        // which then becomes the apm.trace_id tag on invoke_agent.
-        allowedTracingUrls: [window.location.origin],
-      });
-      window.DD_RUM.startSessionReplayRecording();
-    }
-  </script>
+  <title>OTel GenAI POC</title>
 
   <style>
-    body { font-family: ui-sans-serif, system-ui, sans-serif; max-width: 720px;
-           margin: 2rem auto; padding: 0 1rem; color: #1f2937; line-height: 1.5; }
+    body {
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      max-width: 720px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      color: #1f2937;
+      line-height: 1.5;
+    }
     h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
     p.sub { color: #6b7280; font-size: 0.9rem; margin-top: 0; }
     form { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 1.5rem; }
-    textarea { width: 100%; min-height: 4rem; padding: 0.6rem;
-               font: inherit; border: 1px solid #d1d5db; border-radius: 6px;
-               box-sizing: border-box; resize: vertical; }
-    button { align-self: flex-start; padding: 0.5rem 1rem; font: inherit;
-             background: #2563eb; color: white; border: 0; border-radius: 6px;
-             cursor: pointer; }
+    textarea {
+      width: 100%; min-height: 4rem; padding: 0.6rem; font: inherit;
+      border: 1px solid #d1d5db; border-radius: 6px; box-sizing: border-box;
+      resize: vertical;
+    }
+    button {
+      align-self: flex-start; padding: 0.5rem 1rem; font: inherit;
+      background: #2563eb; color: white; border: 0; border-radius: 6px;
+      cursor: pointer;
+    }
     button:disabled { background: #9ca3af; cursor: not-allowed; }
-    .answer { white-space: pre-wrap; background: #f9fafb; border: 1px solid #e5e7eb;
-              border-radius: 6px; padding: 0.8rem; margin-top: 1rem; }
-    .meta { font-family: ui-monospace, monospace; font-size: 0.78rem;
-            color: #6b7280; margin-top: 0.75rem; word-break: break-all; }
-    .meta a { color: #2563eb; }
+    .answer {
+      white-space: pre-wrap; background: #f9fafb; border: 1px solid #e5e7eb;
+      border-radius: 6px; padding: 0.8rem; margin-top: 1rem;
+    }
+    .meta {
+      font-family: ui-monospace, monospace; font-size: 0.78rem;
+      color: #6b7280; margin-top: 0.75rem; word-break: break-all;
+    }
   </style>
 </head>
+
 <body>
-  <h1>InfraAdvisor .NET OTel POC</h1>
-  <p class="sub">Microsoft.Extensions.AI · Azure OpenAI · OTLP → Datadog LLM Observability</p>
+  <h1>OTel GenAI POC</h1>
+  <p class="sub">Microsoft.Extensions.AI · OTel GenAI semantic conventions · OTLP → any backend</p>
 
   <form id="chat-form">
     <textarea id="query"
-              placeholder="Try: what time is it? — or — give me a quote about persistence"
-              autofocus></textarea>
+      placeholder="Try: what time is it? — or — give me a quote about persistence"
+      autofocus></textarea>
     <button type="submit" id="send-btn">Send</button>
   </form>
 
@@ -64,14 +61,25 @@
     const meta    = document.getElementById('meta');
     const sendBtn = document.getElementById('send-btn');
 
-    // Session ID anchors the gen_ai.conversation.id tag on all spans for this
-    // browser session. Persists across reloads so a refresh continues the same
-    // LLMObs conversation.
+    // Session ID anchors gen_ai.conversation.id across all spans for this
+    // browser session. Persists across reloads.
     const sessionId = (() => {
       let id = sessionStorage.getItem('otelpoc-session');
       if (!id) { id = crypto.randomUUID(); sessionStorage.setItem('otelpoc-session', id); }
       return id;
     })();
+
+    // Generate a W3C Trace Context `traceparent` header per request:
+    //   version-traceId-parentSpanId-flags  (00-{32hex}-{16hex}-01)
+    // The server's ASP.NET Core instrumentation respects an incoming
+    // traceparent and uses it as the root of the server-side trace.
+    // This is the OTel-native way to propagate trace context from browser
+    // to backend — no SDK required.
+    function makeTraceparent() {
+      const hex = (bytes) => [...crypto.getRandomValues(new Uint8Array(bytes))]
+        .map(b => b.toString(16).padStart(2, '0')).join('');
+      return `00-${hex(16)}-${hex(8)}-01`;
+    }
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -82,16 +90,23 @@
       answer.hidden = true;
       meta.textContent = 'Thinking…';
 
+      const traceparent = makeTraceparent();
       try {
         const resp = await fetch('/chat', {
           method: 'POST',
-          headers: { 'content-type': 'application/json' },
+          headers: {
+            'content-type': 'application/json',
+            'traceparent': traceparent,
+          },
           body: JSON.stringify({ query, sessionId }),
         });
         const json = await resp.json();
         answer.hidden = false;
         answer.textContent = json.answer || '(empty response)';
-        meta.innerHTML = `session_id=${sessionId} · apm_trace_id=${json.apmTraceId ?? '(none)'}`;
+        meta.innerHTML =
+          `session_id=${sessionId} · ` +
+          `client_trace=${traceparent.split('-')[1]} · ` +
+          `server_trace=${json.traceId ?? '(none)'}`;
       } catch (err) {
         answer.hidden = false;
         answer.textContent = `Error: ${err.message}`;
@@ -102,4 +117,5 @@
     });
   </script>
 </body>
+
 </html>
