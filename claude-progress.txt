@@ -1,3 +1,50 @@
+[2026-05-12] Strip POC to M.E.AI baseline; fix missing LLM spans (5d05aa7)
+
+  Root cause of "no LLM spans in DD LLMObs":
+  Microsoft.Extensions.AI's OpenTelemetryChatClient emits spans on an
+  ActivitySource named "Experimental.Microsoft.Extensions.AI" — that's
+  the internal default M.E.AI hardcodes, regardless of what sourceName
+  parameter you pass to .UseOpenTelemetry(). Our TracerProvider was
+  only registering .AddSource("otel-genai-poc"), so the chat +
+  execute_tool spans M.E.AI created were never picked up by the OTLP
+  exporter. Net effect: chat-related spans never reached the collector.
+
+  Fix: register the correct source name —
+    .AddSource("Experimental.Microsoft.Extensions.AI")
+  in the .WithTracing() block. Drop the sourceName parameter from
+  .UseOpenTelemetry() (it was misleading — doesn't change M.E.AI's
+  internal source name).
+
+  Also stripped the POC dramatically (user observation: "ton of bloat").
+  Modeled on the official dotnet/ai-samples Azure OpenAI sample
+  (https://github.com/dotnet/ai-samples/blob/main/src/
+  microsoft-extensions-ai/azure-openai/AzureOpenAIWebAPI/Program.cs):
+    builder.Services.AddSingleton(new AzureOpenAIClient(...));
+    builder.Services
+        .AddChatClient(services => services.GetRequiredService<…>
+            .GetChatClient(deployment).AsIChatClient())
+        .UseFunctionInvocation()
+        .UseOpenTelemetry(configure: c => c.EnableSensitiveData = true);
+
+  Removed:
+  - Manual invoke_agent / router / specialist / prepare-context spans
+    (re-add after M.E.AI's LLM + tool spans are confirmed working)
+  - Metrics + logs OTel pipelines (out of scope for this fix)
+  - OpenTelemetry.Instrumentation.Http package (unused — we don't trace
+    HttpClient calls anywhere)
+  - All the ConfigureOtlp helper + signal-dispatch abstraction +
+    verbose comments
+
+  Kept: HTML chat UI + RUM (browser side, untouched), /config.js
+  endpoint, both tools (GetCurrentTime, GetRandomQuote) so the
+  execute_tool span path is still exercised.
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors
+  [x] Program.cs line count: 119 (down from ~250)
+  [~] LLM (chat) + tool (execute_tool) spans visible in
+      `make logs-otel-collector` and in DD LLMObs UI: pending live run
+
 [2026-05-12] Restore DD RUM in POC; fix the missing applicationId (5c35821)
   Walked back part of the earlier vendor-neutral refactor (34ba427).
   The previous change removed RUM entirely and replaced it with a
