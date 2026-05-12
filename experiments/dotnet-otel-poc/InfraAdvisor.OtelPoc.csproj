@@ -12,19 +12,23 @@
          (gen_ai.input.messages parts array, gen_ai.usage.*, etc.) which
          DD LLMObs OTLP ingestion recognises as `llm` spans automatically.
          .UseFunctionInvocation() emits `execute_tool` spans → `tool` kind.
-         -->
-    <PackageReference Include="Microsoft.Extensions.AI" Version="9.5.0" />
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="9.5.0-preview.1.25265.7" />
+         10.5.2 dropped the .OpenAI preview suffix — finally a stable release. -->
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.5.2" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.5.2" />
 
-    <!-- Azure OpenAI SDK: AsChatClient() extension adapts the AzureOpenAIClient
-         to IChatClient. Picked beta.4 to match the main agent-api-dotnet service. -->
-    <PackageReference Include="Azure.AI.OpenAI" Version="2.2.0-beta.4" />
+    <!-- Azure OpenAI SDK. 2.x is still beta-only (no stable yet); 2.9.0-beta.1
+         is the most current and pairs cleanly with M.E.AI.OpenAI 10.5.2. -->
+    <PackageReference Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
 
-    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.10.0" />
-    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.10.0" />
+    <!-- OpenTelemetry: 1.15.x resolves NU1902 advisories on
+         OpenTelemetry.Api (GHSA-8785-wc3w-h8q6, GHSA-g94r-2vxg-569j) and
+         OpenTelemetry.Exporter.OpenTelemetryProtocol (GHSA-4625-4j76-fww9)
+         that affected the previous 1.10.0 pin. -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
     <!-- Auto-instrumentation for ASP.NET Core + HttpClient metrics
          (http.server.request.duration, http.client.*, etc.). -->
-    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.10.1" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.10.0" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
   </ItemGroup>
 </Project>
