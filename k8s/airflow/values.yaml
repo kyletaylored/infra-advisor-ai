@@ -3,14 +3,30 @@
 # Fresh install: make install-airflow
 # Upgrade only:  make upgrade-airflow
 
+# ── Cluster-wide env (applied to every Airflow pod) ──────────────────────────
+# The apache-airflow chart's top-level `env:` propagates to api-server,
+# scheduler, dag-processor, triggerer, and workers. Setting BASE_URL here
+# (rather than only on apiServer.env) ensures the scheduler — which is what
+# actually emits OpenLineage / Datadog Data Jobs spans for DAG runs — sees
+# the public URL, so airflow.dagRun.run_page_url in spans resolves to the
+# real Airflow UI instead of the http://localhost:8080 default.
+#
+# Both keys are set deliberately:
+#   AIRFLOW__API__BASE_URL       — used for API routing in Airflow 3.x
+#   AIRFLOW__WEBSERVER__BASE_URL — legacy key Airflow still consults to
+#                                  construct UI URLs embedded in OL events
+env:
+  - name: AIRFLOW__API__BASE_URL
+    value: "https://infra-advisor-ai.kyletaylor.dev/airflow"
+  - name: AIRFLOW__WEBSERVER__BASE_URL
+    value: "https://infra-advisor-ai.kyletaylor.dev/airflow"
+
 # ── API server (Airflow 3.x) ──────────────────────────────────────────────────
 # Serve the UI at /airflow so it's accessible via the existing nginx reverse proxy.
 apiServer:
   # --proxy-headers: trust X-Forwarded-Proto/For/Port headers from nginx
   args: ["bash", "-c", "exec airflow api-server --proxy-headers"]
   env:
-    - name: AIRFLOW__API__BASE_URL
-      value: "https://infra-advisor-ai.kyletaylor.dev/airflow"
     - name: FORWARDED_ALLOW_IPS
       value: "*"
 
