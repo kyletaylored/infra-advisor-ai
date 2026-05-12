@@ -1,3 +1,48 @@
+[2026-05-12] Refactor POC to pure OTel — remove vendor-specific code (34ba427)
+  User observed two issues after first run: (1) /chat produced multiple
+  separate traces per request, (2) RUM applicationId was empty so the
+  browser wasn't propagating trace context. Plus the explicit ask: "we
+  should only be doing OTel-native instrumentation, no Datadog-specific
+  language or tags in the code." Goal restated: the POC must be a clean
+  reference for instrumenting any LLM .NET app, sendable to any backend.
+
+  Application (experiments/dotnet-otel-poc/Program.cs):
+  - Removed dd-api-key / dd-otlp-source=llmobs header injection and the
+    isDirectToDatadog host-sniffing logic. OTLP exporter now uses only
+    OTEL_EXPORTER_OTLP_ENDPOINT. Vendor routing belongs in the collector.
+  - Removed dd.llmobs.span.kind, ml_app, apm.trace_id tags from every
+    span. Span classification is communicated via OTel's
+    gen_ai.operation.name + natural parent chain only.
+  - Removed the orphan-parent workaround (fresh ActivityContext for
+    invoke_agent). invoke_agent is now a child of the ASP.NET HTTP span,
+    producing a single trace tree per /chat.
+  - Added .AddAspNetCoreInstrumentation() + .AddHttpClientInstrumentation()
+    to the tracing pipeline so the HTTP server span is exported as a
+    real OTel span. Full chain now in one trace:
+      HTTP → invoke_agent → router → specialist → prepare-context → chat
+      → execute_tool
+  - Removed /config.js endpoint.
+
+  Browser (wwwroot/index.html):
+  - Removed DD RUM SDK and /config.js dependency entirely.
+  - Replaced with W3C traceparent header generated client-side using
+    crypto.getRandomValues(). ASP.NET Core instrumentation respects
+    incoming traceparent, so the browser trace_id continues into the
+    server-side trace — OTel-native cross-process propagation without
+    a vendor SDK.
+
+  Surface that stayed vendor-specific (intentionally):
+  - experiments/otel-collector/config.yaml — that's the layer where
+    vendor routing belongs. datadog exporter, otlphttp/llmobs exporter,
+    dd-api-key + dd-otlp-source headers all stay there.
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors
+  [x] No 'datadog', 'dd_', 'llmobs', 'ml_app', 'apmTraceId', 'DD_RUM',
+      or 'DD_API_KEY' references in Program.cs / index.html / .env.example
+  [~] Single-trace view per /chat call in any OTLP-compatible backend:
+      pending live run
+
 [2026-05-12] Bump POC packages; clear all NU1902 advisories (43131d9)
   Three NuGet advisories flagged on the POC, all in OpenTelemetry 1.10.x:
     - OpenTelemetry.Api 1.10.0:  GHSA-8785-wc3w-h8q6, GHSA-g94r-2vxg-569j
