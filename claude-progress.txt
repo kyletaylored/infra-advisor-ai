@@ -1,3 +1,39 @@
+[2026-05-12] Fix airflow.dagRun.run_page_url cluster-wide BASE_URL (e511b99)
+
+  Datadog Data Jobs Monitoring renders the airflow.dagRun.run_page_url
+  attribute on each DAG run's root span as a "View in Airflow" link.
+  User observed it pointing at http://localhost:8080/dags/... instead
+  of the public Airflow UI.
+
+  Investigation:
+  - AIRFLOW__API__BASE_URL was already correctly set to
+    https://infra-advisor-ai.kyletaylor.dev/airflow — but only on
+    apiServer.env in k8s/airflow/values.yaml.
+  - Across-component env check: only airflow-api-server had the
+    var. airflow-scheduler-0, airflow-dag-processor-*, and
+    airflow-triggerer-0 all returned (none) for AIRFLOW_*BASE_URL.
+  - The scheduler emits the OpenLineage events Datadog consumes —
+    it was the component falling back to the http://localhost:8080
+    default when constructing UI links.
+
+  Fix: moved BOTH BASE_URL env vars to the chart's top-level `env:`
+  block in values.yaml. The apache-airflow Helm chart propagates
+  top-level env to every pod template (api-server, scheduler,
+  dag-processor, triggerer, workers).
+
+  Set deliberately as a pair:
+    AIRFLOW__API__BASE_URL       — Airflow 3.x API routing
+    AIRFLOW__WEBSERVER__BASE_URL — legacy key Airflow still consults
+                                   for UI URL construction in OL events
+
+  Verified:
+  [x] Values.yaml diff: env block added at top level, apiServer.env
+      keeps only FORWARDED_ALLOW_IPS (no longer duplicates BASE_URL)
+  [~] run_page_url resolves to https://infra-advisor-ai.kyletaylor.dev/
+      airflow/dags/... in next DAG run's span — pending
+      `make upgrade-airflow` (deliberately not rolled here since the
+      broken-DAGs work is deferred per user direction).
+
 [2026-05-12] Migrate authdb users → infraadvisor + fix Kafka JMX integration
 
   Two unrelated cleanups in one session.
