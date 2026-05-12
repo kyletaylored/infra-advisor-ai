@@ -1,3 +1,50 @@
+[2026-05-12] Restore DD RUM in POC; fix the missing applicationId (5c35821)
+  Walked back part of the earlier vendor-neutral refactor (34ba427).
+  The previous change removed RUM entirely and replaced it with a
+  hand-rolled W3C traceparent function — but the original issue was
+  just that the applicationId came through as empty, not that RUM
+  itself was the wrong choice. Restored the RUM SDK setup and fixed
+  the actual env-var-name mismatch.
+
+  Browser side (RUM restored):
+  - wwwroot/index.html: re-added <script src="/config.js"> and the
+    DD RUM SDK <script src=https://www.datadoghq-browser-agent.com/us3/v6/datadog-rum.js>.
+    Removed the makeTraceparent function — RUM with
+    allowedTracingUrls=[origin] auto-injects W3C traceparent + DD
+    x-datadog-* headers into fetch() calls, so hand-rolling that was
+    reinventing what RUM does for free.
+  - Program.cs: re-added the /config.js endpoint emitting
+    window.RUM_CONFIG from server env vars (DD_RUM_APPLICATION_ID,
+    DD_RUM_CLIENT_TOKEN, DD_SITE).
+
+  Server-side OTel pipeline is unchanged — still pure OTel, still
+  pointing at OTEL_EXPORTER_OTLP_ENDPOINT only, no DD-specific
+  headers/tags/attributes. RUM here is a deliberate scoped exception
+  for browser-side telemetry (no widely-adopted OTel browser SDK that
+  matches DD RUM's auto-propagation behavior).
+
+  Root cause of the empty applicationId:
+  The earlier Makefile fallback used VITE_DD_RUM_APPLICATION_ID, but
+  the main UI's .env actually exports VITE_DD_RUM_APP_ID (verified by
+  grep on services/ui/src/lib/datadog-rum.ts, which reads
+  import.meta.env.VITE_DD_RUM_APP_ID). The fallback was matching a
+  name that doesn't exist in the root .env, so it always evaluated to
+  empty and /config.js served applicationId: "".
+
+  Makefile fix — now using the CORRECT fallback names:
+    DD_RUM_APPLICATION_ID  ← VITE_DD_RUM_APP_ID
+    DD_RUM_CLIENT_TOKEN    ← VITE_DD_RUM_CLIENT_TOKEN
+    DD_SITE                ← VITE_DD_RUM_SITE
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors
+  [x] grep services/ui/src/lib/datadog-rum.ts → confirmed
+      VITE_DD_RUM_APP_ID is the canonical env var name
+  [~] Live: RUM applicationId populated in /config.js (pending run);
+      RUM SDK initialises; allowedTracingUrls propagates W3C
+      traceparent into the POC's /chat fetch so the browser-generated
+      trace_id continues into the OTel-instrumented server trace.
+
 [2026-05-12] Fix airflow.dagRun.run_page_url cluster-wide BASE_URL (e511b99)
 
   Datadog Data Jobs Monitoring renders the airflow.dagRun.run_page_url
