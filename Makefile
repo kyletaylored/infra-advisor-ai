@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags help
+.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc start-otel-collector stop-otel-collector logs-otel-collector help
 
 # Load .env if present (for local dev)
 -include .env
@@ -420,3 +420,67 @@ logs-mcp: ## Tail MCP server logs
 
 logs-agent: ## Tail agent API logs
 	kubectl logs -n $(NAMESPACE) deploy/agent-api --tail=50 -f
+
+# ─── Experiments ──────────────────────────────────────────────────────────────
+
+# Default port 5005 — macOS AirPlay Receiver hijacks :5000. Override with
+# `make run-otel-poc OTEL_POC_PORT=7000` if 5005 is also in use.
+OTEL_POC_PORT ?= 5005
+
+otel-poc: ## Start collector + run POC (single entry point — Ctrl+C stops both)
+	@$(MAKE) --no-print-directory start-otel-collector
+	@echo ""
+	@echo "▸ POC starting on http://localhost:$(OTEL_POC_PORT)"
+	@echo "  Ctrl+C will stop the POC AND tear down the collector."
+	@echo ""
+	@# Trap fires on Ctrl+C (INT), kill (TERM), or normal/error exit (EXIT).
+	@# Always runs `stop-otel-collector` so we never leave the container
+	@# running when the foreground POC exits.
+	@trap '$(MAKE) --no-print-directory stop-otel-collector' EXIT INT TERM; \
+	$(MAKE) --no-print-directory run-otel-poc
+
+run-otel-poc: ## Run the .NET OTel POC only (assumes collector already running)
+	@# Shell-level $$VAR (not Make's $(VAR)) so secrets aren't expanded into
+	@# the recipe text at parse time — keeps them out of `make -n` output.
+	@if [ -z "$$AZURE_OPENAI_ENDPOINT" ] || [ -z "$$AZURE_OPENAI_API_KEY" ] || [ -z "$$DD_API_KEY" ]; then \
+		echo "ERROR: AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, and DD_API_KEY must be set in root .env"; \
+		exit 1; \
+	fi
+	@# The POC defaults to OTLP → http://localhost:4318 (local OTel Collector).
+	@# Friendly warning if nothing's listening there — the user probably forgot
+	@# `make start-otel-collector` first. Override OTEL_EXPORTER_OTLP_ENDPOINT
+	@# to send direct to DD's intake instead (collector not required).
+	@if [ -z "$$OTEL_EXPORTER_OTLP_ENDPOINT" ] && ! nc -z localhost 4318 2>/dev/null; then \
+		echo "WARN: Nothing listening on localhost:4318 — the POC won't reach Datadog."; \
+		echo "      Run `make start-otel-collector` first, OR set"; \
+		echo "      OTEL_EXPORTER_OTLP_ENDPOINT=https://otlp.$${DD_SITE:-us3.datadoghq.com}"; \
+		echo "      to send direct to DD (traces only, no metrics/logs)."; \
+		echo ""; \
+	fi
+	@echo "→ Starting .NET OTel POC on http://localhost:$(OTEL_POC_PORT)  (Ctrl+C to stop)"
+	@echo "  OTLP target: $${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}"
+	@echo "  Service: $${OTEL_SERVICE_NAME:-infra-advisor-otel-poc}"
+	@echo ""
+	@cd experiments/dotnet-otel-poc && \
+		ASPNETCORE_URLS=http://localhost:$(OTEL_POC_PORT) \
+		DD_RUM_APPLICATION_ID="$${DD_RUM_APPLICATION_ID:-$$VITE_DD_RUM_APPLICATION_ID}" \
+		DD_RUM_CLIENT_TOKEN="$${DD_RUM_CLIENT_TOKEN:-$$VITE_DD_RUM_CLIENT_TOKEN}" \
+		dotnet run
+
+build-otel-poc: ## Build the .NET OTel POC without running (compile-check only)
+	cd experiments/dotnet-otel-poc && dotnet build -c Release
+
+start-otel-collector: ## Start local OTel Collector (Docker) on :4317 / :4318
+	@if [ -z "$$DD_API_KEY" ]; then \
+		echo "ERROR: DD_API_KEY must be set (root .env)"; exit 1; \
+	fi
+	cd experiments/otel-collector && docker compose up -d
+	@echo ""
+	@echo "✓ Collector running. Tail logs:  make logs-otel-collector"
+	@echo "                     Stop it:     make stop-otel-collector"
+
+stop-otel-collector: ## Stop local OTel Collector
+	cd experiments/otel-collector && docker compose down
+
+logs-otel-collector: ## Tail local OTel Collector logs (every span/metric/log body)
+	docker logs -f otel-collector-poc
