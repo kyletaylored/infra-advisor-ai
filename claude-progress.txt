@@ -1,3 +1,69 @@
+[2026-05-13] Wire real MCP into MAF POC (a108f8f)
+  User flagged a second MAF sample — Agent_MCP_Server_Auth — and asked
+  if it's a better fit than the hosted-MCP one. Yes: that sample uses
+  ModelContextProtocol.Client + HttpClientTransport, which is the
+  CLIENT-side MCP pattern. Our app's process speaks MCP directly to
+  mcp-server-dotnet (in-cluster). The hosted-MCP sample's pattern only
+  works when MCP is publicly reachable from Azure OpenAI's network,
+  which ours isn't.
+
+  Decision: wire MCP into the existing MAF POC, replacing the mock
+  GetCurrentTime / GetRandomQuote tools. Validates the full
+  production-shape integration (MAF + real MCP + OTel) in one place.
+
+  The OAuth flow from the sample is stripped — our mcp-server-dotnet
+  has no auth gate today; the cluster network boundary is the
+  protection. Adding auth later would be small additions to the same
+  HttpClientTransportOptions block.
+
+  Changes to experiments/dotnet-maf-poc/:
+    InfraAdvisor.MafPoc.csproj
+      + ModelContextProtocol 1.3.0 (official .NET MCP SDK; latest
+        stable on NuGet)
+
+    Program.cs
+      - GetCurrentTime + GetRandomQuote mock tools (deleted)
+      - AIFunctionFactory.Create wrappers
+      + MCP_SERVER_URL env var (default http://localhost:8000/mcp
+        for port-forward use)
+      + Startup-time MCP connect via McpClient.CreateAsync over
+        HttpClientTransport
+      + ListToolsAsync() result spread directly into agent's
+        ChatOptions.Tools = [.. mcpTools]
+      + Friendly startup error on MCP connect failure pointing at
+        the port-forward command
+      + System prompt updated to reflect real infrastructure tools
+      + McpClient registered as DI singleton for IAsyncDisposable
+        lifecycle management
+
+    .env.example
+      + MCP_SERVER_URL with port-forward instructions
+
+    README.md
+      + "Real MCP tools" added as 4th validation point
+      + Running section now documents the 3-terminal flow
+        (port-forward, POC, optional collector log tail)
+
+  API surface notes (1.3.0 stable, verified during build):
+  - IMcpClient interface doesn't exist on the public surface; using
+    the concrete McpClient type returned by CreateAsync.
+  - HttpClientTransportOptions accepts Endpoint + Name with no
+    required httpClient/loggerFactory args (sample passed them
+    explicitly for OAuth scenarios).
+  - tools list typing as IList<AITool> compiles (spread from
+    ListToolsAsync result works because mcpClient returns
+    AITool-compatible instances natively).
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors
+  [x] Startup connect/list-tools/spread pipeline compiles end-to-end
+  [x] Friendly error message wired for the failure path
+
+  [~] Live: kubectl port-forward + `make otel-maf-poc` connects to
+      mcp-server-dotnet, enumerates 11 tools (or current set), and
+      DD LLMObs trace tree shows execute_tool spans for each MCP call
+      nested under chat under invoke_agent: pending user run.
+
 [2026-05-13] Scaffold MAF POC: Microsoft Agents Framework 1.5.0 (8e53604)
 
   Sibling to experiments/dotnet-otel-poc/ (the M.E.AI-only POC that
