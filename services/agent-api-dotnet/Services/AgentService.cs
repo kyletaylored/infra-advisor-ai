@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using InfraAdvisor.AgentApi.Models;
+using InfraAdvisor.AgentApi.Services.Evaluators;
 
 namespace InfraAdvisor.AgentApi.Services;
 
@@ -23,7 +24,12 @@ public class AgentService
     private readonly AIAgent _agent;
     private readonly AgentSessionStore _sessions;
     private readonly RetrievalService _retrieval;
+    private readonly IReadOnlyList<IResponseEvaluator> _evaluators;
+    private readonly DatadogEvalsClient _ddEvals;
     private readonly Histogram<double> _faithfulnessHistogram;
+    private readonly Counter<long> _conversationCounter;
+    private readonly Counter<long> _toolCounter;
+    private readonly double _evalSampleRate;
     private readonly ILogger<AgentService> _logger;
 
     // ActivitySource for manual spans that the M.E.AI / MAF decorators don't
@@ -37,18 +43,33 @@ public class AgentService
         AIAgent agent,
         AgentSessionStore sessions,
         RetrievalService retrieval,
+        IEnumerable<IResponseEvaluator> evaluators,
+        DatadogEvalsClient ddEvals,
         IMeterFactory meterFactory,
         ILogger<AgentService> logger)
     {
         _agent = agent;
         _sessions = sessions;
         _retrieval = retrieval;
+        _evaluators = evaluators.ToList();
+        _ddEvals = ddEvals;
         _logger = logger;
+        _evalSampleRate = double.TryParse(
+            Environment.GetEnvironmentVariable("EVAL_SAMPLE_RATE"),
+            System.Globalization.NumberStyles.Float,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out var r) ? Math.Clamp(r, 0.0, 1.0) : 0.1;
 
         var meter = meterFactory.Create(Observability.TelemetrySetup.ActivitySourceName);
         _faithfulnessHistogram = meter.CreateHistogram<double>(
             "agent.faithfulness_score",
             description: "Faithfulness evaluation score for agent responses");
+        _conversationCounter = meter.CreateCounter<long>(
+            "infra_advisor.conversation.completed",
+            description: "Count of completed /query calls. Tagged with query.domain.");
+        _toolCounter = meter.CreateCounter<long>(
+            "infra_advisor.tool.invoked",
+            description: "Count of MCP tool invocations made by the agent. Tagged with tool.name + query.domain.");
     }
 
     public async Task<AgentResult> RunAgentAsync(
@@ -93,12 +114,86 @@ public class AgentService
         var sources = ExtractSourcesFromResponse(response);
         var toolsCalled = ExtractToolsCalledFromResponse(response);
 
+        // Business metrics — increment once per completed query plus once
+        // per MCP tool invocation. Tags let dashboards slice by domain and
+        // tool name without further code changes.
+        var domainTag = new KeyValuePair<string, object?>("query.domain", domain);
+        _conversationCounter.Add(1, domainTag);
+        foreach (var tool in toolsCalled)
+            _toolCounter.Add(1,
+                new KeyValuePair<string, object?>("tool.name", tool),
+                domainTag);
+
+        // External evaluations — fire-and-forget so /query latency is
+        // unchanged. Captured AgentSpanContext lets us address the agent
+        // span specifically (not the HTTP root) when joining to DD's
+        // eval-metric API.
+        ScheduleEvaluations(query, answer, toolsCalled, sources, domain);
+
         return new AgentResult(
             Answer: answer,
             Sources: sources,
             ToolsCalled: toolsCalled,
             QueryDomain: domain);
     }
+
+    private void ScheduleEvaluations(
+        string query, string answer,
+        List<string> toolsCalled, List<string> sources, string domain)
+    {
+        if (_evalSampleRate <= 0 || _evaluators.Count == 0) return;
+        if (Random.Shared.NextDouble() >= _evalSampleRate) return;
+
+        var captured = AgentSpanContext.Current;
+        if (captured is null)
+        {
+            _logger.LogDebug("Skipping eval: AgentSpanContext not captured (no invoke_agent span on this request?)");
+            return;
+        }
+
+        var input = new EvalInput(query, answer, toolsCalled, sources, domain);
+        var evaluators = _evaluators;
+        var client = _ddEvals;
+        var promptVersionTag = $"prompt.version:{Environment.GetEnvironmentVariable("PROMPT_VERSION") ?? "v1"}";
+
+        _ = Task.Run(async () =>
+        {
+            foreach (var ev in evaluators)
+            {
+                try
+                {
+                    var result = ev.Evaluate(input);
+                    var extraTags = new[]
+                    {
+                        $"query.domain:{domain}",
+                        promptVersionTag,
+                    };
+                    await DispatchAsync(client, captured, ev.Label, result, extraTags);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning("Evaluator {Label} threw: {Error}", ev.Label, ex.Message);
+                }
+            }
+        });
+    }
+
+    private static Task DispatchAsync(
+        DatadogEvalsClient client, AgentSpanContext.Captured captured,
+        string label, EvalResult result, IEnumerable<string> extraTags) =>
+        result.MetricType switch
+        {
+            "boolean" => client.SubmitBooleanAsync(
+                captured.TraceIdDecimal, captured.SpanIdDecimal,
+                label, (bool)result.Value, result.Reasoning, extraTags),
+            "score"   => client.SubmitScoreAsync(
+                captured.TraceIdDecimal, captured.SpanIdDecimal,
+                label, Convert.ToDouble(result.Value), result.Reasoning, extraTags),
+            "categorical" => client.SubmitCategoricalAsync(
+                captured.TraceIdDecimal, captured.SpanIdDecimal,
+                label, result.Value.ToString() ?? "", result.Reasoning, extraTags),
+            _ => Task.CompletedTask,
+        };
 
     // Wraps ClassifyDomain in a manual Activity tagged so DD LLMObs renders
     // it as a "task" kind span (alongside the agent / chat / tool / embedding

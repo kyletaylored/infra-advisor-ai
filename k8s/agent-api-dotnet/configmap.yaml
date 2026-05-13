@@ -43,3 +43,7 @@ data:
   REDIS_PORT: "6379"
   LOG_LEVEL: "Information"
   ASPNETCORE_ENVIRONMENT: "Production"
+  # External-evaluations sample rate (fraction of /query calls scored by
+  # IResponseEvaluator implementations and POSTed to DD's eval-metric API).
+  # Set to "0" to disable, "1" to score every call. 0.1 = 10% sampling.
+  EVAL_SAMPLE_RATE: "0.1"

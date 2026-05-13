@@ -1,10 +1,14 @@
 using System.Diagnostics;
+using System.Diagnostics.Metrics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Azure;
 using Azure.AI.OpenAI;
 using InfraAdvisor.AgentApi.Models;
 using InfraAdvisor.AgentApi.Observability;
 using InfraAdvisor.AgentApi.Services;
+using InfraAdvisor.AgentApi.Services.Evaluators;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using ModelContextProtocol.Client;
@@ -184,10 +188,64 @@ builder.Services.AddSingleton<AIAgent>(sp =>
                           configure: cfg => cfg.EnableSensitiveData = true)
         .Build());
 
+// ── Prompt tracking + agent-span capture ──────────────────────────────────────
+// One ActivityListener does two jobs:
+//   1. Stamps `_dd.ml_obs.prompt_tracking` (JSON metadata: name, version,
+//      template) on every chat + invoke_agent span. DD's Prompt Tracking
+//      UI reads this for per-version metrics + A/B comparison.
+//   2. Captures the invoke_agent span's (trace_id, span_id) into an
+//      AsyncLocal so AgentService can attach external-eval scores to the
+//      AGENT span (not the HTTP root) — DD requires both IDs on the
+//      eval-metric API's join_on.span field.
+static string ShortContentHash(string text)
+{
+    var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(text));
+    return Convert.ToHexString(bytes).Substring(0, 8).ToLowerInvariant();
+}
+
+var promptVersion = "v1-" + ShortContentHash(AgentSystemPrompt);
+var promptTrackingJson = JsonSerializer.Serialize(new
+{
+    name = "infra-advisor-system",
+    version = promptVersion,
+    template = AgentSystemPrompt,
+    variables = new Dictionary<string, object>(),
+});
+
+ActivitySource.AddActivityListener(new ActivityListener
+{
+    ShouldListenTo = source =>
+        source.Name == "Experimental.Microsoft.Extensions.AI" ||
+        source.Name == TelemetrySetup.ActivitySourceName,
+    ActivityStarted = activity =>
+    {
+        if (activity.OperationName is "invoke_agent" or "chat")
+            activity.SetTag("_dd.ml_obs.prompt_tracking", promptTrackingJson);
+        if (activity.OperationName == "invoke_agent")
+            AgentSpanContext.Capture(activity);
+    },
+    Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+});
+Console.WriteLine($"[prompt-tracking] registered system prompt {promptVersion} " +
+                  $"({AgentSystemPrompt.Length} chars)");
+
+// ── Business metrics meter ────────────────────────────────────────────────────
+// Shared meter for endpoint-level counters (conversation + tool counters
+// live in AgentService since they need response data; feedback counter is
+// emitted from the /feedback endpoint below). Same name as the OTel meter
+// pipeline already AddMeter's, so DD picks them up via OTLP automatically.
+var bizMeter = new Meter(TelemetrySetup.ActivitySourceName);
+var feedbackCounter = bizMeter.CreateCounter<long>(
+    "infra_advisor.feedback.submitted",
+    description: "User feedback submissions via /feedback. Tagged with rating.");
+
 // ── Core services ─────────────────────────────────────────────────────────────
 builder.Services.AddSingleton<MemoryService>();
 builder.Services.AddSingleton<AgentSessionStore>();
 builder.Services.AddSingleton<RetrievalService>();
+builder.Services.AddHttpClient<DatadogEvalsClient>();
+builder.Services.AddSingleton<IResponseEvaluator, CitationPresentEvaluator>();
+builder.Services.AddSingleton<IResponseEvaluator, BdToolOrderingEvaluator>();
 builder.Services.AddSingleton<AgentService>();
 builder.Services.AddSingleton<SuggestionService>();
 builder.Services.AddSingleton<ConversationService>();
@@ -372,6 +430,8 @@ app.MapPost("/feedback", (FeedbackRequest body) =>
     current?.SetTag("feedback.span_id", body.SpanId);
     current?.SetTag("feedback.rating", body.Rating);
     current?.SetTag("feedback.session_id", body.SessionId ?? "");
+
+    feedbackCounter.Add(1, new KeyValuePair<string, object?>("rating", body.Rating));
 
     return Results.StatusCode(204);
 });
