@@ -1,3 +1,62 @@
+[2026-05-12] Scaffold auto-instrumentation POC variant (fdffa71)
+  Created experiments/dotnet-otel-poc-autoinstr/ as a sibling to the
+  existing M.E.AI-only POC. Tests how minimal the application code can
+  become when the OpenTelemetry .NET auto-instrumentation profiler is
+  doing the SDK heavy lifting.
+
+  Same external behavior (POST /chat, same RUM-enabled UI, same tools)
+  but radically different telemetry surface in the codebase:
+
+                          M.E.AI-only      Auto-instrumented
+  -----------------------------------------------------------------
+  Program.cs lines        119              103
+  csproj packages         6                3
+  OpenTelemetry.* refs    3 packages       0 packages
+  OTel SDK code           ~10 lines        0 lines (only line
+                                            referencing OTel at all
+                                            is .UseOpenTelemetry() on
+                                            the IChatClient builder)
+
+  The profiler attaches via CORECLR_* env vars sourced from
+  ~/.otel-dotnet-auto/instrument.sh. It listens to every
+  ActivitySource by default, so M.E.AI's gen_ai.* spans are picked
+  up automatically — no explicit AddSource() call needed.
+
+  Bonus over the M.E.AI-only POC: outbound HttpClient spans for the
+  Azure OpenAI REST POST are emitted automatically (auto-instrumented
+  Azure SDK + HttpClient), giving network-level latency for the call
+  that M.E.AI's chat span wraps. Same free coverage available for
+  ~30 other libraries (Npgsql, Redis, Kafka, gRPC, MongoDB, EFCore…).
+
+  Makefile:
+    otel-poc-autoinstr      — combo: start collector + run POC
+                              (Ctrl+C tears both down)
+    run-otel-poc-autoinstr  — POC only; sources instrument.sh from
+                              $HOME/.otel-dotnet-auto/ and warns with
+                              install command if the profiler isn't
+                              installed.
+
+  Production caveat (not blocking this POC):
+  In AKS, the DD admission controller injects the DD .NET tracer
+  (another CLR profiler) into pods in the infra-advisor namespace.
+  Running both CLR profilers in one process produces conflicting
+  span ownership / sampling decisions. If we promote this pattern
+  to AKS, we'd narrow the DatadogAgent apm.instrumentation.targets
+  namespaceSelector to exclude this workload. Per user direction,
+  a later problem.
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors
+  [x] make help shows both new targets (otel-poc-autoinstr,
+      run-otel-poc-autoinstr)
+  [x] csproj contains exactly 3 PackageReference entries
+      (Microsoft.Extensions.AI, .OpenAI, Azure.AI.OpenAI) — zero
+      OpenTelemetry.* references
+  [~] Live: ~/.otel-dotnet-auto/ install + `make otel-poc-autoinstr`
+      produces a trace tree in DD with HTTP server span (auto) →
+      outbound HttpClient span (auto) + sibling chat span (M.E.AI)
+      → execute_tool span (M.E.AI). Pending one-time install + run.
+
 [2026-05-12] Strip POC to M.E.AI baseline; fix missing LLM spans (5d05aa7)
 
   Root cause of "no LLM spans in DD LLMObs":
