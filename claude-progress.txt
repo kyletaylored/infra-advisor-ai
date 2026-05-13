@@ -1,3 +1,45 @@
+[2026-05-13] MAF POC: two startup fixes after live run (dbadd0b, 4a079f7)
+  Two issues surfaced when user ran `make otel-maf-poc` for the first
+  time after a108f8f wired in MCP. Both were small environmental /
+  DI registration fixes, not framework problems.
+
+  dbadd0b — MCP_SERVER_URL inherited cluster URL from root .env
+    Symptom: POC tried to connect to
+      http://mcp-server.infra-advisor.svc.cluster.local:8000/mcp
+    instead of the localhost port-forward.
+    Cause: root .env has MCP_SERVER_URL=<cluster-internal URL> set
+    for the production agent-api service. The Makefile's
+    `-include .env` + `export` forwards every var (including this
+    one) to subprocesses, overriding the Program.cs default.
+    Fix: hardcode MCP_SERVER_URL on the dotnet-run command line in
+    the Makefile recipe, sourced from a POC-specific override
+    MAF_POC_MCP_URL (default http://localhost:8000/mcp). Won't
+    collide with the production-aimed MCP_SERVER_URL.
+
+  4a079f7 — SessionStore not registered in DI
+    Symptom: first /chat request returned 500 with
+      InvalidOperationException: Failure to infer one or more parameters.
+        agent     | Services (Inferred)
+        sessions  | Body (Inferred)        ← wrong
+        body      | UNKNOWN
+    Cause: SessionStore was constructed in Program.cs but never
+    AddSingleton-registered. ASP.NET Core minimal API's parameter
+    inference treats any complex type not registered in DI as the
+    request body; with two competing body candidates the endpoint
+    delegate fails to build.
+    Fix: builder.Services.AddSingleton<SessionStore>(). MemoryProvider
+    was already registered; SessionStore was the omission.
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors
+  [x] `make -n run-otel-maf-poc` shows MCP_SERVER_URL override line
+      in the recipe (with MAF_POC_MCP_URL fallback)
+
+  [~] Re-run with port-forward active: POC connects to MCP, /chat
+      request resolves cleanly through DI, full
+      invoke_agent → chat → execute_tool trace tree visible in DD
+      LLMObs: pending user re-run.
+
 [2026-05-13] Wire real MCP into MAF POC (a108f8f)
   User flagged a second MAF sample — Agent_MCP_Server_Auth — and asked
   if it's a better fit than the hosted-MCP one. Yes: that sample uses
