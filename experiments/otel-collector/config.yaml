@@ -22,6 +22,25 @@ processors:
   batch:
     timeout: 10s
 
+  # Inject the Datadog-specific `ml_app` resource attribute on every span
+  # that flows through the collector. DD LLM Observability requires
+  # `ml_app` to register a trace under an LLM application; without it the
+  # LLMObs UI doesn't show the trace even when all gen_ai.* attributes are
+  # populated correctly.
+  #
+  # This is the right architectural layer for it: the application code
+  # stays pure OTel (no vendor-specific tags), and the collector — which
+  # already does Datadog-specific routing via the otlphttp/llmobs
+  # exporter below — adds the one tag the LLMObs intake needs.
+  # The value mirrors service.name so every service gets a corresponding
+  # ml_app of the same name automatically.
+  transform/llmobs:
+    error_mode: ignore
+    trace_statements:
+      - context: resource
+        statements:
+          - set(attributes["ml_app"], attributes["service.name"])
+
 # Connectors sit between pipelines — they receive from one signal type and
 # emit to another. datadog/connector consumes spans and produces APM stats
 # metrics (request rate, p95/p99 latency, error rate per service+operation).
@@ -70,7 +89,9 @@ service:
     #   otlphttp/llmobs    — same spans → LLMObs intake (gen_ai.* UI)
     traces:
       receivers: [otlp]
-      processors: [batch]
+      # transform/llmobs runs before batch so ml_app is set on every span
+      # before either the datadog or otlphttp/llmobs exporters see them.
+      processors: [transform/llmobs, batch]
       exporters: [debug, datadog, datadog/connector, otlphttp/llmobs]
 
     # Metrics pipeline receives both:
