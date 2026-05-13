@@ -1,3 +1,131 @@
+[2026-05-13] LLMObs feature pack: prompt tracking + external evals + biz metrics
+  Three independent but related features that together unlock the rest of
+  DD LLM Observability's measurement surface (prompt versioning + A/B,
+  external evaluations API, custom business metrics for AI-effectiveness
+  dashboards). All app-side; managed evals + annotation queues + dashboards
+  are UI-only and remain the user's setup.
+
+  Files changed:
+    services/agent-api-dotnet/Program.cs
+      + System.Diagnostics.Metrics import; System.Security.Cryptography for
+        prompt hashing
+      + Promptver computed at startup: SHA-256(AgentSystemPrompt)[:8] hex →
+        "v1-<8hex>". JSON metadata (name, version, template, variables={})
+        serialized once and held in closure.
+      + ActivityListener registered globally that:
+          (a) stamps _dd.ml_obs.prompt_tracking JSON on every chat +
+              invoke_agent activity (DD Prompt Tracking UI feature)
+          (b) captures the invoke_agent span's IDs into
+              AgentSpanContext.Capture so async eval submission can
+              address the AGENT span specifically (not the HTTP root)
+      + bizMeter (shared System.Diagnostics.Metrics.Meter) named after
+        TelemetrySetup.ActivitySourceName so OTel pipeline picks it up
+        without further AddMeter calls
+      + feedbackCounter created from bizMeter; incremented inside
+        /feedback handler (rating tag)
+      + DI registrations for DatadogEvalsClient (AddHttpClient typed
+        client) + the two IResponseEvaluator implementations as
+        singletons (DI injects them into AgentService as IEnumerable<>)
+
+    services/agent-api-dotnet/Services/AgentSpanContext.cs   [NEW]
+      AsyncLocal<Captured> bridging the ActivityListener (synchronous,
+      fires on invoke_agent start) to the AgentService background eval
+      task (async, runs after agent.RunAsync completes when
+      Activity.Current has reverted to the HTTP server span). Holds both
+      hex + DD-decimal forms so callers can pick what their API needs.
+
+    services/agent-api-dotnet/Services/DatadogEvalsClient.cs   [NEW]
+      Typed HttpClient wrapper for
+        POST https://api.<DD_SITE>/api/intake/llm-obs/v2/eval-metric
+      Three submission methods: SubmitBooleanAsync, SubmitScoreAsync,
+      SubmitCategoricalAsync. Always injects source:otel + ml_app +
+      timestamp_ms; caller passes extraTags (query.domain, prompt.version
+      already wired). JSON:API envelope with data.attributes.metrics[].
+      Disabled gracefully when DD_API_KEY isn't set — logs a single
+      WARN at startup and short-circuits all submissions to no-op.
+      Every call try/catches; eval submission never throws into the
+      agent loop.
+
+    services/agent-api-dotnet/Services/Evaluators/IResponseEvaluator.cs [NEW]
+      Interface contract: Label (snake_case → DD eval label) +
+      Evaluate(EvalInput) → EvalResult(metricType, value, reasoning?).
+      EvalInput carries query + answer + ToolsCalled + Sources + Domain.
+
+    services/agent-api-dotnet/Services/Evaluators/CitationPresentEvaluator.cs [NEW]
+      Boolean — asserts system-prompt rule #1 ("always cite"). Three
+      acceptance paths: short/clarifying response (≤120 chars, exempt),
+      tool-derived Sources non-empty, or inline regex match against
+      NBI / PWSID / EIA / FEMA / DR-* / EM-* / award_id patterns.
+      Fails only when none of those hold and the answer is substantive.
+
+    services/agent-api-dotnet/Services/Evaluators/BdToolOrderingEvaluator.cs [NEW]
+      Boolean — asserts system-prompt rule #4 ("get_contract_awards
+      before get_procurement_opportunities"). Passes trivially when 0
+      or 1 of the two BD tools were called; fails only when both were
+      called in the wrong order.
+
+    services/agent-api-dotnet/Services/AgentService.cs
+      + Constructor injects IEnumerable<IResponseEvaluator> +
+        DatadogEvalsClient. EVAL_SAMPLE_RATE env (0.0-1.0, default 0.1)
+        read once at construction.
+      + IMeterFactory.CreateCounter for infra_advisor.conversation.
+        completed (per /query, tagged with query.domain) and infra_
+        advisor.tool.invoked (per FunctionCallContent in response,
+        tagged with tool.name + query.domain).
+      + RunAgentAsync: after the existing return-value construction,
+        increments both counters and calls ScheduleEvaluations.
+      + ScheduleEvaluations: Random.Shared.NextDouble() < sample rate →
+        Task.Run a background eval that walks every IResponseEvaluator,
+        Submit*Async to DD with prompt.version + query.domain tags.
+        Fire-and-forget; /query latency unchanged.
+
+    k8s/agent-api-dotnet/configmap.yaml
+      + EVAL_SAMPLE_RATE: "0.1"
+      (DD_API_KEY already provisioned via agent-api-dotnet-secret +
+       the create-agent-api-dotnet-secret Makefile target; no infra
+       change needed there.)
+
+  Behaviour the team should know about:
+  - Two evaluators ship today; both are deterministic. The interface
+    is ready for LLM-as-judge evaluators (groundedness, etc.) once
+    we have a stable judge prompt — they'd return MetricType=score.
+  - Sample rate is conservative (10%) so DD eval-metric API quota isn't
+    a concern. Bump after watching daily submission volume in DD.
+  - prompt.version tag on every eval submission means DD's Prompt
+    Tracking comparison view works as soon as a v2 prompt ships. To
+    A/B: define a second system prompt, route random subset of requests
+    through it, set PROMPT_VERSION env per-request via a header or
+    closure. Foundation is in place; rotation is ~20 lines when needed.
+  - Business counters use the same Meter name TelemetrySetup already
+    AddMeter's, so OTLP export auto-picks them up. They appear under
+    Metrics → infra_advisor.conversation.completed etc. in DD.
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors
+  [x] DatadogEvalsClient disabled-mode short-circuit verified by
+      construction (constructor checks DD_API_KEY and sets _enabled)
+  [x] Citation evaluator handles short responses (≤120 chars) as
+      exempt rather than false-failures
+  [x] BD ordering evaluator returns N/A when neither or only one tool
+      called (no false-fail for unrelated queries)
+
+  [~] Live verification: enable managed evals + custom LLM-judge evals
+      in the DD UI (Settings → Evaluations → enable per ml_app:
+      infra-advisor-agent-api-dotnet). After deploy, run a real query.
+      Confirm:
+        a. citation_present + bd_tool_ordering rows appear on ~10% of
+           agent traces in DD LLMObs (under Evaluations tab)
+        b. _dd.ml_obs.prompt_tracking JSON shows up on invoke_agent +
+           chat spans (Span tags inspector)
+        c. Prompt Tracking UI (LLMObs → Prompts) renders v1-<hash>
+           with our system prompt template
+        d. Metrics explorer shows infra_advisor.conversation.completed
+           +1 per /query, infra_advisor.tool.invoked +N per tool call
+        e. Frustrated-customer monitor scaffolding: a query with
+           sentiment managed-eval below threshold against the same
+           conversation.id three times in a row → alert (this needs
+           the managed sentiment eval enabled first)
+
 [2026-05-13] Add task / embedding / retrieval span kinds for LLMObs showcase
   Three new LLMObs span kinds wired into the agent-api-dotnet /query flow so
   the demo trace tree spans 6 distinct kinds (workflow → task + embedding +
