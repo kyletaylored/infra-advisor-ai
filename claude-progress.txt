@@ -1,3 +1,97 @@
+[2026-05-13] Scaffold MAF POC: Microsoft Agents Framework 1.5.0 (8e53604)
+
+  Sibling to experiments/dotnet-otel-poc/ (the M.E.AI-only POC that
+  already lands in DD LLMObs end-to-end). The MAF POC validates the
+  next layer up — `Microsoft.Agents.AI` 1.5.0 on top of
+  Microsoft.Extensions.AI — to inform the production migration plan
+  for services/agent-api-dotnet/.
+
+  Why a second POC rather than migrating directly: the M.E.AI POC
+  doesn't emit an `invoke_agent` span (no "agent" kind in the LLMObs
+  trace tree), doesn't have a session abstraction for
+  `gen_ai.conversation.id`, and offers no clean hook for replacing our
+  Redis-backed MemoryService. MAF adds all three.
+
+  Hosted-MCP sample reviewed and ruled out: the upstream
+  `ResponseAgent_Hosted_MCP` pattern uses the OpenAI Responses API and
+  requires the MCP server to be publicly reachable from Azure OpenAI's
+  network. Our `mcp-server-dotnet` is cluster-internal only. The
+  production migration will instead wrap our existing
+  Services/McpClientService.cs to return AIFunction[] for the agent's
+  `tools:` parameter. Out of scope for this POC.
+
+  Three validation points the POC will resolve when run live:
+
+  1. invoke_agent span (the "agent" kind in DD LLMObs)
+     Two stacked .UseOpenTelemetry() calls — one on the chat client,
+     one on the agent builder. TracerProvider AddSource registers both
+     "Experimental.Microsoft.Extensions.AI" (chat + execute_tool) AND
+     "Microsoft.Agents.AI" (invoke_agent). Expected trace shape:
+       HTTP server
+       └── invoke_agent
+           └── chat
+               ├── HttpClient → Azure OpenAI
+               └── execute_tool
+
+  2. gen_ai.conversation.id population via AgentSession
+     In-memory SessionStore (ConcurrentDictionary keyed by inbound
+     conversationId from body.ConversationId / body.SessionId) maps
+     browser-side conversation IDs onto MAF's AgentSession objects.
+     Same session reused across multi-turn requests so MAF stamps the
+     same conversation.id on every span.
+
+  3. AIContextProvider hook API
+     Minimal MemoryProvider class (extends AIContextProvider) attached
+     via ChatClientAgentOptions.AIContextProviders. Prints to stdout
+     on both ProvideAIContextAsync (pre-call) + StoreAIContextAsync
+     (post-call) hooks so live run confirms the framework fires them.
+
+  Two API surface gaps from MAF samples on `main` vs 1.5.0 stable
+  (documented as "open API questions to resolve while running" in the
+  README, not blocking):
+  - AgentSession.Id: referenced in samples but not on 1.5.0. Workaround:
+    SessionStore tracks our own conversationId externally.
+  - InvokingContext.RequestMessages: same situation. MemoryProvider
+    logs context.GetType().FullName on each invocation so the live run
+    surfaces the real type names for follow-up lookup.
+
+  Files (experiments/dotnet-maf-poc/):
+    Program.cs (217 lines including SessionStore + MemoryProvider)
+    InfraAdvisor.MafPoc.csproj (8 packages: M.E.AI 10.5.2 +
+      M.E.AI.OpenAI 10.5.2 + Microsoft.Agents.AI 1.5.0 +
+      Microsoft.Agents.AI.OpenAI 1.5.0 + Azure.AI.OpenAI 2.9.0-beta.1 +
+      OpenTelemetry × 4)
+    wwwroot/index.html (RUM-enabled chat UI, copied from M.E.AI POC)
+    .env.example
+    README.md (validation points, span hierarchy, migration relationship)
+
+  Makefile targets:
+    otel-maf-poc         — combo: start collector + run POC (Ctrl+C
+                           tears down both)
+    run-otel-maf-poc     — POC only, port 5007 (so M.E.AI POC's 5005
+                           and this can coexist against same collector)
+    build-otel-maf-poc   — compile-check only
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors after correcting
+      ChatClientAgentOptions.Instructions → ChatOptions.Instructions
+      (1.5.0 puts Instructions on the inner ChatOptions, not at the
+      ChatClientAgentOptions root like the sample shows)
+  [x] make help lists all three new targets alongside the M.E.AI POC's
+      targets — no naming collisions, both POCs runnable independently
+  [x] Local collector + transform/llmobs processor handles ml_app
+      injection automatically for either service.name
+      (otel-genai-poc or infra-advisor-maf-poc); no collector config
+      changes needed for this POC
+
+  [~] invoke_agent span visible in DD LLMObs with proper agent-kind
+      classification: pending live `make otel-maf-poc` run
+  [~] gen_ai.conversation.id populated from AgentSession + grouping
+      multi-turn /chat calls under one LLMObs conversation: pending
+  [~] AIContextProvider hooks fire (visible via MemoryProvider stdout)
+      and context types resolved to enable a real Redis-backed provider:
+      pending
+
 [2026-05-13] Document verified-working POC + agent-api-dotnet migration path (d5c8944)
   User confirmed end-to-end success: "i can now see the llm trace and
   spans in both llm obs and apm". The minimum-effort .NET → DD LLMObs
