@@ -497,17 +497,32 @@ run-otel-poc-autoinstr: ## Run the auto-instrumented POC (Docker; assumes collec
 		echo "ERROR: AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY must be set in root .env"; \
 		exit 1; \
 	fi
-	@echo "→ Building POC image (first run only — cached afterward)..."
-	@echo "→ POC will listen on http://localhost:5006"
-	@echo ""
-	@# RUM env mapping: same VITE_DD_RUM_* → DD_RUM_* fallback as the
-	@# native POC, but resolved here in the Makefile and passed into
-	@# docker compose via the environment.
+	@# Build first so the URL banner below isn't buried under build output.
+	@# RUM env mapping (VITE_DD_RUM_* → DD_RUM_*) needs to be in scope for
+	@# both `build` and `up` because compose validates the ${VAR:?...}
+	@# guards on every compose subcommand.
+	@echo "→ Building POC image (first run pulls otel/autoinstrumentation-dotnet + builds .NET app)..."
 	@cd experiments/dotnet-otel-poc-autoinstr && \
 		DD_RUM_APPLICATION_ID="$${DD_RUM_APPLICATION_ID:-$$VITE_DD_RUM_APP_ID}" \
 		DD_RUM_CLIENT_TOKEN="$${DD_RUM_CLIENT_TOKEN:-$$VITE_DD_RUM_CLIENT_TOKEN}" \
 		DD_SITE="$${DD_SITE:-$$VITE_DD_RUM_SITE}" \
-		docker compose up --build --abort-on-container-exit
+		docker compose build --pull
+	@echo ""
+	@echo "  ┌─────────────────────────────────────────────────┐"
+	@echo "  │  ▸ POC ready at  http://localhost:5006          │"
+	@echo "  │  ▸ Ctrl+C to stop                               │"
+	@echo "  └─────────────────────────────────────────────────┘"
+	@echo ""
+	@# No --abort-on-container-exit: the init container is designed to
+	@# exit 0 after its cp completes, and that flag would tear the stack
+	@# down before the POC container's dotnet process starts. Plain
+	@# `compose up` keeps the POC running until Ctrl+C; init exiting 0
+	@# is treated as "init done" and ignored.
+	@cd experiments/dotnet-otel-poc-autoinstr && \
+		DD_RUM_APPLICATION_ID="$${DD_RUM_APPLICATION_ID:-$$VITE_DD_RUM_APP_ID}" \
+		DD_RUM_CLIENT_TOKEN="$${DD_RUM_CLIENT_TOKEN:-$$VITE_DD_RUM_CLIENT_TOKEN}" \
+		DD_SITE="$${DD_SITE:-$$VITE_DD_RUM_SITE}" \
+		docker compose up --no-build
 
 stop-otel-poc-autoinstr: ## Stop the auto-instrumented POC stack
 	cd experiments/dotnet-otel-poc-autoinstr && docker compose down -v
