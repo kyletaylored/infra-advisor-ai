@@ -46,6 +46,7 @@ static string? GetDdSpanId(Activity? activity)
 var azureEndpoint = Env("AZURE_OPENAI_ENDPOINT");
 var azureApiKey   = Env("AZURE_OPENAI_API_KEY");
 var azureDeployment = EnvOr("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini");
+var azureEmbeddingDeployment = EnvOr("AZURE_OPENAI_EMBEDDING_DEPLOYMENT", "text-embedding-3-small");
 var availableModelsRaw = EnvOr("AVAILABLE_MODELS", "gpt-4.1-mini");
 var mcpServerUrl = EnvOr("MCP_SERVER_URL", "http://mcp-server-dotnet.infra-advisor.svc.cluster.local:8000/mcp");
 var redisHost = EnvOr("REDIS_HOST", "redis.infra-advisor.svc.cluster.local");
@@ -122,6 +123,19 @@ builder.Services.AddSingleton<IChatClient>(sp =>
         .UseOpenTelemetry(configure: cfg => cfg.EnableSensitiveData = true)
         .Build());
 
+// ── IEmbeddingGenerator pipeline (M.E.AI) ─────────────────────────────────────
+// Azure OpenAI embedding deployment behind the M.E.AI provider-neutral
+// interface. .UseOpenTelemetry() emits an "embeddings" span (gen_ai.operation
+// .name=embeddings) on the same Experimental.Microsoft.Extensions.AI source
+// as chat/tool spans — DD LLMObs auto-classifies it as the "embedding" kind.
+builder.Services.AddSingleton<IEmbeddingGenerator<string, Embedding<float>>>(sp =>
+    sp.GetRequiredService<AzureOpenAIClient>()
+        .GetEmbeddingClient(azureEmbeddingDeployment)
+        .AsIEmbeddingGenerator()
+        .AsBuilder()
+        .UseOpenTelemetry(configure: cfg => cfg.EnableSensitiveData = true)
+        .Build());
+
 // ── Agent (MAF) ───────────────────────────────────────────────────────────────
 // Single ChatClientAgent with all MCP tools. The model picks which tools
 // to call per turn. .UseOpenTelemetry(sourceName:) emits the invoke_agent
@@ -173,6 +187,7 @@ builder.Services.AddSingleton<AIAgent>(sp =>
 // ── Core services ─────────────────────────────────────────────────────────────
 builder.Services.AddSingleton<MemoryService>();
 builder.Services.AddSingleton<AgentSessionStore>();
+builder.Services.AddSingleton<RetrievalService>();
 builder.Services.AddSingleton<AgentService>();
 builder.Services.AddSingleton<SuggestionService>();
 builder.Services.AddSingleton<ConversationService>();

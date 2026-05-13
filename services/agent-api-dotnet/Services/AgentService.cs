@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Agents.AI;
@@ -21,17 +22,27 @@ public class AgentService
 {
     private readonly AIAgent _agent;
     private readonly AgentSessionStore _sessions;
+    private readonly RetrievalService _retrieval;
     private readonly Histogram<double> _faithfulnessHistogram;
     private readonly ILogger<AgentService> _logger;
+
+    // ActivitySource for manual spans that the M.E.AI / MAF decorators don't
+    // emit on their own — task (classify_domain) here, retrieval inside
+    // RetrievalService. Same source name TelemetrySetup AddSource's so they
+    // get exported.
+    private static readonly ActivitySource ActivitySource =
+        new(Observability.TelemetrySetup.ActivitySourceName);
 
     public AgentService(
         AIAgent agent,
         AgentSessionStore sessions,
+        RetrievalService retrieval,
         IMeterFactory meterFactory,
         ILogger<AgentService> logger)
     {
         _agent = agent;
         _sessions = sessions;
+        _retrieval = retrieval;
         _logger = logger;
 
         var meter = meterFactory.Create(Observability.TelemetrySetup.ActivitySourceName);
@@ -46,13 +57,28 @@ public class AgentService
         string deployment,
         CancellationToken ct = default)
     {
+        // 1. Task: classify the query domain (manual span — pure CS, no LLM).
+        var domain = ClassifyDomainTraced(query);
+
+        // 2. Retrieval: vector-search the best-practices corpus. Emits a
+        //    retrieval span which wraps a framework-emitted embedding span
+        //    (query embedding). Failures degrade silently — the agent still
+        //    answers without retrieved context.
+        var retrieved = await _retrieval.RetrieveAsync(query, topK: 3, ct);
+
+        // 3. Inject retrieval context as a system-style preamble. Cheap and
+        //    keeps the agent prompt unchanged structurally.
+        var augmentedQuery = retrieved.Count > 0
+            ? $"Relevant InfraAdvisor best-practice context:\n{string.Join("\n\n", retrieved)}\n\n---\n\nUser question: {query}"
+            : query;
+
         // Session lookup / restore / save round-trip wraps the MAF agent call.
         var session = await _sessions.GetOrCreateAsync(_agent, sessionId, ct);
 
         AgentResponse response;
         try
         {
-            response = await _agent.RunAsync(query, session, cancellationToken: ct);
+            response = await _agent.RunAsync(augmentedQuery, session, cancellationToken: ct);
         }
         catch (Exception ex)
         {
@@ -71,7 +97,24 @@ public class AgentService
             Answer: answer,
             Sources: sources,
             ToolsCalled: toolsCalled,
-            QueryDomain: ClassifyDomain(query));
+            QueryDomain: domain);
+    }
+
+    // Wraps ClassifyDomain in a manual Activity tagged so DD LLMObs renders
+    // it as a "task" kind span (alongside the agent / chat / tool / embedding
+    // / retrieval kinds emitted elsewhere in this trace).
+    private static string ClassifyDomainTraced(string query)
+    {
+        using var activity = ActivitySource.StartActivity("classify_domain", ActivityKind.Internal);
+        activity?.SetTag("gen_ai.operation.name", "classify_domain");
+        activity?.SetTag("dd.llmobs.span.kind", "task");
+        activity?.SetTag("input.value", query);
+
+        var domain = ClassifyDomain(query);
+
+        activity?.SetTag("output.value", domain);
+        activity?.SetTag("query.domain", domain);
+        return domain;
     }
 
     public void RecordFaithfulness(double score, string sessionId, string domain)
