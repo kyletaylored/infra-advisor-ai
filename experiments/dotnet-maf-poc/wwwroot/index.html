@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OTel GenAI POC</title>
+
+  <!-- RUM config from server env vars (so DD_RUM_APPLICATION_ID and
+       DD_RUM_CLIENT_TOKEN never appear in committed HTML). -->
+  <script src="/config.js"></script>
+  <script src="https://www.datadoghq-browser-agent.com/us3/v6/datadog-rum.js"></script>
+  <script>
+    if (window.RUM_CONFIG && window.RUM_CONFIG.applicationId) {
+      window.DD_RUM.init({
+        ...window.RUM_CONFIG,
+        allowedTracingUrls: [window.location.origin],
+      });
+    }
+  </script>
+
+  <style>
+    body {
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      max-width: 720px;
+      margin: 2rem auto;
+      padding: 0 1rem;
+      color: #1f2937;
+      line-height: 1.5;
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      margin-bottom: 0.25rem;
+    }
+
+    p.sub {
+      color: #6b7280;
+      font-size: 0.9rem;
+      margin-top: 0;
+    }
+
+    form {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-top: 1.5rem;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 4rem;
+      padding: 0.6rem;
+      font: inherit;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      box-sizing: border-box;
+      resize: vertical;
+    }
+
+    button {
+      align-self: flex-start;
+      padding: 0.5rem 1rem;
+      font: inherit;
+      background: #2563eb;
+      color: white;
+      border: 0;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      background: #9ca3af;
+      cursor: not-allowed;
+    }
+
+    .answer {
+      white-space: pre-wrap;
+      background: #f9fafb;
+      border: 1px solid #e5e7eb;
+      border-radius: 6px;
+      padding: 0.8rem;
+      margin-top: 1rem;
+    }
+
+    .meta {
+      font-family: ui-monospace, monospace;
+      font-size: 0.78rem;
+      color: #6b7280;
+      margin-top: 0.75rem;
+      word-break: break-all;
+    }
+  </style>
+</head>
+
+<body>
+  <h1>OTel GenAI POC</h1>
+  <p class="sub">Microsoft.Extensions.AI · OTel GenAI semantic conventions · OTLP → any backend</p>
+
+  <form id="chat-form">
+    <textarea id="query" placeholder="Try: what time is it? — or — give me a quote about persistence"
+      autofocus></textarea>
+    <button type="submit" id="send-btn">Send</button>
+  </form>
+
+  <div id="answer" class="answer" hidden></div>
+  <div id="meta" class="meta"></div>
+
+  <script>
+    const form = document.getElementById('chat-form');
+    const queryEl = document.getElementById('query');
+    const answer = document.getElementById('answer');
+    const meta = document.getElementById('meta');
+    const sendBtn = document.getElementById('send-btn');
+
+    // Session ID anchors gen_ai.conversation.id across all spans for this
+    // browser session. Persists across reloads.
+    const sessionId = (() => {
+      let id = sessionStorage.getItem('otelpoc-session');
+      if (!id) { id = crypto.randomUUID(); sessionStorage.setItem('otelpoc-session', id); }
+      return id;
+    })();
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const query = queryEl.value.trim();
+      if (!query) return;
+
+      sendBtn.disabled = true;
+      answer.hidden = true;
+      meta.textContent = 'Thinking…';
+
+      try {
+        // RUM injects W3C traceparent + DD x-datadog-* headers for us
+        // because we set allowedTracingUrls=[window.location.origin]
+        // above — no manual header construction needed.
+        const resp = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ query, sessionId }),
+        });
+        const json = await resp.json();
+        answer.hidden = false;
+        answer.textContent = json.answer || '(empty response)';
+        meta.innerHTML =
+          `session_id=${sessionId} · trace_id=${json.traceId ?? '(none)'}`;
+      } catch (err) {
+        answer.hidden = false;
+        answer.textContent = `Error: ${err.message}`;
+        meta.textContent = '';
+      } finally {
+        sendBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+
+</html>

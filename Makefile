@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc start-otel-collector stop-otel-collector logs-otel-collector help
+.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector help
 
 # Load .env if present (for local dev)
 -include .env
@@ -472,6 +472,46 @@ run-otel-poc: ## Run the .NET OTel POC only (assumes collector already running)
 
 build-otel-poc: ## Build the .NET OTel POC without running (compile-check only)
 	cd experiments/dotnet-otel-poc && dotnet build -c Release
+
+# ─── MAF POC (Microsoft Agents Framework) ──────────────────────────────────────
+# Mirrors the M.E.AI-only POC but on Microsoft.Agents.AI 1.5.0 — adds the
+# invoke_agent span layer, AgentSession-based conversation grouping, and
+# the AIContextProvider hook. Listens on a separate port (5007) so both
+# POCs can run side-by-side against the same local collector.
+
+OTEL_MAF_POC_PORT ?= 5007
+
+otel-maf-poc: ## Start collector + run MAF POC (Ctrl+C stops both)
+	@$(MAKE) --no-print-directory start-otel-collector
+	@echo ""
+	@echo "▸ MAF POC starting on http://localhost:$(OTEL_MAF_POC_PORT)  (Ctrl+C to stop)"
+	@echo ""
+	@trap '$(MAKE) --no-print-directory stop-otel-collector' EXIT INT TERM; \
+	$(MAKE) --no-print-directory run-otel-maf-poc
+
+run-otel-maf-poc: ## Run the MAF POC only (assumes collector already running)
+	@if [ -z "$$AZURE_OPENAI_ENDPOINT" ] || [ -z "$$AZURE_OPENAI_API_KEY" ]; then \
+		echo "ERROR: AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY must be set in root .env"; \
+		exit 1; \
+	fi
+	@if [ -z "$$OTEL_EXPORTER_OTLP_ENDPOINT" ] && ! nc -z localhost 4318 2>/dev/null; then \
+		echo "WARN: Nothing listening on localhost:4318 — telemetry will fail to export."; \
+		echo "      Run `make start-otel-collector` first."; \
+		echo ""; \
+	fi
+	@echo "→ Starting MAF POC on http://localhost:$(OTEL_MAF_POC_PORT)  (Ctrl+C to stop)"
+	@echo "  OTLP target: $${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}"
+	@echo "  Service: $${OTEL_SERVICE_NAME:-infra-advisor-maf-poc}"
+	@echo ""
+	@cd experiments/dotnet-maf-poc && \
+		ASPNETCORE_URLS=http://localhost:$(OTEL_MAF_POC_PORT) \
+		DD_RUM_APPLICATION_ID="$${DD_RUM_APPLICATION_ID:-$$VITE_DD_RUM_APP_ID}" \
+		DD_RUM_CLIENT_TOKEN="$${DD_RUM_CLIENT_TOKEN:-$$VITE_DD_RUM_CLIENT_TOKEN}" \
+		DD_SITE="$${DD_SITE:-$$VITE_DD_RUM_SITE}" \
+		dotnet run
+
+build-otel-maf-poc: ## Build the MAF POC without running (compile-check only)
+	cd experiments/dotnet-maf-poc && dotnet build -c Release
 
 start-otel-collector: ## Start local OTel Collector (Docker) on :4317 / :4318
 	@if [ -z "$$DD_API_KEY" ]; then \

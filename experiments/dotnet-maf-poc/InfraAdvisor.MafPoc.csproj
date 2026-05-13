@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>InfraAdvisor.MafPoc</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Microsoft Agents Framework (MAF) — agent/session abstractions
+         built on Microsoft.Extensions.AI. ChatClientAgent, AgentSession,
+         AIContextProvider, .UseOpenTelemetry() on the agent builder. -->
+    <PackageReference Include="Microsoft.Agents.AI"        Version="1.5.0" />
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.5.0" />
+
+    <!-- Microsoft.Extensions.AI — IChatClient pipeline that MAF sits on
+         top of. UseFunctionInvocation + UseOpenTelemetry chained on the
+         chat client emit chat + execute_tool spans. -->
+    <PackageReference Include="Microsoft.Extensions.AI"        Version="10.5.2" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.5.2" />
+
+    <!-- LLM provider SDK -->
+    <PackageReference Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
+
+    <!-- OpenTelemetry SDK + OTLP exporter + library auto-instrumentation -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting"             Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore"     Version="1.15.2" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http"           Version="1.15.1" />
+  </ItemGroup>
+</Project>
