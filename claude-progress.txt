@@ -1,3 +1,65 @@
+[2026-05-12] Switch auto-instrumentation POC to Docker (e7128a1)
+  User feedback on fdffa71: avoid running the OTel .NET
+  auto-instrumentation install shell script on the host. Replaced the
+  host-install flow with a fully containerised setup using the
+  upstream otel/autoinstrumentation-dotnet Docker image as an init
+  container — the same pattern production K8s deployments use.
+
+  Architecture (experiments/dotnet-otel-poc-autoinstr/docker-compose.yml):
+
+    init container: otel/autoinstrumentation-dotnet:latest
+      runs `cp -r /autoinstrumentation/. /shared/`, exits 0
+      writes to named volume `otel-auto`
+
+    poc container:  built from local Dockerfile (sdk:10.0 → aspnet:10.0)
+      depends_on init → condition: service_completed_successfully
+      mounts `otel-auto` at /otel-auto (read-only)
+      entrypoint: `sh -c ". /otel-auto/instrument.sh && exec dotnet ..."`
+        — instrument.sh sets the right CORECLR_PROFILER_PATH for the
+          container's CPU arch (linux-arm64 on Apple Silicon,
+          linux-x64 elsewhere)
+      OTLP target: http://host.docker.internal:4318
+      Host port: 5006 (separate from M.E.AI-only POC's 5005)
+
+  Why containerise the app instead of just `docker cp` the files out
+  to macOS-native dotnet:
+    The image contains LINUX profiler binaries (.so files) only. They
+    can't be loaded by .NET running natively on macOS — that needs
+    .dylib. Either run the app in a Linux container (this commit) or
+    download the macOS-specific artifact directly — but downloading
+    the macOS artifact is exactly what the install shell script does,
+    which is what we were avoiding.
+
+  Makefile changes:
+    - otel-poc-autoinstr now starts collector + POC docker compose;
+      Ctrl+C trap tears down both stacks
+    - run-otel-poc-autoinstr: `docker compose up --build
+      --abort-on-container-exit` (foreground, clean teardown)
+    - stop-otel-poc-autoinstr: explicit teardown target
+    - Removed the install-script error message and OTEL_AUTO_HOME var
+    - RUM env mapping (VITE_DD_RUM_APP_ID → DD_RUM_APPLICATION_ID)
+      resolved in Make before invoking compose
+
+  Files added:
+    Dockerfile      multi-stage build, ENTRYPOINT sources instrument.sh
+    docker-compose.yml   init + poc services with shared volume
+    .dockerignore   keeps bin/, obj/, .env out of the build context
+    README.md       rewritten to lead with the Docker flow
+
+  Verified:
+  [x] dotnet build -c Release inside docker build: 0 warnings, 0 errors
+      (verified earlier when csproj was still authoritative)
+  [x] docker compose config: parses cleanly when required env present;
+      ${VAR:?msg} guards fire when AZURE_OPENAI_* unset
+  [x] make help shows all four POC/collector targets
+  [x] Compose maps host port 5006 → container 8080 (no conflict with
+      M.E.AI-only POC's 5005)
+  [~] Live: first run pulls otel/autoinstrumentation-dotnet (~150 MB)
+      and builds the POC image; subsequent runs use cached layers.
+      Pending: end-to-end trace with HTTP server → outbound HttpClient
+      → chat → execute_tool spans visible in the collector debug
+      exporter + DD LLMObs UI.
+
 [2026-05-12] Scaffold auto-instrumentation POC variant (fdffa71)
   Created experiments/dotnet-otel-poc-autoinstr/ as a sibling to the
   existing M.E.AI-only POC. Tests how minimal the application code can
