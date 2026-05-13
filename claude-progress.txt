@@ -1,3 +1,44 @@
+[2026-05-13] Document verified-working POC + agent-api-dotnet migration path (d5c8944)
+  User confirmed end-to-end success: "i can now see the llm trace and
+  spans in both llm obs and apm". The minimum-effort .NET → DD LLMObs
+  pattern is now proven. Rewrote experiments/dotnet-otel-poc/README.md
+  from its earlier stale draft into a reference document.
+
+  Confirmed working setup:
+    Layer 1 (app):       17 lines of telemetry setup in Program.cs +
+                          6 NuGet packages. Pure OTel, no DD-specific
+                          attributes or headers.
+    Layer 2 (collector): 4 exporters (debug + datadog + datadog/connector
+                          + otlphttp/llmobs) with transform/llmobs
+                          processor that injects ml_app from
+                          service.name on every span.
+    Layer 3 (browser):   DD RUM SDK auto-propagates traceparent header
+                          into fetch() calls via allowedTracingUrls.
+
+  README now contains a 7-step migration table for applying the same
+  pattern to services/agent-api-dotnet/ — replacing the hand-rolled
+  LlmTelemetry helper and TracingScope class with M.E.AI's
+  AddChatClient + UseFunctionInvocation + UseOpenTelemetry decorators,
+  moving ml_app injection into the in-cluster DatadogAgent CR's
+  otelCollector config.
+
+  Documented dead-ends in the README so they don't get re-tried:
+  - OTel .NET auto-instrumentation CLR profiler (upstream #2314 +
+    Rosetta/QEMU + production DD profiler conflict)
+  - Orphan-parent fresh-ActivityContext workaround
+  - Custom LlmTelemetry helper class
+  - .UseOpenTelemetry(sourceName: ...) parameter
+
+  Verified:
+  [x] DD LLM Observability shows the trace with chat spans classified
+      as "llm" kind and execute_tool spans as "tool" kind (user
+      confirmed live)
+  [x] DD APM shows the full trace tree (HTTP → chat → tool) under
+      service:otel-genai-poc (user confirmed live, test-spans.json
+      captured)
+  [x] README.md rewritten with verified architecture, minimum-effort
+      recipe, span hierarchy, and migration steps
+
 [2026-05-13] Inject ml_app at collector — DD LLMObs requires it (e223435)
 
   After the library-auto-instrumentation pivot (af5623b), user verified
@@ -56,10 +97,9 @@
   [x] traces pipeline references transform/llmobs ahead of batch
   [x] Both APM (datadog exporter) and LLMObs (otlphttp/llmobs) paths
       see the ml_app attribute since it's added before the fan-out
-  [~] LLM Observability → Traces filtered by ml_app:otel-genai-poc
+  [x] LLM Observability → Traces filtered by ml_app:otel-genai-poc
       shows the trace with chat span classified as "llm" kind and
-      execute_tool span as "tool" kind: pending user re-run with
-      `make stop-otel-collector && make otel-poc`.
+      execute_tool span as "tool" kind (user confirmed in next entry).
 
 [2026-05-12] Delete autoinstr experiment; library auto-instrumentation is what we wanted (af5623b)
 
@@ -120,10 +160,9 @@
   [x] git rm -r succeeded; all 8 autoinstr files deleted
   [x] Makefile help shows 6 remaining targets (otel-poc, run-otel-poc,
       build-otel-poc, start/stop/logs-otel-collector) — no autoinstr
-  [~] Live verification of M.E.AI-only POC trace tree with HttpClient
-      instrumentation: pending `make otel-poc` re-run. Expected:
-      chat + execute_tool spans in DD LLMObs with HTTP spans visible
-      around the Azure OpenAI calls.
+  [x] Live verification of M.E.AI-only POC trace tree with HttpClient
+      instrumentation succeeded after the ml_app collector injection
+      (see e223435 + d5c8944 entries above).
 
 [2026-05-12] Fix profiler attach in auto-instrumentation POC (a497669, b366f04, 36ef847, 54241f2)
 
