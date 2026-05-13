@@ -15,6 +15,17 @@
 services:
   otel-autoinstr-init:
     image: otel/autoinstrumentation-dotnet:latest
+    # Pin to linux/amd64 because the arm64-tagged image variant of
+    # otel/autoinstrumentation-dotnet ships x64 native binaries only
+    # (it has /autoinstrumentation/linux-x64/ and linux-musl-x64/ but
+    # no linux-arm64/ — verified by digest inspection of the arm64
+    # manifest sha256:b481acb...). Upstream issue tracking this:
+    #   https://github.com/open-telemetry/opentelemetry-dotnet-instrumentation/issues/2314
+    # Until that's fixed, we deliberately pull the amd64 image variant
+    # so its /autoinstrumentation/linux-x64/ contents match the x64
+    # .NET runtime that runs inside the amd64 container (under Rosetta
+    # 2 emulation on Apple Silicon — slightly slower but correct).
+    platform: linux/amd64
     command:
       - sh
       - -c
@@ -27,6 +38,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    # Match the init container's platform so the POC's .NET runtime
+    # arch matches the native profiler binary it loads. entrypoint.sh
+    # will detect x86_64 inside this amd64 container (Rosetta emulates
+    # it as x86_64 on Apple Silicon) and pick /otel-auto/linux-x64/...
+    platform: linux/amd64
     container_name: otel-poc-autoinstr
     depends_on:
       otel-autoinstr-init:
