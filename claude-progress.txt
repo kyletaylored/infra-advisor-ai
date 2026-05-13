@@ -1,3 +1,51 @@
+[2026-05-13] MAF POC: pin agent sourceName + widen AddSource net (bba74a5)
+  Live run after dbadd0b/4a079f7 succeeded at startup (MCP connected,
+  tools enumerated, /chat resolved through DI) but produced zero LLM
+  spans in DD LLMObs. The two likely culprits — both addressed in one
+  commit:
+
+  1. Agent's .UseOpenTelemetry() wasn't passed an explicit sourceName,
+     so we trusted an unverified default. The MAF OTel sample
+     (samples/AgentOpenTelemetry/Program.cs) we modeled on does pass
+     sourceName explicitly to BOTH chat-client and agent layers.
+
+  2. AddSource("Microsoft.Agents.AI") was a namespace-based guess at
+     the agent's internal default source. MAF 1.5.0 doesn't document
+     the actual source name — it could equally be
+     "Experimental.Microsoft.Agents.AI" mirroring M.E.AI's naming
+     ("Experimental.Microsoft.Extensions.AI").
+
+  Changes (experiments/dotnet-maf-poc/Program.cs):
+    + AgentSourceName constant = "infra-advisor-maf-poc"
+    + .UseOpenTelemetry(sourceName: AgentSourceName, ...) on the
+      agent builder — sourceName now known and deterministic
+    + AddSource(AgentSourceName) — captures the explicit source
+    + AddSource("Microsoft.Agents.AI") + AddSource(
+      "Experimental.Microsoft.Agents.AI") — fallback candidates in
+      case MAF emits on additional internal sources beyond the
+      user-specified one
+    + Unchanged: "Experimental.Microsoft.Extensions.AI" for M.E.AI
+      chat + execute_tool spans
+
+  Approach is deliberately belt-and-suspenders rather than precision:
+  we don't have a confirmed inventory of which source names MAF
+  actually emits on at runtime. Once `make logs-otel-collector` shows
+  which sources actually appear on /chat, we can trim back.
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors
+  [x] AgentSourceName appears on both UseOpenTelemetry and AddSource
+      sides of the configuration (visible in Program.cs)
+
+  [~] Live: spans flow through the collector to DD LLMObs after
+      re-run. Three diagnostic questions on the user side post-run:
+      (a) Are spans appearing in `make logs-otel-collector` at all?
+      (b) What InstrumentationScope name do non-AspNetCore spans
+          report (tells us MAF's real source name)?
+      (c) Do [MemoryProvider] log lines appear in the POC's stdout
+          (confirms MAF is actually invoking the agent loop)?
+      Pending user feedback to flip [x].
+
 [2026-05-13] MAF POC: two startup fixes after live run (dbadd0b, 4a079f7)
   Two issues surfaced when user ran `make otel-maf-poc` for the first
   time after a108f8f wired in MCP. Both were small environmental /
