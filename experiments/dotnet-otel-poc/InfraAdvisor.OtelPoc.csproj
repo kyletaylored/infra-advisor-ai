@@ -26,8 +26,13 @@
          that affected the previous 1.10.0 pin. -->
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
-    <!-- Auto-instrumentation for ASP.NET Core HTTP server spans, which become
-         the trace root that invoke_agent → chat → execute_tool nest under. -->
+    <!-- Library auto-instrumentation: each subscribes to .NET's built-in
+         DiagnosticListener / Activity events for its library and produces
+         OTel spans. No CLR profiler involved — just managed code.
+           AspNetCore → HTTP server span (trace root)
+           Http       → outbound HttpClient spans (incl. the Azure OpenAI
+                        REST POST that M.E.AI's chat span wraps) -->
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
   </ItemGroup>
 </Project>

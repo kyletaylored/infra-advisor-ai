@@ -38,13 +38,21 @@ builder.Services
     .UseOpenTelemetry(configure: cfg => cfg.EnableSensitiveData = true);
 
 // ── OpenTelemetry ─────────────────────────────────────────────────────────────
+// Library auto-instrumentation: the AspNetCore + HttpClient instrumentations
+// are NuGet packages (managed code only) that subscribe to .NET's built-in
+// DiagnosticListener / Activity events and emit OTel spans. No CLR profiler.
+//   AspNetCore  → HTTP server span — becomes the trace root
+//   HttpClient  → outbound HTTP spans, including the REST POST that the
+//                 Azure OpenAI SDK makes inside M.E.AI's chat span
+//
 // "Experimental.Microsoft.Extensions.AI" is the ActivitySource name M.E.AI's
-// OpenTelemetryChatClient uses internally. Without it in AddSource, the chat
-// + execute_tool spans never reach the exporter.
+// OpenTelemetryChatClient uses internally — required for chat + execute_tool
+// spans to reach the exporter.
 builder.Services.AddOpenTelemetry()
     .ConfigureResource(r => r.AddService(serviceName))
     .WithTracing(t => t
         .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
         .AddSource("Experimental.Microsoft.Extensions.AI")
         .AddOtlpExporter(o =>
         {

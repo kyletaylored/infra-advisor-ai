@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc otel-poc-autoinstr run-otel-poc-autoinstr stop-otel-poc-autoinstr inspect-otel-poc-autoinstr start-otel-collector stop-otel-collector logs-otel-collector help
+.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc start-otel-collector stop-otel-collector logs-otel-collector help
 
 # Load .env if present (for local dev)
 -include .env
@@ -472,73 +472,6 @@ run-otel-poc: ## Run the .NET OTel POC only (assumes collector already running)
 
 build-otel-poc: ## Build the .NET OTel POC without running (compile-check only)
 	cd experiments/dotnet-otel-poc && dotnet build -c Release
-
-# ─── OTel POC — auto-instrumentation variant ──────────────────────────────────
-# Runs the POC entirely in Docker so the OTel .NET auto-instrumentation
-# distro never installs to the host filesystem. An init container based on
-# otel/autoinstrumentation-dotnet copies the profiler binaries into a
-# shared volume; the POC container mounts that volume and sources
-# instrument.sh at startup to attach the CLR profiler.
-#
-# The collector runs separately (under experiments/otel-collector/) and
-# the POC reaches it via host.docker.internal:4318.
-
-otel-poc-autoinstr: ## Start collector + auto-instrumented POC in Docker (Ctrl+C stops both)
-	@$(MAKE) --no-print-directory start-otel-collector
-	@echo ""
-	@echo "▸ Auto-instrumented POC starting on http://localhost:5006"
-	@echo "  Ctrl+C will stop the POC AND tear down the collector."
-	@echo ""
-	@trap '$(MAKE) --no-print-directory stop-otel-poc-autoinstr; $(MAKE) --no-print-directory stop-otel-collector' EXIT INT TERM; \
-	$(MAKE) --no-print-directory run-otel-poc-autoinstr
-
-run-otel-poc-autoinstr: ## Run the auto-instrumented POC (Docker; assumes collector running)
-	@if [ -z "$$AZURE_OPENAI_ENDPOINT" ] || [ -z "$$AZURE_OPENAI_API_KEY" ]; then \
-		echo "ERROR: AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY must be set in root .env"; \
-		exit 1; \
-	fi
-	@# Build first so the URL banner below isn't buried under build output.
-	@# RUM env mapping (VITE_DD_RUM_* → DD_RUM_*) needs to be in scope for
-	@# both `build` and `up` because compose validates the ${VAR:?...}
-	@# guards on every compose subcommand.
-	@echo "→ Building POC image (first run pulls otel/autoinstrumentation-dotnet + builds .NET app)..."
-	@cd experiments/dotnet-otel-poc-autoinstr && \
-		DD_RUM_APPLICATION_ID="$${DD_RUM_APPLICATION_ID:-$$VITE_DD_RUM_APP_ID}" \
-		DD_RUM_CLIENT_TOKEN="$${DD_RUM_CLIENT_TOKEN:-$$VITE_DD_RUM_CLIENT_TOKEN}" \
-		DD_SITE="$${DD_SITE:-$$VITE_DD_RUM_SITE}" \
-		docker compose build --pull
-	@echo ""
-	@echo "  ┌─────────────────────────────────────────────────┐"
-	@echo "  │  ▸ POC ready at  http://localhost:5006          │"
-	@echo "  │  ▸ Ctrl+C to stop                               │"
-	@echo "  └─────────────────────────────────────────────────┘"
-	@echo ""
-	@# No --abort-on-container-exit: the init container is designed to
-	@# exit 0 after its cp completes, and that flag would tear the stack
-	@# down before the POC container's dotnet process starts. Plain
-	@# `compose up` keeps the POC running until Ctrl+C; init exiting 0
-	@# is treated as "init done" and ignored.
-	@cd experiments/dotnet-otel-poc-autoinstr && \
-		DD_RUM_APPLICATION_ID="$${DD_RUM_APPLICATION_ID:-$$VITE_DD_RUM_APP_ID}" \
-		DD_RUM_CLIENT_TOKEN="$${DD_RUM_CLIENT_TOKEN:-$$VITE_DD_RUM_CLIENT_TOKEN}" \
-		DD_SITE="$${DD_SITE:-$$VITE_DD_RUM_SITE}" \
-		docker compose up --no-build
-
-stop-otel-poc-autoinstr: ## Stop the auto-instrumented POC stack
-	cd experiments/dotnet-otel-poc-autoinstr && docker compose down -v
-
-inspect-otel-poc-autoinstr: ## Inspect the running auto-instr POC: env, paths, profiler log dir
-	@echo "=== CORECLR_* / DOTNET_* / OTEL_* env vars seen by dotnet (PID 1) ==="
-	@docker exec otel-poc-autoinstr sh -c 'cat /proc/1/environ | tr "\0" "\n" | grep -E "CORECLR|DOTNET_|OTEL_" | sort' || true
-	@echo ""
-	@echo "=== /otel-auto/linux-x64/ contents (CORECLR_PROFILER_PATH target dir) ==="
-	@docker exec otel-poc-autoinstr ls -la /otel-auto/linux-x64/ 2>&1 || true
-	@echo ""
-	@echo "=== /otel-auto/net/ contents (DOTNET_STARTUP_HOOKS target dir) ==="
-	@docker exec otel-poc-autoinstr ls /otel-auto/net/ 2>&1 | head -20 || true
-	@echo ""
-	@echo "=== profiler log files (if OTEL_DOTNET_AUTO_LOGGER=file) ==="
-	@docker exec otel-poc-autoinstr ls -la /var/log/opentelemetry/dotnet/ 2>&1 || echo "(no profiler log dir — likely OTEL_DOTNET_AUTO_LOGGER=console)"
 
 start-otel-collector: ## Start local OTel Collector (Docker) on :4317 / :4318
 	@if [ -z "$$DD_API_KEY" ]; then \
