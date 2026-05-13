@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc start-otel-collector stop-otel-collector logs-otel-collector help
+.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc otel-poc-autoinstr run-otel-poc-autoinstr start-otel-collector stop-otel-collector logs-otel-collector help
 
 # Load .env if present (for local dev)
 -include .env
@@ -472,6 +472,52 @@ run-otel-poc: ## Run the .NET OTel POC only (assumes collector already running)
 
 build-otel-poc: ## Build the .NET OTel POC without running (compile-check only)
 	cd experiments/dotnet-otel-poc && dotnet build -c Release
+
+# ─── OTel POC — auto-instrumentation variant ──────────────────────────────────
+# Uses the OpenTelemetry .NET auto-instrumentation profiler (installed once
+# at ~/.otel-dotnet-auto/). Zero OpenTelemetry.* code/packages in the app —
+# the profiler attaches via CORECLR_* env vars sourced from instrument.sh.
+
+OTEL_AUTO_HOME ?= $(HOME)/.otel-dotnet-auto
+
+otel-poc-autoinstr: ## Start collector + run auto-instrumented POC (Ctrl+C stops both)
+	@$(MAKE) --no-print-directory start-otel-collector
+	@echo ""
+	@echo "▸ Auto-instrumented POC starting on http://localhost:$(OTEL_POC_PORT)"
+	@echo "  Ctrl+C will stop the POC AND tear down the collector."
+	@echo ""
+	@trap '$(MAKE) --no-print-directory stop-otel-collector' EXIT INT TERM; \
+	$(MAKE) --no-print-directory run-otel-poc-autoinstr
+
+run-otel-poc-autoinstr: ## Run the auto-instrumented POC only (assumes collector running)
+	@if [ -z "$$AZURE_OPENAI_ENDPOINT" ] || [ -z "$$AZURE_OPENAI_API_KEY" ]; then \
+		echo "ERROR: AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY must be set in root .env"; \
+		exit 1; \
+	fi
+	@if [ ! -f "$(OTEL_AUTO_HOME)/instrument.sh" ]; then \
+		echo "ERROR: OpenTelemetry .NET auto-instrumentation not installed at $(OTEL_AUTO_HOME)"; \
+		echo ""; \
+		echo "Install it once with:"; \
+		echo "  curl -sSfL https://github.com/open-telemetry/opentelemetry-dotnet-instrumentation/releases/latest/download/otel-dotnet-auto-install.sh -O"; \
+		echo "  sh ./otel-dotnet-auto-install.sh"; \
+		echo ""; \
+		exit 1; \
+	fi
+	@echo "→ Starting auto-instrumented POC on http://localhost:$(OTEL_POC_PORT)  (Ctrl+C to stop)"
+	@echo "  Profiler: $(OTEL_AUTO_HOME)"
+	@echo "  OTLP target: $${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}"
+	@echo "  Service: $${OTEL_SERVICE_NAME:-otel-genai-poc-autoinstr}"
+	@echo ""
+	@cd experiments/dotnet-otel-poc-autoinstr && \
+		. $(OTEL_AUTO_HOME)/instrument.sh && \
+		ASPNETCORE_URLS=http://localhost:$(OTEL_POC_PORT) \
+		OTEL_SERVICE_NAME="$${OTEL_SERVICE_NAME:-otel-genai-poc-autoinstr}" \
+		OTEL_EXPORTER_OTLP_ENDPOINT="$${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}" \
+		OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf \
+		DD_RUM_APPLICATION_ID="$${DD_RUM_APPLICATION_ID:-$$VITE_DD_RUM_APP_ID}" \
+		DD_RUM_CLIENT_TOKEN="$${DD_RUM_CLIENT_TOKEN:-$$VITE_DD_RUM_CLIENT_TOKEN}" \
+		DD_SITE="$${DD_SITE:-$$VITE_DD_RUM_SITE}" \
+		dotnet run
 
 start-otel-collector: ## Start local OTel Collector (Docker) on :4317 / :4318
 	@if [ -z "$$DD_API_KEY" ]; then \
