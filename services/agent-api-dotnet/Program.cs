@@ -1,10 +1,13 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Azure;
 using Azure.AI.OpenAI;
 using InfraAdvisor.AgentApi.Models;
 using InfraAdvisor.AgentApi.Observability;
 using InfraAdvisor.AgentApi.Services;
-using OpenAI.Chat;
+using Microsoft.Agents.AI;
+using Microsoft.Extensions.AI;
+using ModelContextProtocol.Client;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -18,8 +21,9 @@ static string Env(string key, string? fallback = null) =>
 static string EnvOr(string key, string fallback) =>
     Environment.GetEnvironmentVariable(key) ?? fallback;
 
-// Prefer the x-datadog-trace-id request header (RUM injects the authoritative 64-bit
-// decimal DD trace ID). Fall back to converting OTel lower-64-bit hex to decimal.
+// Prefer the x-datadog-trace-id request header (RUM injects the authoritative
+// 64-bit decimal DD trace ID). Fall back to converting OTel lower-64-bit hex
+// to decimal so direct API tests (no RUM) still get a usable identifier.
 static string? GetDdTraceId(HttpContext ctx, Activity? activity)
 {
     var header = ctx.Request.Headers["x-datadog-trace-id"].FirstOrDefault();
@@ -38,73 +42,137 @@ static string? GetDdSpanId(Activity? activity)
         ? id.ToString() : hex;
 }
 
-// ── Read configuration ────────────────────────────────────────────────────────
+// ── Configuration ─────────────────────────────────────────────────────────────
 var azureEndpoint = Env("AZURE_OPENAI_ENDPOINT");
-var azureApiKey = Env("AZURE_OPENAI_API_KEY");
+var azureApiKey   = Env("AZURE_OPENAI_API_KEY");
 var azureDeployment = EnvOr("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini");
 var availableModelsRaw = EnvOr("AVAILABLE_MODELS", "gpt-4.1-mini");
-var mcpServerUrl = EnvOr("MCP_SERVER_URL", "http://mcp-server.infra-advisor.svc.cluster.local:8000/mcp");
+var mcpServerUrl = EnvOr("MCP_SERVER_URL", "http://mcp-server-dotnet.infra-advisor.svc.cluster.local:8000/mcp");
 var redisHost = EnvOr("REDIS_HOST", "redis.infra-advisor.svc.cluster.local");
 var redisPort = int.Parse(EnvOr("REDIS_PORT", "6379"));
 var kafkaBootstrapServers = EnvOr("KAFKA_BOOTSTRAP_SERVERS", "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092");
 
-// Pass through to env for services that read directly
-Environment.SetEnvironmentVariable("AZURE_OPENAI_ENDPOINT", azureEndpoint);
-Environment.SetEnvironmentVariable("AZURE_OPENAI_API_KEY", azureApiKey);
 Environment.SetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT", azureDeployment);
 Environment.SetEnvironmentVariable("KAFKA_BOOTSTRAP_SERVERS", kafkaBootstrapServers);
 
 // ── OpenTelemetry + Logging ───────────────────────────────────────────────────
 TelemetrySetup.Configure(builder);
 
-// ── ActivitySource (custom spans) ─────────────────────────────────────────────
-// Use the same ActivitySource instance as LlmTelemetry so all spans — agent,
-// router, specialist, and LLM — share one instance and are captured together
-// by the DD bridge listener. Two instances with the same name can produce
-// disconnected trace contexts when the DD bridge tracks by instance reference.
-builder.Services.AddSingleton(LlmTelemetry.ActivitySource);
-
-// ── AppState singleton ────────────────────────────────────────────────────────
+// ── AppState ─────────────────────────────────────────────────────────────────
 builder.Services.AddSingleton(new AppState());
 
 // ── Redis ─────────────────────────────────────────────────────────────────────
 builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 {
-    try
+    var cfg = new ConfigurationOptions
     {
-        var cfg = new ConfigurationOptions
-        {
-            EndPoints = { $"{redisHost}:{redisPort}" },
-            AbortOnConnectFail = false,
-            ConnectTimeout = 5000,
-            SyncTimeout = 5000,
-        };
-        return ConnectionMultiplexer.Connect(cfg);
-    }
+        EndPoints = { $"{redisHost}:{redisPort}" },
+        AbortOnConnectFail = false,
+        ConnectTimeout = 5000,
+        SyncTimeout = 5000,
+    };
+    try { return ConnectionMultiplexer.Connect(cfg); }
     catch (Exception ex)
     {
-        // Return a dummy multiplexer that will fail gracefully per-call
         var loggerFactory = LoggerFactory.Create(b => b.AddConsole());
         loggerFactory.CreateLogger("Redis").LogWarning("Redis connection failed: {Error}", ex.Message);
-        // Still return a multiplexer configured to not abort — MemoryService handles failures gracefully
-        var cfg = new ConfigurationOptions
-        {
-            EndPoints = { $"{redisHost}:{redisPort}" },
-            AbortOnConnectFail = false,
-        };
         return ConnectionMultiplexer.Connect(cfg);
     }
 });
 
-// ── MCP client ────────────────────────────────────────────────────────────────
-builder.Services.AddHttpClient<McpClientService>(client =>
+// ── Azure OpenAI client (used by both M.E.AI's IChatClient and SuggestionService) ─
+builder.Services.AddSingleton(_ => new AzureOpenAIClient(
+    new Uri(azureEndpoint), new AzureKeyCredential(azureApiKey)));
+
+// ── MCP client — connect once at startup, list tools, register both ──────────
+// We connect synchronously before builder.Build() so the tools list is
+// captured into the agent factory closure below. Connection failure aborts
+// startup with a clear log line.
+McpClient mcpClient;
+IList<AITool> mcpTools;
+try
 {
-    client.BaseAddress = new Uri(mcpServerUrl);
-    client.Timeout = TimeSpan.FromSeconds(30);
-});
+    var transport = new HttpClientTransport(new HttpClientTransportOptions
+    {
+        Endpoint = new Uri(mcpServerUrl),
+        Name = "infra-advisor-agent-api-dotnet",
+    });
+    mcpClient = await McpClient.CreateAsync(transport);
+    var listed = await mcpClient.ListToolsAsync();
+    mcpTools = [.. listed];
+    Console.WriteLine($"[mcp] connected to {mcpServerUrl}; loaded {mcpTools.Count} tool(s): {string.Join(", ", listed.Select(t => t.Name))}");
+}
+catch (Exception ex)
+{
+    Console.Error.WriteLine($"[mcp] FATAL: failed to connect to {mcpServerUrl}: {ex.Message}");
+    throw;
+}
+builder.Services.AddSingleton(mcpClient);
+
+// ── IChatClient pipeline (M.E.AI) ─────────────────────────────────────────────
+// .UseFunctionInvocation() runs the tool-call loop and emits execute_tool spans.
+// .UseOpenTelemetry()  emits chat spans on the "Experimental.Microsoft.Extensions.AI"
+// ActivitySource (registered in TelemetrySetup.cs).
+builder.Services.AddSingleton<IChatClient>(sp =>
+    sp.GetRequiredService<AzureOpenAIClient>()
+        .GetChatClient(azureDeployment)
+        .AsIChatClient()
+        .AsBuilder()
+        .UseFunctionInvocation()
+        .UseOpenTelemetry(configure: cfg => cfg.EnableSensitiveData = true)
+        .Build());
+
+// ── Agent (MAF) ───────────────────────────────────────────────────────────────
+// Single ChatClientAgent with all MCP tools. The model picks which tools
+// to call per turn. .UseOpenTelemetry(sourceName:) emits the invoke_agent
+// span on the ActivitySource registered in TelemetrySetup.cs.
+const string AgentSystemPrompt =
+    "You are InfraAdvisor, a technical AI assistant for consultants across " +
+    "Architecture, Engineering, Construction, Operations, and Management (AECOM) " +
+    "practice areas at a global infrastructure consulting firm.\n\n" +
+    "Your expertise spans the full AEC/O/M project lifecycle: feasibility and planning, " +
+    "civil and structural engineering (bridges, highways, rail), MEP and environmental systems " +
+    "(water, wastewater, energy), construction project delivery, asset operations and maintenance, " +
+    "and management advisory (program management, BD, risk, compliance).\n\n" +
+    "You have access to tools covering bridges (FHWA NBI), disasters (FEMA), energy (EIA/ERCOT), " +
+    "water systems (EPA SDWIS/TWDB), Texas transportation (TxDOT), firm knowledge base, " +
+    "document drafting, and federal procurement intelligence (SAM.gov, USASpending.gov).\n\n" +
+    "Guidelines:\n" +
+    "1. Always cite the data source for factual claims (NBI structure numbers, PWSID, EIA plant IDs, " +
+    "FEMA declaration IDs, USASpending award IDs, SAM.gov solicitation numbers).\n" +
+    "2. Sort assets by descending risk: bridges by ascending sufficiency rating; water systems by " +
+    "descending violation count.\n" +
+    "3. Flag material risks explicitly — scour vulnerability, load rating deficiencies, repeat flood " +
+    "events, SDWA violations, grid stress periods.\n" +
+    "4. For business development queries, always call get_contract_awards before get_procurement_opportunities " +
+    "— understanding who won similar work informs positioning for open opportunities.\n" +
+    "5. When search_web_procurement returns results, flag medium-confidence extractions explicitly.\n" +
+    "6. NEVER ask the user for a date range — procurement tools default to the last 12 months automatically.\n" +
+    "7. For document drafts, call search_project_knowledge first for relevant templates and prior project context.\n" +
+    "8. Do not speculate about asset conditions not in the data — say \"not available in the dataset\".\n" +
+    "9. Respond in the same language the user writes in. Keep responses concise for data lookups; " +
+    "detailed for engineering analysis and document drafts.";
+
+builder.Services.AddSingleton<AIAgent>(sp =>
+    new ChatClientAgent(
+            sp.GetRequiredService<IChatClient>(),
+            new ChatClientAgentOptions
+            {
+                Name = "infra-advisor",
+                ChatOptions = new ChatOptions
+                {
+                    Instructions = AgentSystemPrompt,
+                    Tools = mcpTools,
+                },
+            })
+        .AsBuilder()
+        .UseOpenTelemetry(sourceName: TelemetrySetup.ActivitySourceName,
+                          configure: cfg => cfg.EnableSensitiveData = true)
+        .Build());
 
 // ── Core services ─────────────────────────────────────────────────────────────
 builder.Services.AddSingleton<MemoryService>();
+builder.Services.AddSingleton<AgentSessionStore>();
 builder.Services.AddSingleton<AgentService>();
 builder.Services.AddSingleton<SuggestionService>();
 builder.Services.AddSingleton<ConversationService>();
@@ -121,98 +189,43 @@ builder.Services.ConfigureHttpJsonOptions(opts =>
 
 var app = builder.Build();
 
-// ── Connectivity probe on startup ─────────────────────────────────────────────
+// ── Startup probes ────────────────────────────────────────────────────────────
 var appState = app.Services.GetRequiredService<AppState>();
-var mcpClient = app.Services.GetRequiredService<McpClientService>();
 var startupLogger = app.Services.GetRequiredService<ILogger<Program>>();
 var conversationService = app.Services.GetRequiredService<ConversationService>();
 
-// Init DB schema (non-fatal — no DATABASE_URL means persistence is simply disabled)
 try { await conversationService.InitializeAsync(); }
 catch (Exception ex) { startupLogger.LogWarning("Conversation DB init failed: {Error}", ex.Message); }
 
-// Parse available models
 var availableModels = availableModelsRaw
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
     .ToList();
 if (availableModels.Count == 0) availableModels.Add("gpt-4.1-mini");
 appState.AvailableModels.AddRange(availableModels);
 
-app.Lifetime.ApplicationStarted.Register(() =>
-{
-    _ = Task.Run(async () =>
-    {
-        // Retry both probes with exponential backoff until both are connected.
-        // Cap at 60 s between attempts so the service recovers from transient failures.
-        for (int attempt = 0; !appState.McpConnected || !appState.LlmConnected; attempt++)
-        {
-            if (attempt > 0)
-                await Task.Delay(TimeSpan.FromSeconds(Math.Min(2 << attempt, 60)));
-
-            if (!appState.McpConnected)
-            {
-                try
-                {
-                    await mcpClient.ListToolsAsync();
-                    appState.McpConnected = true;
-                    startupLogger.LogInformation("MCP client connected to {Url}", mcpServerUrl);
-                }
-                catch (Exception ex)
-                {
-                    startupLogger.LogWarning("MCP probe attempt {Attempt} failed: {Error}", attempt + 1, ex.Message);
-                }
-            }
-
-            if (!appState.LlmConnected)
-            {
-                try
-                {
-                    // Verify client instantiates with valid config — no LLM call to avoid
-                    // creating spurious LLM Observability spans at startup.
-                    _ = app.Services.GetRequiredService<AgentService>().AzureClient
-                            .GetChatClient(azureDeployment);
-                    appState.LlmConnected = true;
-                    startupLogger.LogInformation("LLM client connected (deployment={Deployment})", azureDeployment);
-                }
-                catch (Exception ex)
-                {
-                    startupLogger.LogWarning("LLM probe attempt {Attempt} failed: {Error}", attempt + 1, ex.Message);
-                }
-            }
-        }
-    });
-});
+// MCP already connected at startup (above); Azure OpenAI client construction
+// is synchronous and pre-flighted by DI. Mark both ready.
+appState.McpConnected = true;
+appState.LlmConnected = true;
 
 // ── Endpoints ─────────────────────────────────────────────────────────────────
 
-// POST /query
 app.MapPost("/query", async (
     QueryRequest body,
     HttpContext httpContext,
     AgentService agentService,
     MemoryService memoryService,
     ConversationService conversationSvc,
-    AppState state,
-    ActivitySource activitySource) =>
+    AppState state) =>
 {
     if (!state.McpConnected || !state.LlmConnected)
-    {
-        return Results.Problem(
-            detail: "Agent not ready — MCP or LLM client unavailable",
-            statusCode: 503);
-    }
+        return Results.Problem(detail: "Agent not ready", statusCode: 503);
 
     var headerSessionId = httpContext.Request.Headers["X-Session-ID"].FirstOrDefault();
-    var rumSessionId = httpContext.Request.Headers["X-DD-RUM-Session-ID"].FirstOrDefault();
     var conversationId = httpContext.Request.Headers["X-Conversation-ID"].FirstOrDefault();
     var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
-    // body.SessionId is the canonical source: the frontend resolves
-    // getRumSessionId() ?? getSessionId() before serialising the body, so it
-    // already contains the best available session anchor. Headers are a fallback
-    // in case the request comes from a client that doesn't set the body field.
     var sessionId = body.SessionId ?? headerSessionId ?? Guid.NewGuid().ToString();
 
-    // Resolve model: request body > session memory > default
     string deployment;
     if (!string.IsNullOrWhiteSpace(body.Model) && state.AvailableModels.Contains(body.Model))
     {
@@ -221,28 +234,30 @@ app.MapPost("/query", async (
     else
     {
         var sessionModel = await memoryService.GetSessionModelAsync(sessionId);
-        deployment = state.AvailableModels.Contains(sessionModel)
-            ? sessionModel
-            : state.DefaultModel;
+        deployment = state.AvailableModels.Contains(sessionModel) ? sessionModel : state.DefaultModel;
     }
 
     AgentResult result;
     try
     {
+        // Key the agent session by conversationId when present (so URL-shared
+        // links resume the same conversation); fall back to sessionId otherwise.
+        var agentSessionKey = !string.IsNullOrWhiteSpace(conversationId)
+            ? conversationId
+            : sessionId;
         result = await agentService.RunAgentAsync(
             query: body.Query,
-            sessionId: sessionId,
+            sessionId: agentSessionKey,
             deployment: deployment,
             ct: httpContext.RequestAborted);
     }
     catch (Exception ex)
     {
-        var traceIdErr = GetDdTraceId(httpContext, Activity.Current);
+        var errTraceId = GetDdTraceId(httpContext, Activity.Current);
         return Results.Problem(detail: ex.Message, statusCode: 500,
-            extensions: new Dictionary<string, object?> { ["trace_id"] = traceIdErr });
+            extensions: new Dictionary<string, object?> { ["trace_id"] = errTraceId });
     }
 
-    await memoryService.AppendExchangeAsync(sessionId, body.Query, result.Answer);
     await memoryService.SetSessionModelAsync(sessionId, deployment);
 
     var traceId = GetDdTraceId(httpContext, Activity.Current);
@@ -261,57 +276,43 @@ app.MapPost("/query", async (
         TraceId: traceId,
         SpanId: spanId,
         SessionId: sessionId,
-        Model: deployment
-    ));
+        Model: deployment));
 });
 
-// POST /suggestions
 app.MapPost("/suggestions", async (
     SuggestionsRequest body,
     SuggestionService suggestionService,
-    AgentService agentService,
     AppState state) =>
 {
     if (!state.LlmConnected)
         return Results.Ok(new SuggestionsResponse(SuggestionService.FallbackSuggestions));
 
-    var chatClient = agentService.AzureClient.GetChatClient(agentService.DefaultDeployment);
     var suggestions = await suggestionService.GetContextualSuggestionsAsync(
-        body.Query, body.Answer, body.Sources ?? new List<string>(), chatClient);
-
+        body.Query, body.Answer, body.Sources ?? new List<string>());
     return Results.Ok(new SuggestionsResponse(suggestions));
 });
 
-// GET /suggestions/initial
 app.MapGet("/suggestions/initial", async (
     SuggestionService suggestionService,
-    AgentService agentService,
     AppState state) =>
 {
     var picked = await suggestionService.GetRandomFromPoolAsync(4);
     if (picked.Count > 0)
     {
-        // Async top-up if pool is running low — doesn't block the response
         var poolSize = await suggestionService.GetPoolSizeAsync();
         if (poolSize < 20 && state.LlmConnected)
-        {
-            var chatClient = agentService.AzureClient.GetChatClient(agentService.DefaultDeployment);
-            _ = Task.Run(() => suggestionService.FillPoolAsync(chatClient));
-        }
+            _ = Task.Run(() => suggestionService.FillPoolAsync());
         return Results.Ok(new SuggestionsResponse(picked));
     }
 
-    // Pool empty — call LLM directly and seed pool
     if (!state.LlmConnected)
         return Results.Ok(new SuggestionsResponse(SuggestionService.FallbackSuggestions));
 
     try
     {
-        var chatClient = agentService.AzureClient.GetChatClient(agentService.DefaultDeployment);
-        await suggestionService.FillPoolAsync(chatClient);
+        await suggestionService.FillPoolAsync();
         var fresh = await suggestionService.GetRandomFromPoolAsync(4);
-        if (fresh.Count > 0)
-            return Results.Ok(new SuggestionsResponse(fresh));
+        if (fresh.Count > 0) return Results.Ok(new SuggestionsResponse(fresh));
     }
     catch (Exception ex)
     {
@@ -321,81 +322,24 @@ app.MapGet("/suggestions/initial", async (
     return Results.Ok(new SuggestionsResponse(SuggestionService.FallbackSuggestions));
 });
 
-// GET /models
 app.MapGet("/models", (AppState state) =>
-    Results.Ok(new
-    {
-        models = state.AvailableModels,
-        @default = state.DefaultModel,
-    }));
+    Results.Ok(new { models = state.AvailableModels, @default = state.DefaultModel }));
 
-// GET /tools
-app.MapGet("/tools", async (McpClientService mcp, AppState state, HttpContext httpContext) =>
+app.MapGet("/tools", async (McpClient mcp, AppState state, HttpContext httpContext) =>
 {
     if (!state.McpConnected)
         return Results.Problem(detail: "MCP client not available", statusCode: 503);
 
-    var tools = await mcp.ListToolsAsync(httpContext.RequestAborted);
+    var tools = await mcp.ListToolsAsync(cancellationToken: httpContext.RequestAborted);
     var result = tools.Select(t => new
     {
         name = t.Name,
         description = t.Description,
-        parameters = t.InputSchema.ValueKind != System.Text.Json.JsonValueKind.Undefined
-            ? (object)t.InputSchema
-            : new { type = "object", properties = new { } },
     });
     return Results.Ok(result);
 });
 
-// POST /tools/{toolName}
-app.MapPost("/tools/{toolName}", async (
-    string toolName,
-    HttpContext httpContext,
-    McpClientService mcp,
-    AppState state) =>
-{
-    if (!state.McpConnected)
-        return Results.Problem(detail: "MCP client not available", statusCode: 503);
-
-    JsonElement args = default;
-    try
-    {
-        using var doc = await JsonDocument.ParseAsync(httpContext.Request.Body, cancellationToken: httpContext.RequestAborted);
-        args = doc.RootElement.Clone();
-    }
-    catch
-    {
-        args = JsonDocument.Parse("{}").RootElement;
-    }
-
-    var sw = Stopwatch.StartNew();
-    try
-    {
-        var result = await mcp.InvokeToolAsync(toolName, args, httpContext.RequestAborted);
-        sw.Stop();
-        return Results.Ok(new
-        {
-            tool_name = toolName,
-            result = result,
-            duration_ms = Math.Round(sw.Elapsed.TotalMilliseconds, 2),
-        });
-    }
-    catch (Exception ex)
-    {
-        sw.Stop();
-        return Results.Ok(new
-        {
-            tool_name = toolName,
-            error = ex.Message,
-            duration_ms = Math.Round(sw.Elapsed.TotalMilliseconds, 2),
-        });
-    }
-});
-
-// POST /feedback
-app.MapPost("/feedback", (
-    FeedbackRequest body,
-    ActivitySource activitySource) =>
+app.MapPost("/feedback", (FeedbackRequest body) =>
 {
     var validRatings = new HashSet<string> { "positive", "negative", "reported" };
     if (!validRatings.Contains(body.Rating))
@@ -405,16 +349,18 @@ app.MapPost("/feedback", (
             statusCode: 422);
     }
 
-    using var feedbackActivity = activitySource.StartActivity("user-feedback");
-    feedbackActivity?.SetTag("feedback.trace_id", body.TraceId);
-    feedbackActivity?.SetTag("feedback.span_id", body.SpanId);
-    feedbackActivity?.SetTag("feedback.rating", body.Rating);
-    feedbackActivity?.SetTag("session.id", body.SessionId ?? "");
+    // Feedback now flows as a tag on the current trace's HTTP span — the
+    // hand-rolled "user-feedback" activity from the old LlmTelemetry helper
+    // is gone. APM picks it up via the AspNetCore instrumentation.
+    var current = Activity.Current;
+    current?.SetTag("feedback.trace_id", body.TraceId);
+    current?.SetTag("feedback.span_id", body.SpanId);
+    current?.SetTag("feedback.rating", body.Rating);
+    current?.SetTag("feedback.session_id", body.SessionId ?? "");
 
     return Results.StatusCode(204);
 });
 
-// GET /health
 app.MapGet("/health", (AppState state) =>
     Results.Ok(new
     {
@@ -424,17 +370,15 @@ app.MapGet("/health", (AppState state) =>
         llm_connected = state.LlmConnected,
     }));
 
-// DELETE /session/{sessionId}
 app.MapDelete("/session/{sessionId}", async (string sessionId, MemoryService memoryService) =>
 {
     var cleared = await memoryService.ClearSessionAsync(sessionId);
     return Results.Ok(new { session_id = sessionId, cleared = cleared });
 });
 
-// POST /conversations
-app.MapPost("/conversations", async (
-    HttpContext httpContext,
-    ConversationService conversationSvc) =>
+// ── Conversations ─────────────────────────────────────────────────────────────
+
+app.MapPost("/conversations", async (HttpContext httpContext, ConversationService conversationSvc) =>
 {
     var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
     if (string.IsNullOrWhiteSpace(userId))
@@ -448,7 +392,7 @@ app.MapPost("/conversations", async (
         if (doc.RootElement.TryGetProperty("model", out var m)) model = m.GetString();
         if (doc.RootElement.TryGetProperty("backend", out var b)) backend = b.GetString();
     }
-    catch { /* body optional */ }
+    catch { }
 
     var conv = await conversationSvc.CreateConversationAsync(
         userId, title ?? "New Conversation", model, backend ?? "dotnet");
@@ -457,43 +401,29 @@ app.MapPost("/conversations", async (
         : Results.Ok(conv);
 });
 
-// GET /conversations
-app.MapGet("/conversations", async (
-    HttpContext httpContext,
-    ConversationService conversationSvc) =>
+app.MapGet("/conversations", async (HttpContext httpContext, ConversationService conversationSvc) =>
 {
     var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
     if (string.IsNullOrWhiteSpace(userId))
         return Results.Problem(detail: "X-User-ID header required", statusCode: 400);
-
     var list = await conversationSvc.ListConversationsAsync(userId);
     return Results.Ok(list);
 });
 
-// GET /conversations/{id}
-app.MapGet("/conversations/{id}", async (
-    string id,
-    HttpContext httpContext,
-    ConversationService conversationSvc) =>
+app.MapGet("/conversations/{id}", async (string id, HttpContext httpContext, ConversationService conversationSvc) =>
 {
     var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
     if (string.IsNullOrWhiteSpace(userId))
         return Results.Problem(detail: "X-User-ID header required", statusCode: 400);
-
     var conv = await conversationSvc.GetConversationAsync(id, userId);
     return conv is null ? Results.NotFound() : Results.Ok(conv);
 });
 
-// DELETE /conversations/{id}
-app.MapDelete("/conversations/{id}", async (
-    string id,
-    HttpContext httpContext,
-    ConversationService conversationSvc) =>
+app.MapDelete("/conversations/{id}", async (string id, HttpContext httpContext, ConversationService conversationSvc) =>
 {
     var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
     if (string.IsNullOrWhiteSpace(userId))
         return Results.Problem(detail: "X-User-ID header required", statusCode: 400);
-
     var deleted = await conversationSvc.DeleteConversationAsync(id, userId);
     return deleted ? Results.StatusCode(204) : Results.NotFound();
 });

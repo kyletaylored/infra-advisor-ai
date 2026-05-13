@@ -2,14 +2,16 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using Azure.AI.OpenAI;
 using InfraAdvisor.AgentApi.Models;
-using OpenAI.Chat;
 using StackExchange.Redis;
+using OpenAI.Chat;
 
 namespace InfraAdvisor.AgentApi.Services;
 
 public class SuggestionService
 {
     private readonly IConnectionMultiplexer _redis;
+    private readonly AzureOpenAIClient _azure;
+    private readonly string _deployment;
     private readonly ILogger<SuggestionService> _logger;
 
     private const string PoolKey = "infra-advisor:suggestions:pool";
@@ -101,11 +103,21 @@ public class SuggestionService
         "{\"suggestions\": [{\"label\": \"...\", \"query\": \"...\"}, ... 10 items ...]}",
     };
 
-    public SuggestionService(IConnectionMultiplexer redis, ILogger<SuggestionService> logger)
+    public SuggestionService(
+        IConnectionMultiplexer redis,
+        AzureOpenAIClient azure,
+        IConfiguration configuration,
+        ILogger<SuggestionService> logger)
     {
         _redis = redis;
+        _azure = azure;
+        _deployment = configuration["AZURE_OPENAI_DEPLOYMENT"]
+            ?? Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT")
+            ?? "gpt-4.1-mini";
         _logger = logger;
     }
+
+    private ChatClient ChatClient => _azure.GetChatClient(_deployment);
 
     public async Task<long> GetPoolSizeAsync()
     {
@@ -177,13 +189,13 @@ public class SuggestionService
         }
     }
 
-    public async Task FillPoolAsync(ChatClient chatClient)
+    public async Task FillPoolAsync()
     {
         var prompt = PoolBatchPrompts[Random.Shared.Next(PoolBatchPrompts.Length)];
         try
         {
             var messages = new List<ChatMessage> { new UserChatMessage(prompt) };
-            var response = await chatClient.CompleteChatAsync(messages);
+            var response = await ChatClient.CompleteChatAsync(messages);
             var content = response.Value.Content.Count > 0 ? response.Value.Content[0].Text : "";
             var items = ParseSuggestions(content);
             if (items.Count > 0)
@@ -200,7 +212,7 @@ public class SuggestionService
     }
 
     public async Task<List<SuggestionItem>> GetContextualSuggestionsAsync(
-        string query, string answer, List<string> sources, ChatClient chatClient)
+        string query, string answer, List<string> sources)
     {
         var sourcesStr = sources.Count > 0 ? string.Join(", ", sources) : "general knowledge";
         var prompt = SuggestionsPromptTemplate
@@ -212,7 +224,7 @@ public class SuggestionService
         try
         {
             var messages = new List<ChatMessage> { new UserChatMessage(prompt) };
-            var response = await chatClient.CompleteChatAsync(messages);
+            var response = await ChatClient.CompleteChatAsync(messages);
             var content = response.Value.Content.Count > 0 ? response.Value.Content[0].Text : "";
             var parsed = ParseSuggestions(content);
             if (parsed.Count > 0) return parsed;

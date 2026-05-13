@@ -7,11 +7,26 @@ using OpenTelemetry.Trace;
 
 namespace InfraAdvisor.AgentApi.Observability;
 
+// OpenTelemetry setup for the agent-api-dotnet service.
+//
+// Trace sources captured:
+//   - "Experimental.Microsoft.Extensions.AI" → chat + execute_tool spans
+//     emitted by Microsoft.Extensions.AI's .UseOpenTelemetry() decorator
+//     on the IChatClient pipeline.
+//   - ActivitySourceName below ("infra-advisor-agent-api-dotnet") →
+//     the invoke_agent span emitted by Microsoft.Agents.AI's
+//     .UseOpenTelemetry(sourceName:) decorator on the agent builder.
+//   - AspNetCore + HttpClient → HTTP server / client spans (root of trace +
+//     the outbound POST to Azure OpenAI inside the chat span).
+//
+// Vendor routing (Datadog-specific dd-otlp-source=llmobs header,
+// ml_app attribute injection, etc.) lives in the in-cluster collector's
+// otelCollector config, not here. The app speaks pure OTLP.
 public static class TelemetrySetup
 {
-    // Shared ActivitySource name for all spans in this service (agent, router, specialist, llm).
-    // Both the DD bridge ActivityListener (DD_TRACE_OTEL_ENABLED=true → APM) and the
-    // hosted OTel TracerProvider (LLMObs OTLP) register this source so all spans reach both sinks.
+    // The ActivitySource we pass to Microsoft.Agents.AI's
+    // .UseOpenTelemetry(sourceName: ...) call. Same value gets AddSource'd
+    // on the TracerProvider so the agent's invoke_agent spans are exported.
     public const string ActivitySourceName = "infra-advisor-agent-api-dotnet";
 
     public static void Configure(WebApplicationBuilder builder)
@@ -22,54 +37,47 @@ public static class TelemetrySetup
             ?? "infra-advisor-agent-api-dotnet";
         var ddEnv = Environment.GetEnvironmentVariable("DD_ENV") ?? "dev";
         var ddVersion = Environment.GetEnvironmentVariable("DD_VERSION") ?? "latest";
-        var ddApiKey = Environment.GetEnvironmentVariable("DD_API_KEY") ?? "";
-        var ddSite = Environment.GetEnvironmentVariable("DD_SITE") ?? "datadoghq.com";
-        var llmObsEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
-            ?? $"https://otlp.{ddSite}";
 
-        var otelBuilder = builder.Services.AddOpenTelemetry()
+        builder.Services.AddOpenTelemetry()
             .ConfigureResource(r => r
                 .AddService(serviceName)
-                .AddAttributes(new Dictionary<string, object> {
+                .AddAttributes(new Dictionary<string, object>
+                {
                     ["deployment.environment"] = ddEnv,
-                    ["service.version"] = ddVersion,
-                })
-            )
+                    ["service.version"]        = ddVersion,
+                }))
+            .WithTracing(t => t
+                // Library auto-instrumentations: HTTP server span (trace root),
+                // outbound HTTP client spans (Azure OpenAI REST POST + MCP HTTP).
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+
+                // GenAI span sources.
+                .AddSource("Experimental.Microsoft.Extensions.AI")
+                .AddSource(ActivitySourceName)
+
+                // AlwaysOn — keep the agent loop's spans regardless of the
+                // DD bridge's sampling decision on the HTTP parent.
+                .SetSampler(new AlwaysOnSampler())
+
+                .AddOtlpExporter(otlp =>
+                {
+                    otlp.Endpoint = new Uri($"{otlpEndpoint.TrimEnd('/')}/v1/traces");
+                    otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
+                }))
             .WithMetrics(metrics => metrics
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddMeter(ActivitySourceName)
-                .AddOtlpExporter(otlp => {
+                .AddOtlpExporter(otlp =>
+                {
                     otlp.Endpoint = new Uri($"{otlpEndpoint.TrimEnd('/')}/v1/metrics");
                     otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
-                })
-            );
+                }));
 
-        // LLMObs: use the hosting integration's .WithTracing() so ASP.NET Core properly
-        // manages the BatchExportProcessor lifecycle via its IHostedService infrastructure.
-        // The previous Sdk.CreateTracerProviderBuilder() (non-global) pattern created the
-        // provider as a DI singleton but its background export loop never started correctly
-        // alongside DD_TRACE_OTEL_ENABLED=true — evidenced by zero OtlpTraceExporter HTTP
-        // calls in pod logs despite active queries. The metrics exporter (identical setup via
-        // .WithMetrics()) works because it goes through this same hosting path.
-        //
-        // AlwaysOnSampler: forces recording regardless of the DD bridge HTTP span's
-        // sampling flag so UI-originated gen_ai.* spans are never silently dropped.
-        // The DD bridge (DD_TRACE_OTEL_ENABLED=true) coexists as a separate ActivityListener
-        // and continues to route spans to APM; this provider routes to LLMObs via OTLP.
-        if (!string.IsNullOrEmpty(ddApiKey))
-        {
-            otelBuilder.WithTracing(traces => traces
-                .AddSource(ActivitySourceName)
-                .SetSampler(new AlwaysOnSampler())
-                .AddOtlpExporter(otlp => {
-                    otlp.Endpoint = new Uri($"{llmObsEndpoint.TrimEnd('/')}/v1/traces");
-                    otlp.Headers = $"dd-api-key={ddApiKey},dd-otlp-source=llmobs";
-                    otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
-                })
-            );
-        }
-
+        // DD_LOGS_INJECTION=true causes the DD SDK to inject
+        // dd.trace_id/dd.span_id into ILogger structured properties for
+        // log-trace correlation.
         builder.Logging.ClearProviders();
         builder.Logging.AddConsole(opts => opts.FormatterName = "simple");
     }

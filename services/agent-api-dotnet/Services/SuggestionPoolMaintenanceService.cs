@@ -1,4 +1,3 @@
-using Azure.AI.OpenAI;
 using InfraAdvisor.AgentApi.Models;
 
 namespace InfraAdvisor.AgentApi.Services;
@@ -8,19 +7,16 @@ public class SuggestionPoolMaintenanceService : BackgroundService
     private readonly SuggestionService _suggestionService;
     private readonly AppState _appState;
     private readonly ILogger<SuggestionPoolMaintenanceService> _logger;
-    private readonly AgentService _agentService;
     private const int RefillIntervalSeconds = 1800; // 30 minutes
     private const int PoolMin = 20;
 
     public SuggestionPoolMaintenanceService(
         SuggestionService suggestionService,
         AppState appState,
-        AgentService agentService,
         ILogger<SuggestionPoolMaintenanceService> logger)
     {
         _suggestionService = suggestionService;
         _appState = appState;
-        _agentService = agentService;
         _logger = logger;
     }
 
@@ -31,8 +27,7 @@ public class SuggestionPoolMaintenanceService : BackgroundService
         if (initialSize < 4 && _appState.LlmConnected)
         {
             _logger.LogInformation("Suggestion pool is small ({Size}), filling on startup", initialSize);
-            var chatClient = _agentService.AzureClient.GetChatClient(_agentService.DefaultDeployment);
-            await _suggestionService.FillPoolAsync(chatClient);
+            await _suggestionService.FillPoolAsync();
         }
 
         // Background maintenance loop
@@ -53,8 +48,7 @@ public class SuggestionPoolMaintenanceService : BackgroundService
                 if (size < PoolMin && _appState.LlmConnected)
                 {
                     _logger.LogInformation("Suggestion pool at {Size}, triggering refill", size);
-                    var chatClient = _agentService.AzureClient.GetChatClient(_agentService.DefaultDeployment);
-                    await _suggestionService.FillPoolAsync(chatClient);
+                    await _suggestionService.FillPoolAsync();
                 }
             }
             catch (Exception ex)

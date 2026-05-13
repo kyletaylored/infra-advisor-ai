@@ -6,13 +6,33 @@
     <InvariantGlobalization>false</InvariantGlobalization>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Azure.AI.OpenAI" Version="2.2.0-beta.4" />
+    <!-- LLM provider SDK (Azure OpenAI on top of OpenAI's .NET SDK) -->
+    <PackageReference Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
 
-    <!-- 1.10.0 addresses moderate vulns in 1.9.0 (GHSA-g94r-2vxg-569j, GHSA-4625-4j76-fww9) -->
-    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.10.0" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.10.0" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.10.0" />
-    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.10.0" />
+    <!-- Microsoft.Extensions.AI — provider-neutral IChatClient pipeline.
+         UseFunctionInvocation + UseOpenTelemetry emit chat + execute_tool spans. -->
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.5.2" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.5.2" />
+
+    <!-- Microsoft Agents Framework — ChatClientAgent, AgentSession, serialize/
+         deserialize for Redis-backed session persistence. UseOpenTelemetry on
+         the agent builder emits the invoke_agent span DD LLMObs uses as the
+         "agent" kind. -->
+    <PackageReference Include="Microsoft.Agents.AI" Version="1.5.0" />
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.5.0" />
+
+    <!-- Official .NET MCP client. Replaces the hand-rolled JSON-RPC over HTTP
+         in the previous Services/McpClientService.cs — mcpClient.ListToolsAsync()
+         returns AITool instances that spread directly into the agent's tools. -->
+    <PackageReference Include="ModelContextProtocol" Version="1.3.0" />
+
+    <!-- OpenTelemetry — 1.15.x clears the NU1902 advisories that 1.10.x had
+         (GHSA-8785-wc3w-h8q6, GHSA-g94r-2vxg-569j, GHSA-4625-4j76-fww9). -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+
     <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
     <PackageReference Include="Confluent.Kafka" Version="2.6.0" />
     <PackageReference Include="Npgsql" Version="9.0.3" />

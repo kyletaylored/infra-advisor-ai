@@ -59,6 +59,18 @@ spec:
           processors:
             infraattributes:
               cardinality: 2
+            # Inject the Datadog-specific ml_app resource attribute on every
+            # span so DD LLM Observability can register the trace under an
+            # LLM application. Without ml_app the LLMObs UI doesn't show the
+            # trace even when gen_ai.* attributes are correct. Application
+            # code stays pure-OTel; this is the in-cluster mirror of the
+            # local-collector pattern proven in experiments/otel-collector/.
+            transform/llmobs:
+              error_mode: ignore
+              trace_statements:
+                - context: resource
+                  statements:
+                    - set(attributes["ml_app"], attributes["service.name"])
           connectors:
             datadog/connector:
               traces:
@@ -66,7 +78,7 @@ spec:
             pipelines:
               traces:
                 receivers: [otlp]
-                processors: [infraattributes]
+                processors: [infraattributes, transform/llmobs]
                 exporters: [datadog, datadog/connector]
               metrics:
                 receivers: [otlp, datadog/connector, prometheus]
