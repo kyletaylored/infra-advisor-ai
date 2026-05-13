@@ -503,8 +503,13 @@ run-otel-maf-poc: ## Run the MAF POC only (assumes collector already running)
 	@echo "  OTLP target: $${OTEL_EXPORTER_OTLP_ENDPOINT:-http://localhost:4318}"
 	@echo "  Service: $${OTEL_SERVICE_NAME:-infra-advisor-maf-poc}"
 	@echo ""
+	@# Hardcode MCP_SERVER_URL to the port-forwarded localhost — root .env
+	@# has the cluster-internal MCP_SERVER_URL (used by the production
+	@# agent-api), which isn't resolvable from the host. Override via
+	@# MAF_POC_MCP_URL=... in your shell to point at any other target.
 	@cd experiments/dotnet-maf-poc && \
 		ASPNETCORE_URLS=http://localhost:$(OTEL_MAF_POC_PORT) \
+		MCP_SERVER_URL="$${MAF_POC_MCP_URL:-http://localhost:8000/mcp}" \
 		DD_RUM_APPLICATION_ID="$${DD_RUM_APPLICATION_ID:-$$VITE_DD_RUM_APP_ID}" \
 		DD_RUM_CLIENT_TOKEN="$${DD_RUM_CLIENT_TOKEN:-$$VITE_DD_RUM_CLIENT_TOKEN}" \
 		DD_SITE="$${DD_SITE:-$$VITE_DD_RUM_SITE}" \

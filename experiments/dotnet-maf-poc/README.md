@@ -97,7 +97,10 @@ When the POC starts you should see:
 If MCP isn't reachable (port-forward not running) the POC fails fast at
 startup with an error pointing to the port-forward command. To override
 the MCP URL (e.g., point at a locally-Docker-running MCP server) set
-`MCP_SERVER_URL` in your environment.
+**`MAF_POC_MCP_URL`** in your shell — not `MCP_SERVER_URL`, since that
+name is already in the root `.env` for the production agent-api service
+(pointing at the cluster-internal URL) and gets force-overridden by the
+Makefile target to the port-forwarded `localhost:8000` value.
 
 The local OTel Collector + its `transform/llmobs` processor (which
 injects `ml_app`) is shared with the M.E.AI-only POC — no separate
