@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc otel-poc-autoinstr run-otel-poc-autoinstr stop-otel-poc-autoinstr start-otel-collector stop-otel-collector logs-otel-collector help
+.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc otel-poc-autoinstr run-otel-poc-autoinstr stop-otel-poc-autoinstr inspect-otel-poc-autoinstr start-otel-collector stop-otel-collector logs-otel-collector help
 
 # Load .env if present (for local dev)
 -include .env
@@ -526,6 +526,19 @@ run-otel-poc-autoinstr: ## Run the auto-instrumented POC (Docker; assumes collec
 
 stop-otel-poc-autoinstr: ## Stop the auto-instrumented POC stack
 	cd experiments/dotnet-otel-poc-autoinstr && docker compose down -v
+
+inspect-otel-poc-autoinstr: ## Inspect the running auto-instr POC: env, paths, profiler log dir
+	@echo "=== CORECLR_* / DOTNET_* / OTEL_* env vars seen by dotnet (PID 1) ==="
+	@docker exec otel-poc-autoinstr sh -c 'cat /proc/1/environ | tr "\0" "\n" | grep -E "CORECLR|DOTNET_|OTEL_" | sort' || true
+	@echo ""
+	@echo "=== /otel-auto/linux-x64/ contents (CORECLR_PROFILER_PATH target dir) ==="
+	@docker exec otel-poc-autoinstr ls -la /otel-auto/linux-x64/ 2>&1 || true
+	@echo ""
+	@echo "=== /otel-auto/net/ contents (DOTNET_STARTUP_HOOKS target dir) ==="
+	@docker exec otel-poc-autoinstr ls /otel-auto/net/ 2>&1 | head -20 || true
+	@echo ""
+	@echo "=== profiler log files (if OTEL_DOTNET_AUTO_LOGGER=file) ==="
+	@docker exec otel-poc-autoinstr ls -la /var/log/opentelemetry/dotnet/ 2>&1 || echo "(no profiler log dir — likely OTEL_DOTNET_AUTO_LOGGER=console)"
 
 start-otel-collector: ## Start local OTel Collector (Docker) on :4317 / :4318
 	@if [ -z "$$DD_API_KEY" ]; then \

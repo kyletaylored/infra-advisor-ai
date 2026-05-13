@@ -58,10 +58,12 @@ services:
       OTEL_DOTNET_AUTO_HOME: /otel-auto
 
       # ── Verbose profiler diagnostics ────────────────────────────────────
-      # At debug level, the profiler prints "OpenTelemetry Automatic
-      # Instrumentation - .NET" + configured exporter + supported
-      # instrumentations to stdout at startup. Drop to "info" or remove
-      # once you've confirmed the profiler attaches.
+      # OTEL_DOTNET_AUTO_LOGGER defaults to `file` — profiler logs go to
+      # /var/log/opentelemetry/dotnet/*.log INSIDE the container, where
+      # `docker compose up` doesn't see them. `console` redirects them to
+      # stdout so the profiler's startup banner + instrumentation list
+      # + exporter config show up in the regular container log stream.
+      OTEL_DOTNET_AUTO_LOGGER: console
       OTEL_LOG_LEVEL: debug
 
       # ── Standard OTel knobs ─────────────────────────────────────────────
