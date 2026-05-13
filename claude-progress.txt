@@ -1,3 +1,85 @@
+[2026-05-13] Add task / embedding / retrieval span kinds for LLMObs showcase
+  Three new LLMObs span kinds wired into the agent-api-dotnet /query flow so
+  the demo trace tree spans 6 distinct kinds (workflow → task + embedding +
+  retrieval + agent → chat → tool) instead of the current 4.
+
+  Trace shape per /query call after this change:
+    HTTP POST /query                          (workflow — AspNetCore)
+    ├── classify_domain                        (task — manual span)
+    ├── retrieve_best_practices                (retrieval — manual span)
+    │   └── embeddings × 1                     (embedding — framework span)
+    └── invoke_agent                           (agent — MAF)
+        └── chat                               (llm — M.E.AI)
+            └── execute_tool × N               (tool — M.E.AI)
+    (Plus embeddings × 6 on first /query call only — lazy corpus seed.)
+
+  Files changed:
+    services/agent-api-dotnet/Services/AgentService.cs
+      + ClassifyDomainTraced(): wraps existing ClassifyDomain in a manual
+        Activity tagged dd.llmobs.span.kind=task + gen_ai.operation.name=
+        classify_domain + input.value/output.value. Called at the top of
+        RunAgentAsync.
+      + RetrievalService injected; called before agent.RunAsync; retrieved
+        snippets injected as a "Relevant InfraAdvisor best-practice context"
+        preamble on the user query. Retrieval failures degrade silently.
+      + AgentResult.QueryDomain now sourced from the traced classify call
+        (was an untraced call at result-construction time before).
+
+    services/agent-api-dotnet/Services/RetrievalService.cs   [NEW ~140 lines]
+      In-process cosine-similarity vector retrieval over a 6-doc AECOM
+      best-practices corpus seeded lazily on first /query (so an embedding-
+      endpoint outage at startup doesn't crash the pod). Wraps the search
+      in a manual span tagged dd.llmobs.span.kind=retrieval; the query
+      embedding inside it produces a framework-instrumented embedding
+      child span automatically.
+
+      Why in-process not Redis-vector: cluster Redis is plain
+      redis:7-alpine, no RediSearch / vector module. Standing up Redis-
+      Stack for a 6-doc corpus would be more infra than the showcase
+      warrants; cosine over a List<> is microseconds at this scale.
+
+    services/agent-api-dotnet/Program.cs
+      + AZURE_OPENAI_EMBEDDING_DEPLOYMENT env var (default
+        "text-embedding-3-small")
+      + IEmbeddingGenerator<string, Embedding<float>> registered via
+        AzureOpenAIClient.GetEmbeddingClient(...).AsIEmbeddingGenerator()
+        .AsBuilder().UseOpenTelemetry(EnableSensitiveData=true).Build()
+        — emits gen_ai.operation.name=embeddings on the same
+        "Experimental.Microsoft.Extensions.AI" source as chat/tool spans,
+        which DD LLMObs auto-classifies as the embedding kind. Already
+        AddSource'd in TelemetrySetup; no telemetry config change needed.
+      + RetrievalService registered as singleton.
+
+    k8s/agent-api-dotnet/configmap.yaml
+      + AZURE_OPENAI_EMBEDDING_DEPLOYMENT: "text-embedding-3-small"
+        (must exist as a deployment on the Azure OpenAI resource — needs
+        a one-time `az cognitiveservices account deployment create`
+        before this rolls out to production).
+
+  Span-kind mapping references:
+    chat               → llm        (DD auto-maps from gen_ai.operation.name=chat)
+    execute_tool       → tool       (DD auto-maps)
+    invoke_agent       → agent      (DD auto-maps)
+    embeddings         → embedding  (DD auto-maps)
+    classify_domain    → task       (explicit dd.llmobs.span.kind=task)
+    retrieve_best_*    → retrieval  (explicit dd.llmobs.span.kind=retrieval)
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors
+  [x] DI graph: RetrievalService consumes IEmbeddingGenerator; AgentService
+      consumes RetrievalService; both registered before AgentService
+  [x] TelemetrySetup.AddSource("Experimental.Microsoft.Extensions.AI")
+      covers both chat AND embeddings — no source-list change needed
+  [x] In-process retrieval is fail-safe: seed and search both wrapped in
+      try/catch; agent always runs even if embedding endpoint is down
+
+  [~] Live: with the embedding deployment provisioned in Azure OpenAI,
+      one /query produces a trace with all 6 distinct LLMObs span kinds
+      visible in the trace tree filtered by
+      ml_app:infra-advisor-agent-api-dotnet. First-query latency
+      slightly elevated due to one-time corpus seed (6 extra embedding
+      calls); subsequent queries see only 1 embedding span per request.
+
 [2026-05-13] Migrate agent-api-dotnet to MAF + MCP + library-instrumented OTel (defe200)
   Production migration applying everything proven in the experiments/
   POC sequence. Replaces ~1,500 lines of hand-rolled router/specialist
