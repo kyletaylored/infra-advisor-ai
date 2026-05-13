@@ -12,6 +12,7 @@
 // profiler picks them up automatically.
 
 using System.ComponentModel;
+using System.Diagnostics;
 using Azure;
 using Azure.AI.OpenAI;
 using Microsoft.Extensions.AI;
@@ -95,7 +96,11 @@ app.MapPost("/chat", async (IChatClient client, ChatRequest body) =>
         new(ChatRole.User, body.Query),
     };
     var response = await client.GetResponseAsync(messages, new ChatOptions { Tools = tools });
-    return Results.Ok(new { answer = response.Text ?? "" });
+    // Activity.Current is the HTTP server span (AspNetCore instrumentation).
+    // Its TraceId continues from the browser's traceparent header if RUM
+    // sent one, or is freshly generated server-side if not.
+    var traceId = Activity.Current?.TraceId.ToString();
+    return Results.Ok(new { answer = response.Text ?? "", traceId });
 });
 
 app.Run();
