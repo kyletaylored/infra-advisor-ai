@@ -89,6 +89,7 @@ builder.Services.AddSingleton<IChatClient>(sp =>
 const string AgentName = "infra-advisor-poc-agent";
 
 builder.Services.AddSingleton<MemoryProvider>();
+builder.Services.AddSingleton<SessionStore>();
 
 builder.Services.AddSingleton<AIAgent>(sp =>
 {
