@@ -9,13 +9,14 @@ custom memory components.
 
 ## What this POC validates
 
-Three things the M.E.AI-only POC couldn't prove:
+Four things the M.E.AI-only POC couldn't prove:
 
 | Validation point | How |
 |---|---|
 | 1. **`invoke_agent` span** (the "agent" kind in DD LLMObs) | Stack two `.UseOpenTelemetry()` decorators — one on the chat client, one on the agent builder — and verify the resulting trace has `invoke_agent → chat → execute_tool` |
 | 2. **`gen_ai.conversation.id` for multi-turn grouping** | Map browser `?c=<id>` → `AgentSession` via in-memory `SessionStore`. Same session reused across turns by conversation ID; MAF stamps `conversation.id` on every span. |
 | 3. **`AIContextProvider` hook API** | Attach a minimal `MemoryProvider` via `ChatClientAgentOptions.AIContextProviders`. Provider prints to stdout on both `ProvideAIContextAsync` (pre-call) and `StoreAIContextAsync` (post-call) hooks to prove they fire. |
+| 4. **Real MCP tools** (replaces mock tools) | `ModelContextProtocol.Client`'s `HttpClientTransport` + `McpClient.CreateAsync` connects at startup to a port-forwarded `mcp-server-dotnet`. `mcpClient.ListToolsAsync()` returns `AITool`s that spread directly into the agent's `Tools = [.. mcpTools]`. M.E.AI's `.UseFunctionInvocation()` then emits an `execute_tool` span for each MCP call the model decides to make. |
 
 ## Span hierarchy expected
 
@@ -73,14 +74,30 @@ builder.Services.AddOpenTelemetry()
 
 ## Running
 
+Three terminals (or use `&` / tmux):
+
 ```bash
-make otel-maf-poc           # starts collector + runs POC; Ctrl+C tears both down
-# or step-by-step:
-make start-otel-collector
-make run-otel-maf-poc       # http://localhost:5007 (different port from M.E.AI POC)
+# Terminal 1 — port-forward mcp-server-dotnet so the POC can reach it
+kubectl port-forward -n infra-advisor svc/mcp-server-dotnet 8000:8000
+
+# Terminal 2 — POC + collector
+make otel-maf-poc                  # http://localhost:5007
+
+# Terminal 3 (optional) — watch the spans the collector receives
 make logs-otel-collector
-make stop-otel-collector
 ```
+
+When the POC starts you should see:
+
+```
+[mcp] connecting to http://localhost:8000/mcp
+[mcp] connected; loaded 11 tool(s): get_bridge_condition, get_disaster_history, ...
+```
+
+If MCP isn't reachable (port-forward not running) the POC fails fast at
+startup with an error pointing to the port-forward command. To override
+the MCP URL (e.g., point at a locally-Docker-running MCP server) set
+`MCP_SERVER_URL` in your environment.
 
 The local OTel Collector + its `transform/llmobs` processor (which
 injects `ml_app`) is shared with the M.E.AI-only POC — no separate

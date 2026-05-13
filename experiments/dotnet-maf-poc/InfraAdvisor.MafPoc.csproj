@@ -22,6 +22,12 @@
     <!-- LLM provider SDK -->
     <PackageReference Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />
 
+    <!-- Official .NET MCP client library. HttpClientTransport speaks the
+         same Streamable-HTTP protocol the mcp-server-dotnet service serves.
+         mcpClient.ListToolsAsync() returns AITool-compatible instances that
+         spread directly into the agent's tools list — no manual wrapping. -->
+    <PackageReference Include="ModelContextProtocol" Version="1.3.0" />
+
     <!-- OpenTelemetry SDK + OTLP exporter + library auto-instrumentation -->
     <PackageReference Include="OpenTelemetry.Extensions.Hosting"             Version="1.15.3" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />

@@ -9,12 +9,12 @@
 //      (this POC uses an in-memory dict; production would use Redis).
 
 using System.Collections.Concurrent;
-using System.ComponentModel;
 using System.Diagnostics;
 using Azure;
 using Azure.AI.OpenAI;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using ModelContextProtocol.Client;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
@@ -23,36 +23,45 @@ using OpenTelemetry.Trace;
 var builder = WebApplication.CreateBuilder(args);
 
 // ── Config ────────────────────────────────────────────────────────────────────
-var endpoint     = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")    ?? throw new("AZURE_OPENAI_ENDPOINT not set");
-var apiKey       = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY")     ?? throw new("AZURE_OPENAI_API_KEY not set");
-var deployment   = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT")  ?? "gpt-4.1-mini";
-var serviceName  = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME")        ?? "infra-advisor-maf-poc";
-var otlpEndpoint = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT") ?? "http://localhost:4318";
+var endpoint      = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT")    ?? throw new("AZURE_OPENAI_ENDPOINT not set");
+var apiKey        = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY")     ?? throw new("AZURE_OPENAI_API_KEY not set");
+var deployment    = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT")  ?? "gpt-4.1-mini";
+var serviceName   = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME")        ?? "infra-advisor-maf-poc";
+var otlpEndpoint  = Environment.GetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT") ?? "http://localhost:4318";
+var mcpServerUrl  = Environment.GetEnvironmentVariable("MCP_SERVER_URL")           ?? "http://localhost:8000/mcp";
 
-// ── Tools ─────────────────────────────────────────────────────────────────────
-// AIFunctionFactory reads [Description] attributes for the tool schema the
-// LLM sees. Same pattern as the M.E.AI POC — once real MCP wrapping is wired
-// in, these would be replaced by AIFunctions that delegate to McpClientService.
-[Description("Returns the current UTC time as an ISO-8601 string.")]
-static string GetCurrentTime() => DateTime.UtcNow.ToString("o");
-
-[Description("Returns a random inspirational quote.")]
-static string GetRandomQuote()
+// ── MCP client ────────────────────────────────────────────────────────────────
+// Real tools come from mcp-server-dotnet via the official ModelContextProtocol
+// .NET client library. HttpClientTransport speaks Streamable-HTTP MCP — the
+// same wire protocol the server uses. mcpClient.ListToolsAsync() returns
+// AITool-compatible instances that spread straight into the agent's tools.
+//
+// For local development this points at a port-forwarded service:
+//   kubectl port-forward -n infra-advisor svc/mcp-server-dotnet 8000:8000
+// Override via MCP_SERVER_URL env var for any other target.
+Console.WriteLine($"[mcp] connecting to {mcpServerUrl}");
+var mcpTransport = new HttpClientTransport(new HttpClientTransportOptions
 {
-    string[] quotes =
-    {
-        "The only way to do great work is to love what you do. — Steve Jobs",
-        "Stay hungry, stay foolish. — Whole Earth Catalog",
-        "In the middle of difficulty lies opportunity. — Albert Einstein",
-    };
-    return quotes[Random.Shared.Next(quotes.Length)];
+    Endpoint = new Uri(mcpServerUrl),
+    Name = serviceName,
+});
+McpClient mcpClient;
+IList<AITool> tools;
+try
+{
+    mcpClient = await McpClient.CreateAsync(mcpTransport);
+    var mcpTools = await mcpClient.ListToolsAsync();
+    tools = [.. mcpTools];
+    Console.WriteLine($"[mcp] connected; loaded {tools.Count} tool(s): {string.Join(", ", mcpTools.Select(t => t.Name))}");
 }
-
-var tools = new List<AITool>
+catch (Exception ex)
 {
-    AIFunctionFactory.Create(GetCurrentTime),
-    AIFunctionFactory.Create(GetRandomQuote),
-};
+    Console.Error.WriteLine($"[mcp] ERROR: failed to connect to {mcpServerUrl}: {ex.Message}");
+    Console.Error.WriteLine($"[mcp]   if you're running locally, port-forward the cluster service first:");
+    Console.Error.WriteLine($"[mcp]   kubectl port-forward -n infra-advisor svc/mcp-server-dotnet 8000:8000");
+    throw;
+}
+builder.Services.AddSingleton(mcpClient);
 
 // ── Chat client pipeline (Microsoft.Extensions.AI layer) ──────────────────────
 // .UseOpenTelemetry() on the chat client emits `chat` + `execute_tool` spans
@@ -91,7 +100,10 @@ builder.Services.AddSingleton<AIAgent>(sp =>
         Name = AgentName,
         ChatOptions = new ChatOptions
         {
-            Instructions = "You are a friendly assistant. Use the available tools when relevant. Be concise.",
+            Instructions = "You are a helpful infrastructure consulting assistant. " +
+                           "Use the available MCP tools to look up real data — bridges, water systems, " +
+                           "disasters, energy infrastructure, procurement opportunities — and cite " +
+                           "sources when you do. Be concise.",
             Tools = tools,
         },
         AIContextProviders = [memory],
