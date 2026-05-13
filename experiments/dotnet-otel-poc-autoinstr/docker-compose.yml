@@ -36,20 +36,42 @@ services:
       # binaries; nothing should be writing back to this volume at runtime.
       - otel-auto:/otel-auto:ro
     environment:
-      # Standard OTel knobs — auto-instrumentation reads these to configure
-      # the OTLP exporter, resource attributes, sampler, etc.
+      # ── Profiler attach (canonical K8s-operator pattern) ────────────────
+      # These six CORECLR_* / DOTNET_* / OTEL_DOTNET_AUTO_HOME vars are what
+      # the .NET runtime reads at process startup to load the OpenTelemetry
+      # auto-instrumentation native profiler. Without these set, dotnet
+      # starts with no profiler attached and zero auto-spans are emitted.
+      #
+      # PROFILER_PATH points at linux-arm64 because docker-compose pulls
+      # the linux/arm64 image variant on Apple Silicon. Change to linux-x64
+      # on Intel hosts (or on Apple Silicon running --platform=linux/amd64).
+      CORECLR_ENABLE_PROFILING: "1"
+      CORECLR_PROFILER: "{918728DD-259F-4A6A-AC2B-B85E1B658318}"
+      CORECLR_PROFILER_PATH: /otel-auto/linux-arm64/OpenTelemetry.AutoInstrumentation.Native.so
+      DOTNET_ADDITIONAL_DEPS: /otel-auto/AdditionalDeps
+      DOTNET_SHARED_STORE: /otel-auto/store
+      DOTNET_STARTUP_HOOKS: /otel-auto/net/OpenTelemetry.AutoInstrumentation.StartupHook.dll
+      OTEL_DOTNET_AUTO_HOME: /otel-auto
+
+      # ── Verbose profiler diagnostics ────────────────────────────────────
+      # At debug level, the profiler prints "OpenTelemetry Automatic
+      # Instrumentation - .NET" + configured exporter + supported
+      # instrumentations to stdout at startup. Drop to "info" or remove
+      # once you've confirmed the profiler attaches.
+      OTEL_LOG_LEVEL: debug
+
+      # ── Standard OTel knobs ─────────────────────────────────────────────
       OTEL_SERVICE_NAME: otel-genai-poc-autoinstr
       OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4318
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=dev,service.version=1.0.0"
 
-      # LLM provider — required env, passed through from host shell or .env
+      # ── LLM provider ────────────────────────────────────────────────────
       AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:?AZURE_OPENAI_ENDPOINT must be set}
       AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:?AZURE_OPENAI_API_KEY must be set}
       AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-gpt-4.1-mini}
 
-      # Browser RUM — optional. Picked up from root .env's VITE_DD_RUM_* by
-      # the Makefile target before docker compose up.
+      # ── Browser RUM (optional; resolved from root .env by Makefile) ────
       DD_RUM_APPLICATION_ID: ${DD_RUM_APPLICATION_ID:-}
       DD_RUM_CLIENT_TOKEN: ${DD_RUM_CLIENT_TOKEN:-}
       DD_SITE: ${DD_SITE:-us3.datadoghq.com}
