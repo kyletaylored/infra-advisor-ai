@@ -1,0 +1,60 @@
+# Auto-instrumented POC stack.
+#
+# Two services:
+#   otel-autoinstr-init  — one-shot. Pulls otel/autoinstrumentation-dotnet
+#                          and copies /autoinstrumentation/. into a named
+#                          volume. Exits with status 0 once done.
+#   poc                  — builds the POC image, mounts the shared volume
+#                          at /otel-auto/, sources instrument.sh at startup
+#                          so the CLR profiler attaches before the app runs.
+#
+# The collector runs separately under experiments/otel-collector/. The POC
+# reaches it via host.docker.internal:4318 (the host-published collector
+# port), so the two compose stacks don't need to share a Docker network.
+
+services:
+  otel-autoinstr-init:
+    image: otel/autoinstrumentation-dotnet:latest
+    command:
+      - sh
+      - -c
+      - "cp -r /autoinstrumentation/. /shared/ && echo '✓ auto-instrumentation distro copied to shared volume'"
+    volumes:
+      - otel-auto:/shared
+    restart: "no"
+
+  poc:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: otel-poc-autoinstr
+    depends_on:
+      otel-autoinstr-init:
+        condition: service_completed_successfully
+    volumes:
+      # Shared with init container. Mounted read-only — we only read profiler
+      # binaries; nothing should be writing back to this volume at runtime.
+      - otel-auto:/otel-auto:ro
+    environment:
+      # Standard OTel knobs — auto-instrumentation reads these to configure
+      # the OTLP exporter, resource attributes, sampler, etc.
+      OTEL_SERVICE_NAME: otel-genai-poc-autoinstr
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://host.docker.internal:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=dev,service.version=1.0.0"
+
+      # LLM provider — required env, passed through from host shell or .env
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:?AZURE_OPENAI_ENDPOINT must be set}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:?AZURE_OPENAI_API_KEY must be set}
+      AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-gpt-4.1-mini}
+
+      # Browser RUM — optional. Picked up from root .env's VITE_DD_RUM_* by
+      # the Makefile target before docker compose up.
+      DD_RUM_APPLICATION_ID: ${DD_RUM_APPLICATION_ID:-}
+      DD_RUM_CLIENT_TOKEN: ${DD_RUM_CLIENT_TOKEN:-}
+      DD_SITE: ${DD_SITE:-us3.datadoghq.com}
+    ports:
+      - "5006:8080"
+
+volumes:
+  otel-auto:
