@@ -1,3 +1,66 @@
+[2026-05-13] Inject ml_app at collector — DD LLMObs requires it (e223435)
+
+  After the library-auto-instrumentation pivot (af5623b), user verified
+  the M.E.AI POC IS emitting spans correctly to Datadog. test-spans.json
+  captured from DD's Spans API showed all the right OTel GenAI content:
+    - gen_ai.operation.name = "chat" / "execute_tool" populated
+    - gen_ai.input.messages + output.messages in parts-array format
+    - gen_ai.usage.input_tokens / output_tokens populated
+    - gen_ai.provider.name, request.model, response.finish_reasons,
+      response.model, tool.definitions all populated
+    - Library attribution correct: Experimental.Microsoft.Extensions.AI
+      on the chat / execute_tool spans, Microsoft.AspNetCore on HTTP
+      server span, System.Net.Http on outbound HTTP
+
+  BUT spans appeared only in DD APM (source:apm in tags), not LLM
+  Observability. Root cause: ml_app attribute missing. DD LLMObs
+  requires ml_app to register a trace under an "ML application" —
+  without it the LLMObs UI doesn't show the trace even when every
+  gen_ai.* attribute is correct.
+
+  We deliberately removed ml_app from the application code during the
+  earlier vendor-neutral refactor (34ba427) because it's Datadog-
+  specific, not part of the OTel GenAI spec. The right architectural
+  layer to add it back is the collector — same layer that already does
+  the Datadog-specific routing (dd-api-key header, dd-otlp-source=llmobs
+  header on the otlphttp/llmobs exporter).
+
+  Implementation: added a `transform/llmobs` processor to the collector
+  config (otel/opentelemetry-collector-contrib ships this processor) that
+  sets ml_app to the same value as service.name on every span's resource
+  attributes. Wired into the traces pipeline before batch so both
+  downstream exporters see ml_app:
+
+    processors:
+      transform/llmobs:
+        error_mode: ignore
+        trace_statements:
+          - context: resource
+            statements:
+              - set(attributes["ml_app"], attributes["service.name"])
+    service:
+      pipelines:
+        traces:
+          processors: [transform/llmobs, batch]
+          exporters: [debug, datadog, datadog/connector, otlphttp/llmobs]
+
+  Architectural payoff: the split established back in the vendor-neutral
+  refactor now pays dividends. Pointing OTEL_EXPORTER_OTLP_ENDPOINT at a
+  non-Datadog backend would require zero application changes — only the
+  collector's exporters + processor list would change. ml_app becomes
+  harmless metadata in any other backend.
+
+  Verified:
+  [x] Collector config.yaml: transform/llmobs processor added with the
+      OTTL set() statement
+  [x] traces pipeline references transform/llmobs ahead of batch
+  [x] Both APM (datadog exporter) and LLMObs (otlphttp/llmobs) paths
+      see the ml_app attribute since it's added before the fan-out
+  [~] LLM Observability → Traces filtered by ml_app:otel-genai-poc
+      shows the trace with chat span classified as "llm" kind and
+      execute_tool span as "tool" kind: pending user re-run with
+      `make stop-otel-collector && make otel-poc`.
+
 [2026-05-12] Delete autoinstr experiment; library auto-instrumentation is what we wanted (af5623b)
 
   User-initiated terminology clarification resolved several days of
