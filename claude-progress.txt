@@ -1,3 +1,128 @@
+[2026-05-13] Migrate agent-api-dotnet to MAF + MCP + library-instrumented OTel (defe200)
+  Production migration applying everything proven in the experiments/
+  POC sequence. Replaces ~1,500 lines of hand-rolled router/specialist
+  /tool-loop + custom span emission + bespoke MCP JSON-RPC with the
+  verified-working framework stack.
+
+  Net diff: 13 files changed, +475 / -1214 (3 files deleted entirely).
+
+  Files deleted:
+    Observability/LlmTelemetry.cs       (~190 lines — replaced by M.E.AI
+                                          + MAF .UseOpenTelemetry() decorators)
+    Observability/TracingScope.cs       (~26 lines — KafkaConsumerService
+                                          now uses a hard kill-switch
+                                          rather than AsyncLocal suppression)
+    Services/McpClientService.cs        (~115 lines — replaced by
+                                          ModelContextProtocol.Client)
+
+  Files added:
+    Services/AgentSessionStore.cs       (Redis JSON round-trip of MAF
+                                          AgentSessions via the
+                                          SerializeSessionAsync /
+                                          DeserializeSessionAsync framework
+                                          primitives; keyed by inbound
+                                          conversationId)
+
+  Files modified (highlights):
+    InfraAdvisor.AgentApi.csproj
+      + Microsoft.Agents.AI / .OpenAI 1.5.0
+      + Microsoft.Extensions.AI / .OpenAI 10.5.2
+      + ModelContextProtocol 1.3.0
+      ~ OpenTelemetry 1.10.x → 1.15.x (clears 3 NU1902 advisories that
+        carried over from before)
+      ~ Azure.AI.OpenAI 2.2.0-beta.4 → 2.9.0-beta.1
+
+    Observability/TelemetrySetup.cs
+      Unified AddOpenTelemetry chain; AddSource for both
+      "Experimental.Microsoft.Extensions.AI" (chat + execute_tool) and
+      "infra-advisor-agent-api-dotnet" (MAF invoke_agent — passed as
+      sourceName: in Program.cs's agent builder). AlwaysOnSampler.
+
+    Services/AgentService.cs (563 → 175 lines)
+      Single ChatClientAgent with ALL MCP tools. No router LLM call,
+      no per-specialist agents, no ReAct loop, no manual span code.
+      RunAgentAsync() does session load → agent.RunAsync(query, session)
+      → session save. ClassifyDomain kept for AgentResult metadata.
+
+    Services/MemoryService.cs (175 → 60 lines)
+      Conversation history APIs removed (MAF AgentSession handles
+      history now). Only session-model tracking + ClearSessionAsync
+      remain.
+
+    Services/SuggestionService.cs
+      Injects AzureOpenAIClient + reads deployment from config; the
+      public methods that took ChatClient parameters now build the
+      chat client internally. Removes the AgentService.AzureClient
+      upstream dependency.
+
+    Services/KafkaConsumerService.cs
+      TracingScope wrapper block removed. When KAFKA_TRACING_ENABLED=
+      false the consumer skips dispatch entirely (no agent invocation,
+      no spans, no eval result). Long-term mitigation for eval traffic
+      pollution should be a collector-side probabilistic_sampler.
+
+    Program.cs (rewritten)
+      - McpClientService.HttpClient registration → gone
+      - AgentService.AzureClient.GetChatClient(...) idiom → gone
+        (everywhere; AzureOpenAIClient is now a DI singleton)
+      - manual MemoryService.AppendExchangeAsync at end of /query → gone
+      + McpClient.CreateAsync at startup over HttpClientTransport,
+        with friendly fatal-error if it can't connect
+      + AzureOpenAIClient + IChatClient + AIAgent all as DI singletons
+      + Agent registered via ChatClientAgentOptions with system prompt
+        baked in + the captured-at-startup MCP tools list spread into
+        ChatOptions.Tools
+      + /query now keys the agent session by conversationId when
+        X-Conversation-ID header is present (URL ?c= path the UI
+        already sends — services/ui/src/lib/api.ts:147)
+      + /feedback writes tags on Activity.Current instead of starting
+        a custom "user-feedback" activity (which was on the deleted
+        LlmTelemetry.ActivitySource)
+
+    datadog/datadog-agent.yaml
+      + transform/llmobs processor: set(attributes["ml_app"],
+        attributes["service.name"]) at the resource layer. Wired into
+        the in-cluster collector's traces pipeline so DD LLM
+        Observability registers gen_ai.*-tagged spans under the right
+        "ML application" — mirrors the local-collector pattern proven
+        in experiments/otel-collector/.
+
+  Behaviour deltas the team should be aware of (intentional):
+  - Single agent over all 11 MCP tools instead of router→specialist.
+    Modern models handle the full tool list cleanly; ToolPartitions
+    were a constraint we no longer need to impose.
+  - Conversation history flows through MAF AgentSession instead of
+    a custom Redis list. The persistence is still Redis-backed (24h
+    TTL), but the JSON shape is whatever MAF serializes, not our
+    ConversationMessage records. Pre-migration sessions in Redis are
+    silently ignored — they're not in the new format. Either expire
+    naturally over 24h or run a Redis flush.
+  - dd.llmobs.span.kind tags removed everywhere. DD LLMObs
+    auto-classifies span kind from gen_ai.operation.name (chat → llm,
+    execute_tool → tool, invoke_agent → agent).
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors
+  [x] All deleted files no longer referenced anywhere in the project
+  [x] UI's existing X-Conversation-ID header already lines up with
+      Program.cs's reading of it for agent-session keying — no UI
+      changes required for the conversationId → gen_ai.conversation.id
+      pipeline
+  [x] datadog-agent.yaml YAML structure: transform/llmobs processor
+      added under processors and referenced in traces pipeline
+
+  [~] Live verification: build agent-api-dotnet image in CI, deploy
+      to AKS, apply the DatadogAgent CR change (kubectl apply -f
+      datadog/datadog-agent.yaml), run a real query from the UI,
+      confirm:
+        a. invoke_agent + chat + execute_tool spans visible in DD
+           LLMObs filtered by ml_app:infra-advisor-agent-api-dotnet
+        b. multi-turn conversation grouping via gen_ai.conversation.id
+        c. tool-derived sources still extracted to AgentResult.Sources
+           (now from FunctionResultContent on the agent response
+           messages, not from McpClientService.InvokeToolAsync)
+        d. /forgot-password and unrelated auth flows unaffected
+
 [2026-05-13] MAF POC: pin agent sourceName + widen AddSource net (bba74a5)
   Live run after dbadd0b/4a079f7 succeeded at startup (MCP connected,
   tools enumerated, /chat resolved through DI) but produced zero LLM
