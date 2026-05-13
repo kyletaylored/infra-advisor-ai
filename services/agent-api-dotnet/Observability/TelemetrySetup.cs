@@ -45,6 +45,12 @@ public static class TelemetrySetup
                 {
                     ["deployment.environment"] = ddEnv,
                     ["service.version"]        = ddVersion,
+                    // Identifies the span emitter as OpenTelemetry (not the
+                    // dd-trace SDK) so DD LLMObs / APM tags spans source:otel
+                    // instead of source:undefined. Same value DD's external-
+                    // evaluations API expects in the `tags` array when scoring
+                    // these spans (docs/dd-otel.md).
+                    ["source"]                 = "otel",
                 }))
             .WithTracing(t => t
                 // Library auto-instrumentations: HTTP server span (trace root),
