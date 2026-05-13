@@ -1,3 +1,67 @@
+[2026-05-12] Delete autoinstr experiment; library auto-instrumentation is what we wanted (af5623b)
+
+  User-initiated terminology clarification resolved several days of
+  wrong-direction work. The conflated term "autoinstrumentation"
+  actually covers two very different mechanisms:
+
+    Auto-INJECTION (what dotnet-otel-poc-autoinstr/ tried):
+      CLR profiler hooks the .NET runtime via CORECLR_PROFILER_* env
+      vars, rewrites IL at startup. Requires init container + shared
+      volume + arch-matched native .so. Production conflict with
+      DD's admission-controller .NET tracer (also a CLR profiler).
+
+    Library auto-INSTRUMENTATION (what we actually wanted):
+      NuGet packages (OpenTelemetry.Instrumentation.AspNetCore, .Http,
+      …) subscribe to .NET's built-in DiagnosticListener / Activity
+      events and emit OTel spans. Plain managed code, no profiler,
+      no Docker complexity.
+
+  Modern .NET libraries (ASP.NET Core, HttpClient, EF Core, Azure SDK,
+  SqlClient, Npgsql, gRPC, Redis, Kafka, MongoDB) all natively emit
+  OTel-compatible events — the instrumentation packages just subscribe.
+
+  Findings from the auto-injection dead-end (useful reference if anyone
+  ever needs to go back down this path):
+  • Upstream otel/autoinstrumentation-dotnet:latest arm64 image variant
+    is broken — ships only x64 binaries in /autoinstrumentation/.
+    Verified by direct digest inspection of sha256:b481acb...
+    Tracked at https://github.com/open-telemetry/opentelemetry-dotnet-instrumentation/issues/2314
+  • platform: linux/amd64 workaround triggers a second issue: QEMU's
+    Rosetta emulation can't fully run the .NET 10 SDK's MSBuild
+    evaluation inside docker build (MSB4184).
+  • Production K8s would still conflict with DD's CLR profiler injection.
+
+  Changes:
+  - git rm -r experiments/dotnet-otel-poc-autoinstr/ (8 files: csproj,
+    Program.cs, Dockerfile, docker-compose.yml, entrypoint.sh,
+    .dockerignore, .env.example, README.md, wwwroot/index.html)
+  - Makefile: removed otel-poc-autoinstr / run-otel-poc-autoinstr /
+    stop-otel-poc-autoinstr / inspect-otel-poc-autoinstr (~60 lines)
+  - experiments/dotnet-otel-poc/InfraAdvisor.OtelPoc.csproj: re-added
+    OpenTelemetry.Instrumentation.Http 1.15.1
+  - experiments/dotnet-otel-poc/Program.cs: added
+    .AddHttpClientInstrumentation() to WithTracing so outbound HTTP
+    spans (including the Azure OpenAI REST POST that sits inside
+    M.E.AI's chat span) are captured. Comment block enumerates what
+    each instrumentation provides.
+
+  Final POC trace structure (M.E.AI-only POC, now with HttpClient):
+    HTTP server span                  ← AspNetCore instrumentation
+    └── chat <model>                  ← M.E.AI UseOpenTelemetry()
+        └── POST <azure-openai-url>   ← HttpClient instrumentation
+        └── execute_tool <name>       ← M.E.AI UseFunctionInvocation()
+            └── POST <azure-openai-url> (subsequent LLM call after tool)
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors
+  [x] git rm -r succeeded; all 8 autoinstr files deleted
+  [x] Makefile help shows 6 remaining targets (otel-poc, run-otel-poc,
+      build-otel-poc, start/stop/logs-otel-collector) — no autoinstr
+  [~] Live verification of M.E.AI-only POC trace tree with HttpClient
+      instrumentation: pending `make otel-poc` re-run. Expected:
+      chat + execute_tool spans in DD LLMObs with HTTP spans visible
+      around the Azure OpenAI calls.
+
 [2026-05-12] Fix profiler attach in auto-instrumentation POC (a497669, b366f04, 36ef847, 54241f2)
 
   Live-run debug session after the Docker-based auto-instrumentation
