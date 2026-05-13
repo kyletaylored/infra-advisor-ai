@@ -86,7 +86,8 @@ builder.Services.AddSingleton<IChatClient>(sp =>
 // internally, registered in AddSource below.
 //
 // MemoryProvider attached here validates the AIContextProvider hook API.
-const string AgentName = "infra-advisor-poc-agent";
+const string AgentName       = "infra-advisor-poc-agent";
+const string AgentSourceName = "infra-advisor-maf-poc";  // ActivitySource for MAF agent spans
 
 builder.Services.AddSingleton<MemoryProvider>();
 builder.Services.AddSingleton<SessionStore>();
@@ -110,7 +111,9 @@ builder.Services.AddSingleton<AIAgent>(sp =>
         AIContextProviders = [memory],
     })
         .AsBuilder()
-        .UseOpenTelemetry(configure: cfg => cfg.EnableSensitiveData = true)
+        // Pin sourceName so we know exactly which ActivitySource the agent
+        // emits on — register that same name in AddSource below.
+        .UseOpenTelemetry(sourceName: AgentSourceName, configure: cfg => cfg.EnableSensitiveData = true)
         .Build();
 });
 
@@ -123,8 +126,13 @@ builder.Services.AddOpenTelemetry()
     .WithTracing(t => t
         .AddAspNetCoreInstrumentation()
         .AddHttpClientInstrumentation()
-        .AddSource("Experimental.Microsoft.Extensions.AI")  // chat + execute_tool
-        .AddSource("Microsoft.Agents.AI")                   // invoke_agent
+        .AddSource("Experimental.Microsoft.Extensions.AI")  // chat + execute_tool spans (M.E.AI internal default)
+        .AddSource(AgentSourceName)                         // MAF agent spans — explicit sourceName passed above
+        // Belt-and-suspenders: MAF's internal default source name isn't
+        // documented for 1.5.0. Add a few candidates so the SDK captures
+        // spans no matter which one MAF actually emits on.
+        .AddSource("Microsoft.Agents.AI")
+        .AddSource("Experimental.Microsoft.Agents.AI")
         .AddOtlpExporter(o =>
         {
             o.Endpoint = new Uri($"{otlpEndpoint.TrimEnd('/')}/v1/traces");
