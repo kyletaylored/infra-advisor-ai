@@ -1,3 +1,75 @@
+[2026-05-14] Observability gap fixes: Serilog + Npgsql OTel + MCP diagnostic
+  Three related .NET observability gaps surfaced during live testing:
+    (a) logs not correlated with traces — plain-text console output,
+        DD agent couldn't parse dd.trace_id / dd.span_id
+    (b) DB-monitoring (DBM) propagation absent — Npgsql wasn't in the OTel
+        pipeline, so the DD .NET tracer's auto-instrumented Npgsql spans
+        had nothing to anchor SQL-comment trace propagation against
+    (c) MCP server still not appearing in trace tree post-deploy —
+        the .WithTracing fix shipped but live trace shows no MCP spans;
+        adding a startup diagnostic line so we can confirm sources are
+        actually registered when the pipeline initialises
+
+  Files changed:
+    services/agent-api-dotnet/InfraAdvisor.AgentApi.csproj
+      + Serilog.AspNetCore 9.0.0
+      + Serilog.Formatting.Compact 3.0.0
+      (Npgsql.OpenTelemetry 9.0.3 was already present from earlier work —
+       just wasn't being used; this fix wires .AddNpgsql() into the
+       TracerProviderBuilder so it actually emits spans.)
+
+    services/mcp-server-dotnet/InfraAdvisor.McpServer.csproj
+      + Serilog.AspNetCore 9.0.0
+      + Serilog.Formatting.Compact 3.0.0
+
+    services/agent-api-dotnet/Observability/TelemetrySetup.cs
+      + using Npgsql; using Serilog; using Serilog.Formatting.Compact;
+      + .AddNpgsql() in WithTracing — fires Npgsql ActivitySource spans;
+        the DD .NET tracer (admission-injected dotnet-lib v3) handles the
+        SQL-comment injection for DBM via DD_DBM_PROPAGATION_MODE=full
+      - builder.Logging.ClearProviders() / .AddConsole(simple)
+      + builder.Host.UseSerilog(..., new RenderedCompactJsonFormatter()).
+        DD docs Serilog tab confirms no enricher needed app-side — the
+        DD tracer auto-injects dd.trace_id / dd.span_id into LogContext
+        when DD_LOGS_INJECTION=true (already set in configmap).
+      + One-line startup log printing the AddSource'd source list so a
+        grep against pod logs confirms the pipeline initialised correctly.
+
+    services/mcp-server-dotnet/Observability/TelemetrySetup.cs
+      Same Serilog + startup-diagnostic pair (no DB on this service).
+
+  Why no Datadog.Trace package added: the DD .NET tracer is already
+  injected into both pods via the cluster admission controller's
+  `admission.datadoghq.com/dotnet-lib.version: v3` annotation. Adding
+  the NuGet package on top would double-instrument. DD docs explicitly
+  cover this auto-instrumentation path — manual injection only needed
+  for environments without the admission controller.
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors on both services
+  [x] Npgsql.OpenTelemetry 9.0.3 + Npgsql 9.0.3 are version-aligned
+  [x] Serilog.AspNetCore 9.0 is the current stable matching net10 host
+  [x] RenderedCompactJsonFormatter outputs one JSON object per line
+      (DD csharp log parser default expected format)
+
+  [~] Live post-deploy verification:
+      (a) Log → trace correlation: open one /query in DD APM traces,
+          confirm the "Logs" tab at the bottom shows the matching
+          structured log lines for that trace_id (vs being blank)
+      (b) DBM: open DD UI → Database Monitoring → infra-advisor-postgres
+          → Sample Queries — confirm SELECT/UPDATE/INSERT from agent-api-
+          dotnet show a "Traces" join with the originating /query trace
+      (c) MCP propagation: kubectl logs deploy/mcp-server-dotnet -n
+          infra-advisor | grep "\[otel\]" — should print the source list
+          including "Experimental.ModelContextProtocol". After confirming,
+          run a fresh /query and look for the mcp-server-dotnet POST /mcp
+          span as a child of the agent-api-dotnet execute_tool span.
+      (d) If MCP still missing after (c): the issue is downstream of
+          source registration — either ModelContextProtocol 1.3.0 doesn't
+          emit spans on the streamable-HTTP path, or AspNetCore is
+          excluding MapMcp's endpoint. Capture pod logs from mcp-server
+          during a /query and inspect for any activity-related errors.
+
 [2026-05-14] Dependency wave 1: patch + minor bumps (6de6b15 / 4167c04 / c4dc481 / 370dea9 / 2e2a083)
   Five focused commits, one per project, refreshing all patch and minor
   versions across the codebase. Wave 2 (major-version bumps:
