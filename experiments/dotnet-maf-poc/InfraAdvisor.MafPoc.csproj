@@ -10,14 +10,14 @@
     <!-- Microsoft Agents Framework (MAF) — agent/session abstractions
          built on Microsoft.Extensions.AI. ChatClientAgent, AgentSession,
          AIContextProvider, .UseOpenTelemetry() on the agent builder. -->
-    <PackageReference Include="Microsoft.Agents.AI"        Version="1.5.0" />
-    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.5.0" />
+    <PackageReference Include="Microsoft.Agents.AI"        Version="1.6.0" />
+    <PackageReference Include="Microsoft.Agents.AI.OpenAI" Version="1.6.0" />
 
     <!-- Microsoft.Extensions.AI — IChatClient pipeline that MAF sits on
          top of. UseFunctionInvocation + UseOpenTelemetry chained on the
          chat client emit chat + execute_tool spans. -->
-    <PackageReference Include="Microsoft.Extensions.AI"        Version="10.5.2" />
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.5.2" />
+    <PackageReference Include="Microsoft.Extensions.AI"        Version="10.6.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.6.0" />
 
     <!-- LLM provider SDK -->
     <PackageReference Include="Azure.AI.OpenAI" Version="2.9.0-beta.1" />

@@ -13,8 +13,8 @@
          DD LLMObs OTLP ingestion recognises as `llm` spans automatically.
          .UseFunctionInvocation() emits `execute_tool` spans → `tool` kind.
          10.5.2 dropped the .OpenAI preview suffix — finally a stable release. -->
-    <PackageReference Include="Microsoft.Extensions.AI" Version="10.5.2" />
-    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.5.2" />
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.6.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.6.0" />
 
     <!-- Azure OpenAI SDK. 2.x is still beta-only (no stable yet); 2.9.0-beta.1
          is the most current and pairs cleanly with M.E.AI.OpenAI 10.5.2. -->
