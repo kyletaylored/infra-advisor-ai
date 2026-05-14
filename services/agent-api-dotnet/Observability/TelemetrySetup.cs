@@ -1,9 +1,13 @@
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Hosting;
+using Npgsql;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
+using Serilog;
+using Serilog.Formatting.Compact;
 
 namespace InfraAdvisor.AgentApi.Observability;
 
@@ -54,9 +58,13 @@ public static class TelemetrySetup
                 }))
             .WithTracing(t => t
                 // Library auto-instrumentations: HTTP server span (trace root),
-                // outbound HTTP client spans (Azure OpenAI REST POST + MCP HTTP).
+                // outbound HTTP client spans (Azure OpenAI REST POST + MCP HTTP),
+                // Npgsql command spans (every SQL query — gives DBM something
+                // to anchor SQL-comment trace propagation against when the
+                // DD .NET tracer's auto-instrumentation runs alongside).
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
+                .AddNpgsql()
 
                 // GenAI span sources.
                 .AddSource("Experimental.Microsoft.Extensions.AI")
@@ -85,10 +93,23 @@ public static class TelemetrySetup
                     otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
                 }));
 
-        // DD_LOGS_INJECTION=true causes the DD SDK to inject
-        // dd.trace_id/dd.span_id into ILogger structured properties for
-        // log-trace correlation.
-        builder.Logging.ClearProviders();
-        builder.Logging.AddConsole(opts => opts.FormatterName = "simple");
+        // Structured JSON logs via Serilog. The DD .NET tracer
+        // (admission-injected via dotnet-lib.version: v3) auto-injects
+        // dd.trace_id / dd.span_id into the LogContext when
+        // DD_LOGS_INJECTION=true is set on the pod — no enricher needed
+        // app-side. RenderedCompactJsonFormatter outputs one JSON object
+        // per line, which DD Agent's csharp log source parses cleanly.
+        builder.Host.UseSerilog((ctx, services, lc) => lc
+            .Enrich.FromLogContext()
+            .Enrich.WithProperty("service.name", "infra-advisor-agent-api-dotnet")
+            .WriteTo.Console(new RenderedCompactJsonFormatter()));
+
+        // One-line startup confirmation. Grep pod logs for "[otel]" if traces
+        // aren't appearing in DD — confirms the pipeline initialized with the
+        // expected source list.
+        Console.WriteLine(
+            "[otel] tracing sources: AspNetCore, Http, Npgsql, " +
+            "Experimental.Microsoft.Extensions.AI, " +
+            "Experimental.ModelContextProtocol, " + ActivitySourceName);
     }
 }

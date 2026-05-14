@@ -37,5 +37,14 @@
     <PackageReference Include="Confluent.Kafka" Version="2.14.0" />
     <PackageReference Include="Npgsql" Version="9.0.3" />
     <PackageReference Include="Npgsql.OpenTelemetry" Version="9.0.3" />
+
+    <!-- Serilog: structured JSON logs so the DD Agent's log collector parses
+         them with dd.trace_id/dd.span_id properties injected by the DD .NET
+         tracer (DD_LOGS_INJECTION=true). DD docs Serilog tab:
+         https://docs.datadoghq.com/tracing/other_telemetry/connect_logs_and_traces/dotnet?tab=serilog
+         No enricher needed — DD tracer's auto-instrumentation handles
+         injection when DD_LOGS_INJECTION is true. -->
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+    <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
   </ItemGroup>
 </Project>

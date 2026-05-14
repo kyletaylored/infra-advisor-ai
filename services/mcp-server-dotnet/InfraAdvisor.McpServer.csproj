@@ -24,6 +24,11 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
     <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+
+    <!-- Serilog: same pattern as agent-api-dotnet — structured JSON logs +
+         DD tracer auto-injects dd.trace_id/dd.span_id properties. -->
+    <PackageReference Include="Serilog.AspNetCore" Version="9.0.0" />
+    <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
   </ItemGroup>
   <ItemGroup>
     <!-- Embed Scriban templates as embedded resources -->

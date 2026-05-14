@@ -1,9 +1,12 @@
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.Hosting;
 using OpenTelemetry;
 using OpenTelemetry.Exporter;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
+using Serilog;
+using Serilog.Formatting.Compact;
 
 namespace InfraAdvisor.McpServer.Observability;
 
@@ -65,7 +68,21 @@ public static class TelemetrySetup
                     otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
                 }));
 
-        builder.Logging.ClearProviders();
-        builder.Logging.AddConsole();
+        // Structured JSON logs via Serilog. DD .NET tracer auto-injects
+        // dd.trace_id / dd.span_id via DD_LOGS_INJECTION=true; no enricher
+        // needed app-side. RenderedCompactJsonFormatter outputs one JSON
+        // object per line for the DD Agent's csharp log parser.
+        builder.Host.UseSerilog((ctx, services, lc) => lc
+            .Enrich.FromLogContext()
+            .Enrich.WithProperty("service.name", "infra-advisor-mcp-server-dotnet")
+            .WriteTo.Console(new RenderedCompactJsonFormatter()));
+
+        // One-line startup confirmation of which AddSource'd activity
+        // sources are wired. If the MCP server isn't appearing in DD trace
+        // trees post-deploy, grep pod logs for this line to confirm the
+        // pipeline is actually running with the right config.
+        Console.WriteLine(
+            "[otel] tracing sources: AspNetCore, Http, Experimental.ModelContextProtocol, " +
+            ActivitySourceName);
     }
 }
