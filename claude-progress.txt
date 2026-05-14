@@ -1,3 +1,70 @@
+[2026-05-14] Wire mcp-server-dotnet into the OTel trace tree
+  Real bug surfaced during live verification of the LLMObs feature pack:
+  mcp-server-dotnet emitted ZERO trace spans because its TelemetrySetup
+  only configured .WithMetrics — no .WithTracing block at all. The stale
+  comment ("DD SDK handles export to port 8126") was an unverified
+  assumption from earlier auto-instrumentation experiments; the DD
+  admission-controller dotnet-lib injection does NOT bridge to the
+  collector-side OTel pipeline the rest of the cluster uses, so the MCP
+  service was missing from every trace tree.
+
+  Fix shape (mirrors the agent-api-dotnet setup):
+    services/mcp-server-dotnet/InfraAdvisor.McpServer.csproj
+      ~ ModelContextProtocol.AspNetCore 0.2.0-preview.3 → 1.3.0
+        (first stable; ships Experimental.ModelContextProtocol
+        ActivitySource + traceparent propagation through MCP message
+        metadata, which is what lets the two services share a trace_id)
+      ~ OpenTelemetry 1.10.x → 1.15.x (clears the NU1902 advisories
+        carried since the original mcp-server-dotnet scaffold)
+
+    services/mcp-server-dotnet/Observability/TelemetrySetup.cs
+      + .WithTracing(...) block:
+          AddAspNetCoreInstrumentation — server root spans for incoming
+            POST /mcp requests carrying the agent's traceparent
+          AddHttpClientInstrumentation — outbound to FHWA / EPA / EIA /
+            SAM.gov / Tavily / Azure AI Search / etc. (each tool's
+            data fetch becomes its own span)
+          AddSource("Experimental.ModelContextProtocol") — SDK-emitted
+            MCP request + tool-execution spans (the link layer)
+          AddSource(ActivitySourceName) — manual spans inside tools
+          AlwaysOnSampler + OtlpExporter to the same datadog-agent
+          collector endpoint agent-api-dotnet uses
+      + source=otel resource attribute (parity with agent-api-dotnet so
+        DD UI shows source:otel on both)
+
+    services/agent-api-dotnet/Observability/TelemetrySetup.cs
+      + AddSource("Experimental.ModelContextProtocol") — captures the
+        CLIENT-side MCP spans (outbound tool invocations from the
+        ModelContextProtocol 1.3.0 client we already use). Without this,
+        the client-side span of each tool call was being dropped, so
+        even after the server fix the trace tree would have a gap
+        between execute_tool (M.E.AI) and the server's MCP request span.
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors for both services
+  [x] ModelContextProtocol.AspNetCore 1.3.0 + ModelContextProtocol 1.3.0
+      version-aligned across server + client (same major)
+  [x] Both services AddSource the same "Experimental.ModelContextProtocol"
+      name so server-emitted child spans correctly attach to client-
+      emitted parent spans via traceparent
+
+  [~] Live: after rolling both pods (agent-api-dotnet for the prior
+      LLMObs feature pack at bf96321, mcp-server-dotnet for this fix),
+      a single /query trace should show:
+        agent-api-dotnet : POST /query (workflow)
+          ├─ classify_domain (task)
+          ├─ retrieve_best_practices (retrieval)
+          │   └─ embeddings (embedding)
+          └─ invoke_agent (agent)
+              └─ chat (llm)
+                  ├─ HttpClient → Azure OpenAI
+                  └─ execute_tool (tool)
+                      └─ HttpClient → mcp-server-dotnet
+                          └─ mcp-server-dotnet : POST /mcp (workflow)
+                              └─ Experimental.ModelContextProtocol span
+                                  └─ HttpClient → upstream data source
+      Eight distinct service+span-kind combinations in one trace_id.
+
 [2026-05-13] LLMObs feature pack: prompt tracking + external evals + biz metrics
   Three independent but related features that together unlock the rest of
   DD LLM Observability's measurement surface (prompt versioning + A/B,
