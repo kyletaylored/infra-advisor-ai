@@ -15,8 +15,9 @@
     <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.3.0" />
     <PackageReference Include="Azure.Search.Documents" Version="11.7.0" />
     <PackageReference Include="Azure.AI.OpenAI" Version="2.2.0-beta.4" />
-    <!-- 7.1.0 resolves all Scriban 5.x critical/high CVEs -->
-    <PackageReference Include="Scriban" Version="7.1.0" />
+    <!-- 7.2.0; 7.1.0 was the original CVE-clearing pin (Scriban 5.x CVEs).
+         7.2 is a minor with bug fixes — no surface changes. -->
+    <PackageReference Include="Scriban" Version="7.2.0" />
     <!-- 1.15.x clears NU1902 advisories that 1.10.x carried (matches the
          agent-api-dotnet bump from the MAF migration). -->
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
