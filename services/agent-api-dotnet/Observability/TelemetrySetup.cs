@@ -60,6 +60,10 @@ public static class TelemetrySetup
 
                 // GenAI span sources.
                 .AddSource("Experimental.Microsoft.Extensions.AI")
+                // MCP client-side spans (outbound tool calls into
+                // mcp-server-dotnet). Same source name the server emits on,
+                // so the two services share one trace tree end-to-end.
+                .AddSource("Experimental.ModelContextProtocol")
                 .AddSource(ActivitySourceName)
 
                 // AlwaysOn — keep the agent loop's spans regardless of the

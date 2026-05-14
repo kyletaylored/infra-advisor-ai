@@ -8,15 +8,21 @@
     <RootNamespace>InfraAdvisor.McpServer</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="0.2.0-preview.3" />
+    <!-- 1.3.0 (May 2026) is the first stable; ships the
+         "Experimental.ModelContextProtocol" ActivitySource the OTel pipeline
+         AddSource's below, plus traceparent propagation through MCP message
+         metadata for end-to-end distributed tracing with the .NET client. -->
+    <PackageReference Include="ModelContextProtocol.AspNetCore" Version="1.3.0" />
     <PackageReference Include="Azure.Search.Documents" Version="11.7.0" />
     <PackageReference Include="Azure.AI.OpenAI" Version="2.2.0-beta.4" />
     <!-- 7.1.0 resolves all Scriban 5.x critical/high CVEs -->
     <PackageReference Include="Scriban" Version="7.1.0" />
-    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.10.0" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.10.0" />
-    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.10.0" />
-    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.10.0" />
+    <!-- 1.15.x clears NU1902 advisories that 1.10.x carried (matches the
+         agent-api-dotnet bump from the MAF migration). -->
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
   </ItemGroup>
   <ItemGroup>
     <!-- Embed Scriban templates as embedded resources -->
