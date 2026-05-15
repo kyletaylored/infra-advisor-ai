@@ -10,8 +10,14 @@ TelemetrySetup.Configure(builder);
 builder.Services.AddHttpClient();
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
+// Stateless = true makes each MCP HTTP request independent (no Mcp-Session-Id
+// tracking server-side). Required for our multi-replica deployment: the K8s
+// Service round-robins requests, so a session created on pod A and a follow-up
+// on pod B would 404 without this. Trade-off: server cannot push unsolicited
+// messages and the /sse endpoint is disabled — fine, we use request/response
+// JSON-RPC only.
 builder.Services.AddMcpServer()
-    .WithHttpTransport()
+    .WithHttpTransport(options => options.Stateless = true)
     .WithTools<BridgeConditionTool>()
     .WithTools<DisasterHistoryTool>()
     .WithTools<EnergyInfrastructureTool>()
