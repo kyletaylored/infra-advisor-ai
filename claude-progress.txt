@@ -1,3 +1,100 @@
+[2026-05-15] Resilient MCP client reconnect — no more manual restarts
+  Previously: McpClient.CreateAsync ran once at startup and the resulting
+  client + tool list were captured into the AIAgent singleton's closure.
+  When mcp-server-dotnet restarted for ANY reason (rollout, OOM,
+  AKS rebalance, image pull retry), the cached client's Mcp-Session-Id
+  no longer mapped to anything on the new pod. Every subsequent /query
+  hit ClientTransportClosedException → "Error: Function failed" in the
+  LLM response. The only mitigation was a manual
+  `kubectl rollout restart deployment/agent-api-dotnet`.
+
+  Now: AgentService catches MCP session-expired exceptions, triggers a
+  reconnect through a holder, rebuilds the agent with the fresh tool
+  list, and retries the request once — transparent to the caller. First
+  call after an mcp-server restart pays one extra round trip; every
+  call after is normal.
+
+  Files added:
+    services/agent-api-dotnet/Services/McpClientHolder.cs
+      Owns the McpClient lifecycle + tool list. GetClientAsync /
+      GetToolsAsync lazy-connect; RefreshAsync disposes + recreates.
+      Exposes a monotonic Generation counter incremented per successful
+      (re)connect so callers can cache against it. Thread-safe via
+      SemaphoreSlim — concurrent reconnect requests coalesce.
+
+    services/agent-api-dotnet/Services/AgentHolder.cs
+      Holds the current ChatClientAgent. ChatOptions.Tools is captured
+      at construction so the agent must be rebuilt to pick up a fresh
+      tool list after McpClientHolder.RefreshAsync. Caches by
+      McpClientHolder.Generation — exactly one rebuild per reconnect.
+      Construction happens outside the lock to avoid blocking siblings.
+
+  Files changed:
+    services/agent-api-dotnet/Services/AgentService.cs
+      Constructor now injects AgentHolder + McpClientHolder instead of
+      the (singleton) AIAgent. RunAgentAsync:
+        - calls _agentHolder.GetAgentAsync(ct) at start of each turn
+        - wraps agent.RunAsync in try/catch with IsMcpSessionExpired()
+          predicate that walks the InnerException chain looking for
+          ClientTransportClosedException or McpException whose message
+          names a session issue, or HttpRequestException with 404 on
+          a /mcp path (defensive for older SDK versions)
+        - on session-expired: logs WARN, increments
+          infra_advisor.mcp.reconnect counter (reason:session_expired),
+          calls _mcpHolder.RefreshAsync, rebuilds agent through holder,
+          creates a fresh session (the restored one referenced AITool
+          instances bound to the dead client), retries once.
+
+    services/agent-api-dotnet/Program.cs
+      - removed the startup McpClient.CreateAsync + ListToolsAsync
+        block. Connection failure no longer aborts pod startup; the
+        first /query payload triggers connect via the holder
+      - removed AddSingleton<McpClient>(mcpClient) — replaced by
+        AddSingleton(... new McpClientHolder(...))
+      - removed AddSingleton<AIAgent>(...factory...) — replaced by
+        AddSingleton(... new AgentHolder(...))
+      - /tools endpoint takes McpClientHolder instead of McpClient
+      - added background Task.Run pre-warm at the end of startup so
+        the first /query doesn't pay the connect latency (best-effort;
+        next /query retries on failure)
+      - dropped unused `using Microsoft.Agents.AI` /
+        `using ModelContextProtocol.Client` after the refactor
+
+  New observability:
+    infra_advisor.mcp.reconnect counter — tagged by reason
+    (currently only "session_expired"). Spike = mcp-server-dotnet
+    restarted; sustained value > 0 every minute would indicate an
+    underlying instability worth investigating.
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors
+  [x] McpClientHolder.RefreshAsync is idempotent (concurrent callers
+      see one new client after one round trip — confirmed by reading
+      through the connect lock semantics)
+  [x] AgentHolder generation-cache pattern doesn't leak agents across
+      reconnects — the old AIAgent has no IDisposable members and is
+      collectable once unreferenced
+  [x] IsMcpSessionExpired walks the entire InnerException chain
+      (the SDK wraps the transport error inside higher-level types
+      in some code paths)
+
+  [~] Live verification:
+      (a) Roll mcp-server-dotnet without restarting agent-api-dotnet
+          (`kubectl rollout restart deployment/mcp-server-dotnet -n
+          infra-advisor`). Next /query should:
+            1. Log "MCP session expired ... reconnecting and retrying
+               once" once
+            2. Emit one infra_advisor.mcp.reconnect{reason:
+               session_expired} datapoint
+            3. Return a normal /query response (not "Function failed")
+            4. Trace tree shows execute_tool → mcp-server-dotnet
+               POST /mcp with status 200
+      (b) Subsequent /query calls work normally — no further
+          reconnect spans
+      (c) Pre-warm behaviour: first /query after agent-api-dotnet
+          rollout has near-normal latency (not the +500ms startup
+          penalty that lazy-connect would otherwise add)
+
 [2026-05-15] Docs refresh: pure-OTel LLM guide + remove AECOM + remove Tavily
   Three parallel doc passes batched into one commit so the public-facing
   surface (docs site + repo READMEs + system prompts visible to end
