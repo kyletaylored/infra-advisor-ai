@@ -71,6 +71,27 @@ spec:
                 - context: resource
                   statements:
                     - set(attributes["ml_app"], attributes["service.name"])
+            # DBM ↔ APM correlation for OpenTelemetry-instrumented services.
+            # Replaces the DD .NET tracer's SQL-comment injection (which we
+            # removed from agent-api-dotnet to unify trace_ids). DD's DBM
+            # ingest correlates traces with pg_stat_activity samples by
+            # statement + timing window when span.type=sql is present on the
+            # OTel-emitted Npgsql spans. Scoped to spans with db.system so
+            # non-DB spans aren't mis-tagged. Per DD docs:
+            # https://docs.datadoghq.com/opentelemetry/correlate/dbm_and_traces/
+            attributes/dbm:
+              # Match any span carrying a db.system attribute (regexp on any
+              # value). Npgsql.OpenTelemetry emits "postgres" today; OTel
+              # semconv canonical is "postgresql" — regex handles both.
+              include:
+                match_type: regexp
+                attributes:
+                  - key: db.system
+                    value: ".+"
+              actions:
+                - key: span.type
+                  value: sql
+                  action: insert
           connectors:
             datadog/connector:
               traces:
@@ -78,7 +99,7 @@ spec:
             pipelines:
               traces:
                 receivers: [otlp]
-                processors: [infraattributes, transform/llmobs]
+                processors: [infraattributes, transform/llmobs, attributes/dbm]
                 exporters: [datadog, datadog/connector]
               metrics:
                 receivers: [otlp, datadog/connector, prometheus]

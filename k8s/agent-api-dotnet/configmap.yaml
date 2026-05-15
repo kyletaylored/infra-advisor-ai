@@ -6,23 +6,21 @@ metadata:
   labels:
     app: agent-api-dotnet
 data:
+  # Unified service tagging — DD agent reads these for container metadata. They
+  # do not require the DD .NET tracer to be present; they're equivalent to (and
+  # redundant with) the OTEL_RESOURCE_ATTRIBUTES below, but DD's autodiscovery
+  # uses both paths.
   DD_ENV: "dev"
   DD_SERVICE: "infra-advisor-agent-api-dotnet"
   DD_VERSION: "latest"
-  DD_AGENT_HOST: "datadog-agent.datadog.svc.cluster.local"
-  DD_TRACE_AGENT_PORT: "8126"
-  DD_DOGSTATSD_PORT: "8125"
-  DD_TRACE_OTEL_ENABLED: "true"
-  DD_LOGS_INJECTION: "true"
-  DD_RUNTIME_METRICS_ENABLED: "true"
-  DD_DATA_STREAMS_ENABLED: "true"
-  DD_CODE_ORIGIN_FOR_SPANS_ENABLED: "true"
-  DD_DBM_PROPAGATION_MODE: "full"
-  DD_LLMOBS_ENABLED: "1"
-  DD_LLMOBS_ML_APP: "infra-advisor"
   DD_SITE: "us3.datadoghq.com"
+
+  # OpenTelemetry SDK + library auto-instrumentations are the sole source of
+  # traces/metrics/logs on this service. DD .NET tracer is NOT injected (see
+  # deployment.yaml). All DD-tracer-specific env vars (DD_TRACE_*,
+  # DD_DBM_PROPAGATION_MODE, DD_LLMOBS_*, DD_LOGS_INJECTION,
+  # DD_CODE_ORIGIN_FOR_SPANS_ENABLED) are removed — they have no consumer.
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://datadog-agent.datadog.svc.cluster.local:4318"
-  OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "https://otlp.us3.datadoghq.com"
   OTEL_SERVICE_NAME: "infra-advisor-agent-api-dotnet"
   OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=dev,service.version=latest,service.name=infra-advisor-agent-api-dotnet"
   KAFKA_BOOTSTRAP_SERVERS: "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092"

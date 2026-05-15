@@ -6,18 +6,15 @@ metadata:
   labels:
     app: mcp-server-dotnet
 data:
+  # Unified service tagging for DD agent container metadata (no DD .NET tracer
+  # in this pod — see deployment.yaml).
   DD_ENV: "dev"
   DD_SERVICE: "infra-advisor-mcp-server-dotnet"
   DD_VERSION: "latest"
-  DD_AGENT_HOST: "datadog-agent.datadog.svc.cluster.local"
-  DD_TRACE_AGENT_PORT: "8126"
-  DD_DOGSTATSD_PORT: "8125"
-  DD_TRACE_OTEL_ENABLED: "true"
-  DD_LOGS_INJECTION: "true"
-  DD_RUNTIME_METRICS_ENABLED: "true"
-  DD_CODE_ORIGIN_FOR_SPANS_ENABLED: "true"
-  DD_DATA_STREAMS_ENABLED: "true"
-  DD_DBM_PROPAGATION_MODE: "full"
+  DD_SITE: "us3.datadoghq.com"
+
+  # OpenTelemetry SDK is the sole telemetry source — all DD_TRACE_* env vars
+  # are removed; no consumer in this pod.
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://datadog-agent.datadog.svc.cluster.local:4318"
   OTEL_SERVICE_NAME: "infra-advisor-mcp-server-dotnet"
   OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=dev,service.version=latest,service.name=infra-advisor-mcp-server-dotnet"

@@ -21,8 +21,16 @@ spec:
         tags.datadoghq.com/service: infra-advisor-agent-api-dotnet
         tags.datadoghq.com/version: latest
       annotations:
+        # DD agent's log collector parses csharp source — picks up our Serilog
+        # RenderedCompactJsonFormatter output and correlates with traces via the
+        # OTel @tr/@sp fields.
         ad.datadoghq.com/agent-api-dotnet.logs: "[{\"source\":\"csharp\",\"service\":\"infra-advisor-agent-api-dotnet\"}]"
-        admission.datadoghq.com/dotnet-lib.version: v3
+        # DD .NET tracer admission injection (admission.datadoghq.com/dotnet-lib.version)
+        # is deliberately omitted. This service is 100% OpenTelemetry-instrumented;
+        # the DD tracer ran in parallel and split trace_ids (it reads RUM's legacy
+        # x-datadog-trace-id header while OTel SDK uses W3C traceparent — they
+        # diverged on every request). Removing it unifies the trace tree and
+        # matches the project's stated goal: demonstrate OTel-only LLMObs on .NET.
     spec:
       imagePullSecrets:
         - name: ghcr-pull-secret
