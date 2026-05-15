@@ -22,7 +22,7 @@ All 11 tools are implemented identically to the Python version:
 | `search_project_knowledge` | Azure AI Search vector + keyword search |
 | `get_procurement_opportunities` | SAM.gov contract opportunities |
 | `get_contract_awards` | USASpending.gov contract awards |
-| `search_web_procurement` | Tavily web search for procurement context |
+| `search_web_procurement` | Azure OpenAI `web_search_preview` for state/local procurement context |
 | `draft_document` | Generate infrastructure documents from Scriban templates |
 
 ## Document templates
@@ -45,7 +45,7 @@ Templates live in `services/mcp-server-dotnet/Templates/` and are converted from
 | Span | Instrumented by |
 |------|----------------|
 | HTTP requests (`POST /mcp`, `GET /health`) | `AddAspNetCoreInstrumentation` (auto) |
-| Outbound HTTP (government APIs, Tavily) | `AddHttpClientInstrumentation` (auto) |
+| Outbound HTTP (government APIs, Azure OpenAI Responses) | `AddHttpClientInstrumentation` (auto) |
 | Azure AI Search calls | `AddHttpClientInstrumentation` (auto, via REST) |
 
 **Service name:** `infratools-mcp-dotnet`
@@ -90,4 +90,5 @@ Create with `make create-mcp-server-dotnet-secret` (or `make create-secrets`):
 | `EIA_API_KEY` | U.S. EIA Open Data API key |
 | `ERCOT_API_KEY` | ERCOT API key (optional — tool skips if unset) |
 | `SAMGOV_API_KEY` | SAM.gov API key (optional) |
-| `TAVILY_API_KEY` | Tavily search API key (optional) |
+
+The `search_web_procurement` tool uses Azure OpenAI's `web_search_preview` tool — same `AZURE_OPENAI_API_KEY` / `AZURE_OPENAI_ENDPOINT` listed above; no separate vendor key.

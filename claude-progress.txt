@@ -1,3 +1,95 @@
+[2026-05-15] Docs refresh: pure-OTel LLM guide + remove AECOM + remove Tavily
+  Three parallel doc passes batched into one commit so the public-facing
+  surface (docs site + repo READMEs + system prompts visible to end
+  users) lines up with the current production architecture.
+
+  (1) docs/src/content/docs/observability/llm-observability-dotnet.md
+      Rewrite the AI engineering guide to reflect the pure-OTel
+      architecture (no DD .NET tracer, no admission injection). New /
+      updated sections:
+        § 1 Why this exists (Aside callout explaining "why pure OTel")
+        § 2 Mental model (3 prerequisites: GenAI semconv, ml_app, source=otel)
+        § 3 Trace anatomy (8 span kinds, single trace_id, RUM→backend→MCP)
+        § 4 Feature catalog (A-H: span kinds / prompt tracking /
+            external evals / annotations / business metrics / managed
+            evals / datasets / frustration detection)
+        § 5 DBM ↔ APM correlation via attribute-based path (the OTel
+            equivalent of DD_DBM_PROPAGATION_MODE — span.type=sql
+            processor + Npgsql.OpenTelemetry attrs + DBM ingest)
+        § 6 Log → trace correlation (Serilog @tr/@sp + csharp log
+            source, no DD_LOGS_INJECTION needed)
+        § 7 Common task recipes (add evaluator / counter / OTel to a
+            new service / A/B prompt / conversation drill-down / debug
+            missing evals)
+        § 8 Troubleshooting (every real issue we hit: source:undefined,
+            split trace_id, postgres-IP-not-hostname, MCP missing,
+            MCP 400/404 across replicas, evals not appearing, image
+            pull stuck)
+        § 9 References (DD docs + MAF + OTel + MCP SDK links)
+
+  (2) Tavily removal (~17 references across 11 docs/* files + 1
+      reviewer.md + 1 spec + 1 UI file + 2 source-code comment blocks):
+        docs/src/content/docs/services/mcp-server.md (3)
+        docs/src/content/docs/services/mcp-server-dotnet.md (3)
+        docs/src/content/docs/deployment/prerequisites.md (2)
+        docs/src/content/docs/deployment/index.md (1)
+        docs/src/content/docs/deployment/kubernetes.md (1)
+        docs/src/content/docs/observability/apm.md (2)
+        docs/src/content/docs/observability/dashboards.md (1)
+        docs/src/content/docs/architecture/overview.md (1)
+        docs/src/content/docs/development/testing.md (1)
+        .claude/agents/reviewer.md (1)
+        specs/infraadvisor-prd.md (1)
+        services/ui/src/components/Chat.tsx (1 description string)
+        services/mcp-server/src/tools/web_procurement_search.py (1
+          stale comment block describing the prior two-hop pattern)
+        services/mcp-server-dotnet/Tools/WebProcurementSearchTool.cs (1
+          stale comment block)
+      Replacement language: "Azure OpenAI web_search_preview" or
+      "Azure OpenAI Responses API" where the tool integration is
+      named; "Azure OpenAI" where a service-map node is named.
+
+  (3) AECOM removal (~31 references across 12 files):
+        README.md (2): tagline + suggestion-pool description
+        docs/astro.config.mjs (1): starlight description
+        docs/src/content/docs/index.mdx (2): description + tagline
+        docs/src/content/docs/architecture/data-flow.mdx (1)
+        docs/src/content/docs/services/agent-api.md (1)
+        docs/src/content/docs/services/ui.md (1)
+        services/agent-api/src/main.py (6): suggestions prompt + 4
+          pool-batch prompts + 1 comment
+        services/agent-api/src/agent.py (7): 5 specialist system
+          prompts + router prompt + general specialist
+        services/agent-api-dotnet/Program.cs (2): agent system prompt
+          AECOM lifecycle reference
+        services/agent-api-dotnet/Services/SuggestionService.cs (5):
+          suggestions prompt + 4 pool-batch prompts. Also fixed a
+          string-concat space issue introduced by the substitution.
+        services/agent-api-dotnet/Services/RetrievalService.cs (2):
+          comments referring to the corpus
+        services/ui/src/components/Chat.tsx (1 comment)
+      Replacement: "AEC/O&M (Architecture, Engineering, Construction /
+      Operations & Maintenance)" where the full expansion is used;
+      "infrastructure consulting firm" where the phrase referred to
+      the customer firm type; "AEC/O&M practice areas" where practice
+      areas were enumerated; "infrastructure-focused" / "infrastructure-
+      flavoured" for adjectives.
+
+  Verified:
+  [x] grep -rln -i "aecom" → 0 matches across .md/.mdx/.cs/.py/.ts/
+      .tsx/.yaml/.yml/Makefile/.mjs (excluding claude-progress.txt
+      and build/cache dirs)
+  [x] grep -rln -i "tavily" → 0 matches across same set (excluding
+      .env.example which is permission-blocked from this session)
+  [x] dotnet build -c Release: 0 errors on agent-api-dotnet
+  [x] dotnet build -c Release: 0 errors on mcp-server-dotnet
+  [x] pytest tests/test_web_procurement_search.py: 15/15 pass
+      (already validated in previous commit)
+
+  Pending user action (out of session scope):
+  [ ] Remove TAVILY_API_KEY=... line from .env.example (permission-
+      blocked from Claude's working dir). One-line manual edit.
+
 [2026-05-15] Replace Tavily with Azure OpenAI Responses + web_search_preview
   Third-party Tavily dependency removed from both .NET and Python MCP
   servers. The `search_web_procurement` tool used to do two hops —

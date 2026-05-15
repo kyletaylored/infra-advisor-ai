@@ -3,7 +3,7 @@ using Microsoft.Extensions.AI;
 
 namespace InfraAdvisor.AgentApi.Services;
 
-// In-process vector retrieval over a tiny AECOM best-practices corpus.
+// In-process vector retrieval over a tiny AEC/O&M best-practices corpus.
 //
 // Why in-process: the cluster Redis is plain redis:7-alpine, not Redis-Stack,
 // so vector search isn't available. Standing up a separate vector store for
@@ -119,7 +119,7 @@ public class RetrievalService
     private record SeededDocument(string Title, string Content, float[] Vector);
 }
 
-// AECOM-flavoured best-practices corpus. Short on purpose — enough doc
+// Infrastructure-flavoured best-practices corpus. Short on purpose — enough doc
 // diversity that retrieval picks different items for different question
 // domains, but small enough to seed in <1s on startup.
 internal static class BestPracticesCorpus

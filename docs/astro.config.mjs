@@ -9,7 +9,7 @@ export default defineConfig({
     integrations: [
         starlight({
             title: 'InfraAdvisor AI',
-            description: 'AI-powered infrastructure advisory platform for AECOM consulting firms',
+            description: 'AI-powered infrastructure advisory platform for AEC/O&M consulting firms',
             social: [
                 {
                     icon: 'github',

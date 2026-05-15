@@ -43,7 +43,7 @@ The platform provides **parallel Python and .NET reasoning stacks** (Agent API +
 └──────────────────┘        │  TxDOT Open Data   │
                             │  SAM.gov           │
                             │  USASpending.gov   │
-                            │  Tavily search     │
+                            │  Azure OpenAI web  │
                             └────────────────────┘
 
 ┌───────────────────────────────────────────────────────────────────┐

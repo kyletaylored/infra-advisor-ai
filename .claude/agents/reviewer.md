@@ -22,8 +22,8 @@ Review the implementation against the PRD. Check:
 9. get_procurement_opportunities uses base URL https://api.sam.gov/opportunities/v2/search — not the /prod/ variant
 10. SAM.gov date range is always clamped to a maximum 365-day window before the API call is made
 11. get_procurement_opportunities merges SAM.gov and grants.gov results and tags each with correct _source field
-12. search_web_procurement extraction step uses AZURE_OPENAI_EVAL_DEPLOYMENT_NAME (gpt-4.1-nano), not the main agent deployment
-13. SAMGOV_API_KEY and TAVILY_API_KEY presence is checked in /health endpoint response
+12. search_web_procurement uses Azure OpenAI's web_search_preview tool on the main AZURE_OPENAI_DEPLOYMENT_NAME (gpt-4.1-mini or gpt-4o family — gpt-4.1-nano is not supported)
+13. SAMGOV_API_KEY and AZURE_OPENAI_API_KEY presence is checked in /health endpoint response
 14. All three new tools emit correct custom DD metrics with proper source tags
 15. samgov_awards_refresh DAG filters to awards >= $500,000 and uses USASpending.gov, not SAM.gov directly
    Report findings as a numbered list. Do not make code changes.

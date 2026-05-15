@@ -7,15 +7,13 @@ using ModelContextProtocol.Server;
 namespace InfraAdvisor.McpServer.Tools;
 
 // Web search for state / local procurement pages using Azure OpenAI's
-// Responses API with the web_search_preview tool. Replaces the previous
-// two-hop Tavily-search → gpt-4.1-nano-extraction pipeline with a single
-// Azure OpenAI call: the Responses API runs the search, the model
-// distills hits into structured procurement records via a JSON schema
-// response format, and we return that JSON to the agent.
+// Responses API with the web_search_preview tool. A single Azure OpenAI
+// call runs the live web search server-side and distills the hits into
+// structured procurement records via a JSON schema response format —
+// no separate search vendor, no separate extraction LLM hop.
 //
 // Why: keeps the entire AI stack inside the Azure ecosystem (one vendor,
-// one usage meter, OTel HttpClient already instrumented), removes the
-// Tavily dependency entirely.
+// one usage meter, OTel HttpClient already instrumented).
 //
 // Requirements:
 //   AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY  — same secret already

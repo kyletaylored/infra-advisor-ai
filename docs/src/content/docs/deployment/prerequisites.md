@@ -43,9 +43,10 @@ description: Required tools, Azure and Datadog setup, API keys, and .env file re
 |-----|-------------|------------|
 | `EIA_API_KEY` | EIA energy data DAG | [eia.gov/opendata/register.php](https://www.eia.gov/opendata/register.php) (free) |
 | `SAMGOV_API_KEY` | Procurement opportunities tool | [SAM.gov API](https://open.gsa.gov/api/opportunities-api/) (free government API key) |
-| `TAVILY_API_KEY` | Web procurement search tool | [tavily.com](https://tavily.com) (freemium) |
 
-All three are optional — the tools return structured errors if the keys are missing, and the agent handles gracefully.
+Both are optional — the tools return structured errors if the keys are missing, and the agent handles gracefully.
+
+The `search_web_procurement` tool runs on Azure OpenAI's `web_search_preview` tool, so it uses the same `AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_ENDPOINT` as the rest of the AI stack — no separate vendor key.
 
 ## GitHub Container Registry (GHCR)
 
@@ -100,5 +101,4 @@ Optional (tools degrade gracefully without them):
 ```bash
 EIA_API_KEY=<key>
 SAMGOV_API_KEY=<key>
-TAVILY_API_KEY=<key>
 ```

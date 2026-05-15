@@ -51,7 +51,7 @@ All Datadog dashboards and monitors are defined as JSON in the `datadog/` direct
 - Tool call count by tool name (timeseries)
 - Tool success rate by tool name
 - Tool latency p95 by tool name
-- External API latency by source (ArcGIS NBI, OpenFEMA, EIA, EPA SDWIS, SAM.gov, Tavily)
+- External API latency by source (ArcGIS NBI, OpenFEMA, EIA, EPA SDWIS, SAM.gov, Azure OpenAI)
 - External API error rate by source
 - Error count by tool + error type (toplist)
 

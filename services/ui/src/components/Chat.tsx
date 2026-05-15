@@ -113,7 +113,7 @@ const TOOL_META: Record<string, { label: string; document_type: string; descript
   },
   search_web_procurement: {
     label: "Web Procurement", document_type: "Procurement",
-    description: "State and local RFPs, bond elections, and government budget announcements via Tavily search",
+    description: "State and local RFPs, bond elections, and government budget announcements via Azure OpenAI web search",
     data_notes: "Searches .gov and .us domains plus procurement portals. Confidence field indicates extraction reliability — flag medium-confidence results to users.",
   },
 };
@@ -512,7 +512,7 @@ export function Chat() {
     });
   }, []);
 
-  // Fetch LLM-generated initial suggestions spanning AECOM practice areas
+  // Fetch LLM-generated initial suggestions spanning AEC/O&M practice areas
   useEffect(() => {
     fetchInitialSuggestions().then((items) => {
       setRecommendations(items.length > 0 ? items : INITIAL_SUGGESTIONS);

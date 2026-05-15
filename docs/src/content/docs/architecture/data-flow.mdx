@@ -130,7 +130,7 @@ Redis stores two types of data for the Agent API:
 |---|---|---|
 | `infra-advisor:session:{uuid}:memory` | 86 400 s | JSON list of `HumanMessage` / `AIMessage` exchanges |
 | `infra-advisor:session:{uuid}:model` | 86 400 s | String: Azure OpenAI deployment name |
-| `infra-advisor:suggestions:pool` | none | Redis List: up to 80 AECOM-focused suggestions |
+| `infra-advisor:suggestions:pool` | none | Redis List: up to 80 infrastructure-focused suggestions |
 
 The suggestion pool is maintained by a background asyncio task (`_pool_maintenance_loop`) that:
 

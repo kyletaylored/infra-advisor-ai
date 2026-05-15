@@ -54,7 +54,7 @@ datadog          Datadog Agent DaemonSet
 | Name | Contains |
 |------|---------|
 | `ghcr-pull-secret` | GHCR authentication for image pulls |
-| `mcp-server-secret` | Azure Search, OpenAI, EIA, ERCOT, SAM.gov, Tavily keys |
+| `mcp-server-secret` | Azure Search, OpenAI, EIA, ERCOT, SAM.gov keys |
 | `agent-api-secret` | Azure OpenAI endpoint + API key |
 | `auth-api-secret` | DATABASE_URL, JWT_SECRET |
 | `postgres-secret` | POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB |

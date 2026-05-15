@@ -153,7 +153,7 @@ Searches historical federal contract awards from [USASpending.gov](https://www.u
 
 ### `search_web_procurement`
 
-Searches government websites for state/local RFPs, bond election information, and procurement notices via the [Tavily Search API](https://tavily.com/).
+Searches government websites for state/local RFPs, bond election information, and procurement notices via [Azure OpenAI's Responses API](https://learn.microsoft.com/azure/ai-services/openai/) with the `web_search_preview` tool. The model runs a live web search and extracts structured procurement records in one round trip — no separate vendor key required.
 
 **Parameters:**
 - `query` — Search query
@@ -162,7 +162,7 @@ Searches government websites for state/local RFPs, bond election information, an
 
 **Returns:** Extracted procurement records from `.gov`, `.us`, DemandStar, BidNet, and BonfireHub pages. Each record has title, description, agency, deadline, and source URL where available.
 
-**Requires:** `TAVILY_API_KEY` environment variable.
+**Requires:** `AZURE_OPENAI_ENDPOINT` and `AZURE_OPENAI_API_KEY`; the configured `AZURE_OPENAI_DEPLOYMENT_NAME` must support `web_search_preview` (gpt-4o / gpt-4.1 family — not gpt-4.1-nano).
 
 ---
 
@@ -214,7 +214,7 @@ Returns service status and API key configuration:
   "tools": ["get_bridge_condition", "get_disaster_history", ...],
   "keys_configured": {
     "samgov": true,
-    "tavily": false
+    "azure_openai": true
   }
 }
 ```

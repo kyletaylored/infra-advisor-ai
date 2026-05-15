@@ -49,13 +49,13 @@ public class SuggestionService
 
     private static readonly string SuggestionsPromptTemplate =
         "You are generating follow-up question suggestions for an AI assistant serving consultants at an " +
-        "Architecture, Engineering, Construction, Operations, and Management (AECOM) firm.\n\n" +
+        "AEC/O&M (Architecture, Engineering, Construction / Operations & Maintenance) infrastructure firm.\n\n" +
         "The user just asked:\n{query}\n\n" +
         "The AI used these data tools: {sources}\n\n" +
         "The AI answered (truncated):\n{answer}\n\n" +
         "Available tools the user can query next:\n{tools}\n\n" +
         "Generate exactly 4 concise follow-up questions that are natural next steps given this conversation. " +
-        "Each should explore a different AECOM practice area angle — engineering risk, construction delivery, " +
+        "Each should explore a different AEC/O&M practice area angle — engineering risk, construction delivery, " +
         "operational resilience, management/BD, or document drafting. " +
         "Keep labels short (2-5 words, no emojis). Keep queries specific, data-grounded, and immediately actionable.\n\n" +
         "Return ONLY valid JSON, no markdown fences, no explanation:\n" +
@@ -64,7 +64,7 @@ public class SuggestionService
     private static readonly string[] PoolBatchPrompts =
     {
         // Engineering: structural, civil, environmental
-        "Generate exactly 10 specific opening questions an infrastructure engineer at an AECOM-style consulting " +
+        "Generate exactly 10 specific opening questions an infrastructure engineer at an infrastructure consulting " +
         "firm would ask an AI assistant backed by FHWA NBI, EPA SDWIS, EIA, ERCOT, TxDOT, and FEMA data.\n" +
         "Focus on: structural condition rankings, sufficiency ratings, scour risk, water system violations, " +
         "energy grid capacity by fuel type, traffic volume thresholds, and cross-hazard exposure.\n" +
@@ -75,7 +75,7 @@ public class SuggestionService
 
         // Construction: procurement, delivery, project data
         "Generate exactly 10 specific opening questions a construction project manager or BD director at an " +
-        "AECOM-style consulting firm would ask an AI assistant backed by SAM.gov, USASpending.gov, and state " +
+        "infrastructure consulting firm would ask an AI assistant backed by SAM.gov, USASpending.gov, and state " +
         "procurement portals.\n" +
         "Focus on: active federal solicitations, contract award benchmarks by NAICS code, incumbent contractor " +
         "analysis, grant program deadlines, bond election schedules, and price-per-unit benchmarks.\n" +
@@ -84,7 +84,7 @@ public class SuggestionService
         "{\"suggestions\": [{\"label\": \"...\", \"query\": \"...\"}, ... 10 items ...]}",
 
         // Operations: resilience, risk, asset lifecycle
-        "Generate exactly 10 specific opening questions an asset manager or resilience planner at an AECOM-style " +
+        "Generate exactly 10 specific opening questions an asset manager or resilience planner at an infrastructure " +
         "consulting firm would ask an AI assistant backed by FEMA OpenFEMA, FHWA NBI, EPA SDWIS, and EIA data.\n" +
         "Focus on: repeat disaster declarations by county and hazard type, flood and scour risk to bridge assets, " +
         "water system outage history, grid stress events, multi-hazard exposure scoring, and infrastructure age profiles.\n" +
@@ -93,7 +93,7 @@ public class SuggestionService
         "{\"suggestions\": [{\"label\": \"...\", \"query\": \"...\"}, ... 10 items ...]}",
 
         // Management/Advisory: documents, BD, firm knowledge
-        "Generate exactly 10 specific opening questions a program manager or practice leader at an AECOM-style " +
+        "Generate exactly 10 specific opening questions a program manager or practice leader at an infrastructure " +
         "consulting firm would ask an AI assistant with access to a firm knowledge base, document drafting tools, " +
         "and procurement intelligence.\n" +
         "Focus on: SOW scaffolds for specific project types, risk framework selection, funding memo positioning, " +

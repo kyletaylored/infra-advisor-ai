@@ -17,9 +17,8 @@ logger = logging.getLogger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 #
-# This tool used to call Tavily Search → gpt-4.1-nano extraction in two hops.
-# It now calls Azure OpenAI's Responses API with the web_search_preview tool
-# in a single round trip:
+# This tool calls Azure OpenAI's Responses API with the web_search_preview
+# tool in a single round trip:
 #
 #   POST {AZURE_OPENAI_ENDPOINT}/openai/v1/responses?api-version=preview
 #

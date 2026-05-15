@@ -16,7 +16,7 @@ The .NET services (`agent-api-dotnet`, `mcp-server-dotnet`) use **OpenTelemetry*
 | HTTP request | FastAPI (auto) | `http.method`, `http.url`, `http.status_code` |
 | Outbound HTTP (ArcGIS, FEMA, EIA, EPA, SAM.gov, etc.) | httpx (auto) | `http.url`, `peer.hostname` |
 | Azure AI Search | azure-search-documents (auto) | index name, operation |
-| Outbound HTTP (Tavily) | httpx (auto) | |
+| Outbound HTTP (Azure OpenAI Responses for web search) | httpx (auto) | `http.url` ends with `/openai/v1/responses` |
 
 ### Agent API (`agent-api`)
 
@@ -137,8 +137,8 @@ The UI renders a **"View trace →"** link that opens `https://us3.datadoghq.com
 Navigate to **Datadog → APM → Service Map** to see the auto-discovered service dependency graph:
 
 ```
-browser → ui/nginx → agent-api         → mcp-server         → [arcgis, openfema, eia, epa, samgov, tavily]
-                   → agent-api-dotnet  → mcp-server-dotnet  → [arcgis, openfema, eia, epa, samgov, tavily]
+browser → ui/nginx → agent-api         → mcp-server         → [arcgis, openfema, eia, epa, samgov, azure-openai]
+                   → agent-api-dotnet  → mcp-server-dotnet  → [arcgis, openfema, eia, epa, samgov, azure-openai]
                    → auth-api          → postgres
                    → postgres (conversations)
                    → redis

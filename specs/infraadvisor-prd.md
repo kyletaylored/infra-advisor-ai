@@ -1679,7 +1679,9 @@ EPA_SDWIS_BASE_URL=https://enviro.epa.gov/enviro/efservice
 
 # Business development APIs
 SAMGOV_API_KEY=                        # Free at api.sam.gov — full key including SAM- prefix
-TAVILY_API_KEY=                        # Free at tavily.com — 1,000 searches/month, no card required
+# Web procurement search now uses Azure OpenAI's web_search_preview tool via
+# the AZURE_OPENAI_API_KEY / AZURE_OPENAI_ENDPOINT credentials listed above
+# — no separate vendor key required.
 ```
 
 ---

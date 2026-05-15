@@ -100,7 +100,7 @@ Clicking a tile auto-submits its starter query without requiring the user to typ
 
 ### Suggestion pool
 
-On page load, the UI calls `GET /api/suggestions/initial` to populate 4 opening suggestion cards. These are drawn from a Redis pool of up to 80 AECOM-focused suggestions. After each response, `POST /api/suggestions` generates 4 follow-up suggestions based on the conversation context.
+On page load, the UI calls `GET /api/suggestions/initial` to populate 4 opening suggestion cards. These are drawn from a Redis pool of up to 80 infrastructure-focused suggestions. After each response, `POST /api/suggestions` generates 4 follow-up suggestions based on the conversation context.
 
 ### Sandbox playground
 

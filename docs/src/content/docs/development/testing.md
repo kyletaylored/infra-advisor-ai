@@ -32,7 +32,7 @@ uv run pytest tests/ -v
 - `test_empty_results` — API returns no records (graceful empty list)
 - `test_api_error` — upstream returns 4xx/5xx (structured error dict returned)
 - `test_parameter_filtering` — verify query params passed correctly
-- Tool-specific edge cases (e.g., `test_date_range_clamped` for SAM.gov, `test_content_passed_directly_to_extraction` for Tavily)
+- Tool-specific edge cases (e.g., `test_date_range_clamped` for SAM.gov, `test_request_body_includes_web_search_tool` for the Azure OpenAI Responses-backed web search)
 
 **Mocking pattern:**
 ```python

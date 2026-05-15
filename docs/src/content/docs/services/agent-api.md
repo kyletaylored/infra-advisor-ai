@@ -76,7 +76,7 @@ Run the multi-agent pipeline on a user query.
 
 ### `GET /suggestions/initial`
 
-Returns 4 AECOM-focused opening suggestions from the Redis pool. No LLM call — responds in ~1ms from a pre-generated pool of up to 80 suggestions.
+Returns 4 infrastructure-focused opening suggestions from the Redis pool. No LLM call — responds in ~1ms from a pre-generated pool of up to 80 suggestions.
 
 If the pool drops below 20 items, a background `_fill_pool()` task runs asynchronously to replenish it.
 

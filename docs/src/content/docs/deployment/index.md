@@ -50,7 +50,7 @@ Phase 3: Data Initialization
 |--------|-------------|
 | `make create-secrets` | Create all K8s secrets at once |
 | `make create-ghcr-secret` | GHCR image pull secret |
-| `make create-mcp-server-secret` | Azure Search, OpenAI, EIA, SAM.gov, Tavily |
+| `make create-mcp-server-secret` | Azure Search, OpenAI, EIA, SAM.gov |
 | `make create-agent-api-secret` | Azure OpenAI endpoint + key (+ optional DATABASE_URL) |
 | `make create-agent-api-dotnet-secret` | Azure OpenAI endpoint + key (+ optional DATABASE_URL) |
 | `make create-auth-api-secret` | DATABASE_URL, JWT_SECRET |
