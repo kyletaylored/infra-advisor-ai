@@ -16,6 +16,19 @@ spec:
         app: postgres
       annotations:
         admission.datadoghq.com/enabled: "false"
+        # DD postgres integration via autodiscovery. Full DBM feature set:
+        #   - reported_hostname: stable name (vs the pod IP) so DBM /
+        #     APM-DB linkage uses "infra-advisor-postgres" consistently.
+        #   - DBM nested features: query samples (default), schema
+        #     metadata for the DBM Schema Explorer, pg_settings config
+        #     versioning, column statistics for query planner insight.
+        #   - Top-level collect_* toggles: activity, functions, counts,
+        #     bloat, WAL age, buffer cache, checksums. Default-on metrics
+        #     (database size) stay enabled.
+        #   - relations: empty regex pattern matches every table —
+        #     enables per-table metrics (size, vacuum, locks, indexes).
+        # Conf reference:
+        #   https://github.com/DataDog/integrations-core/blob/master/postgres/datadog_checks/postgres/data/conf.yaml.example
         ad.datadoghq.com/postgres.checks: |
           {
             "postgres": {
@@ -25,22 +38,85 @@ spec:
                 "host": "%%host%%",
                 "port": 5432,
                 "username": "datadog",
-                "password": "%%env_DD_POSTGRES_PASSWORD%%"
+                "password": "%%env_DD_POSTGRES_PASSWORD%%",
+                "reported_hostname": "infra-advisor-postgres",
+                "disable_generic_tags": true,
+                "tags": ["env:dev", "service:postgres"],
+                "collect_activity_metrics": true,
+                "collect_function_metrics": true,
+                "collect_count_metrics": true,
+                "collect_database_size_metrics": true,
+                "collect_wal_metrics": true,
+                "collect_bloat_metrics": true,
+                "collect_checksum_metrics": true,
+                "collect_buffercache_metrics": true,
+                "collect_schemas": {
+                  "enabled": true,
+                  "max_tables": 300,
+                  "collection_interval": 600
+                },
+                "collect_settings": {
+                  "enabled": true,
+                  "collection_interval": 600
+                },
+                "collect_column_statistics": {
+                  "enabled": true,
+                  "collection_interval": 1200,
+                  "max_tables": 100
+                },
+                "relations": [{"relation_regex": ".*"}]
               }]
             }
           }
+        # Tail postgres logs into DD via the standard postgresql log source.
+        # postgres is configured below (args:) to emit slow-query + lock /
+        # error / autovacuum lines on stderr so DD picks them up.
+        ad.datadoghq.com/postgres.logs: |
+          [{
+            "source": "postgresql",
+            "service": "infra-advisor-postgres"
+          }]
     spec:
       containers:
         - name: postgres
           image: postgres:16-alpine
           args:
             - postgres
+            # pg_buffercache extension powers collect_buffercache_metrics in
+            # the DD postgres integration (must be in shared_preload + a
+            # CREATE EXTENSION in dbm-setup.sql).
             - -c
-            - shared_preload_libraries=pg_stat_statements
+            - shared_preload_libraries=pg_stat_statements,pg_buffercache
             - -c
             - track_activity_query_size=4096
             - -c
             - pg_stat_statements.track=all
+            # track_functions=all is required for collect_function_metrics
+            # to return non-empty pg_stat_user_functions rows.
+            - -c
+            - track_functions=all
+            # Slow-query logging for DD postgres log source. Queries
+            # over 1s land on stderr → DD agent log collector → DBM.
+            # The %m / %p / %u / %d / %a prefix gives DD enough metadata
+            # to parse user / database / app per line.
+            - -c
+            - log_min_duration_statement=1000
+            - -c
+            - log_line_prefix=%m [%p] %q[user=%u,db=%d,app=%a]
+            - -c
+            - log_destination=stderr
+            - -c
+            - logging_collector=off
+            # Lock waits longer than 1s are logged — fuels DBM's lock-tree
+            # views with real evidence rather than guesses.
+            - -c
+            - log_lock_waits=on
+            - -c
+            - deadlock_timeout=1000
+            # Log autovacuum runs taking >1s so DD lifecycle / vacuum
+            # metrics correlate with concrete actions.
+            - -c
+            - log_autovacuum_min_duration=1000
           ports:
             - containerPort: 5432
               name: postgres
