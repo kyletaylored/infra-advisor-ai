@@ -10,14 +10,15 @@ TelemetrySetup.Configure(builder);
 builder.Services.AddHttpClient();
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
-// Stateless = true makes each MCP HTTP request independent (no Mcp-Session-Id
-// tracking server-side). Required for our multi-replica deployment: the K8s
-// Service round-robins requests, so a session created on pod A and a follow-up
-// on pod B would 404 without this. Trade-off: server cannot push unsolicited
-// messages and the /sse endpoint is disabled — fine, we use request/response
-// JSON-RPC only.
+// Session-stateful HTTP transport (the SDK default). Tested Stateless=true
+// previously to avoid Mcp-Session-Id 404s across multi-replica load balancing,
+// but the .NET MCP client library still issues session-aware requests (assumes
+// prior initialize) — stateless servers reject them with 400 JsonRpcError.
+// Real fix lives in the K8s Service via sessionAffinity:ClientIP so the
+// agent-api pod always lands on the same server pod for the duration of its
+// session.
 builder.Services.AddMcpServer()
-    .WithHttpTransport(options => options.Stateless = true)
+    .WithHttpTransport()
     .WithTools<BridgeConditionTool>()
     .WithTools<DisasterHistoryTool>()
     .WithTools<EnergyInfrastructureTool>()

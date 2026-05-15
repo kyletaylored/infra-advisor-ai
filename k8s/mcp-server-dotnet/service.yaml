@@ -7,6 +7,18 @@ metadata:
     app: mcp-server-dotnet
 spec:
   type: ClusterIP
+  # ClientIP session affinity pins every request from the same source IP
+  # (the agent-api-dotnet pod) to the same mcp-server backend pod for up to
+  # 10800s. MCP 1.3.0's stateful HTTP transport requires the same backend
+  # for the lifetime of a client's session — without affinity, requests
+  # round-robin across replicas and follow-up tool calls return 400
+  # JsonRpcError because the chosen pod has no memory of the client's prior
+  # initialize. (Tried Stateless=true on the server side as an alternative
+  # — broke the client library which still expects session-bound flow.)
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
   selector:
     app: mcp-server-dotnet
   ports:
