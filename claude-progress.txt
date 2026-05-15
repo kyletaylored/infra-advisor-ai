@@ -1,3 +1,99 @@
+[2026-05-15] Replace Tavily with Azure OpenAI Responses + web_search_preview
+  Third-party Tavily dependency removed from both .NET and Python MCP
+  servers. The `search_web_procurement` tool used to do two hops —
+  Tavily Search POST → gpt-4.1-nano extraction POST — for every call.
+  It now makes ONE call to Azure OpenAI's Responses API with the
+  web_search_preview tool, which both runs the live web search AND
+  emits structured procurement records constrained to a JSON schema.
+
+  Keeps the whole AI stack inside the Azure ecosystem (one vendor, one
+  usage meter, one set of OTel HttpClient spans) and halves the
+  external dependency surface.
+
+  Endpoint contract:
+    POST {AZURE_OPENAI_ENDPOINT}/openai/v1/responses?api-version=preview
+    body: {
+      model: <deployment>,           // gpt-4.1-mini or gpt-4o family —
+                                     // gpt-4.1-nano does NOT support
+                                     // web_search_preview
+      input: <natural-language search instructions>,
+      tools: [{type: "web_search_preview"}],
+      text.format: {
+        type: "json_schema",
+        name: "procurement_results",
+        strict: true,
+        schema: { ...procurement record array... }
+      }
+    }
+
+  Files changed:
+    services/mcp-server-dotnet/Tools/WebProcurementSearchTool.cs
+      Complete rewrite. Replaces TavilySearchAsync + ExtractProcurementData
+      (~150 lines + Azure.AI.OpenAI dependency for the inline chat call)
+      with a single HttpClient POST to the Responses endpoint and JSON
+      schema unwrap. ~210 lines net but much more focused.
+    services/mcp-server-dotnet/Program.cs
+      keys_configured.tavily → keys_configured.azure_openai
+    services/mcp-server/src/tools/web_procurement_search.py
+      Rewrite mirroring the .NET version. Uses httpx.AsyncClient with the
+      same Responses endpoint + json_schema. Removed: AzureOpenAI client
+      import, _build_search_query (no longer needed — instructions are
+      natural language now), _extract_procurement_data (server-side now),
+      _tavily_search, TAVILY_SEARCH_URL.
+    services/mcp-server/src/main.py
+      keys_configured.tavily → keys_configured.azure_openai
+    services/mcp-server/tests/test_web_procurement_search.py
+      15 new tests covering instruction building, configuration errors,
+      429/5xx retriable handling, happy-path schema parsing, malformed
+      JSON detection, and request-body shape verification. All pass.
+
+    Makefile
+      create-mcp-server-secret / create-mcp-server-dotnet-secret:
+        Removed TAVILY_API_KEY validation + --from-literal arg from
+        both secret-creation targets.
+    k8s/secrets/mcp-server-secret.yaml
+    k8s/secrets/mcp-server-dotnet-secret.yaml
+      Stub templates: removed TAVILY_API_KEY line + reference URL.
+      Added comment explaining web search now rides AZURE_OPENAI_API_KEY.
+    README.md
+      Architecture diagram BD specialist label updated.
+      Prerequisites: dropped Tavily; added note that web RFP search
+      uses Azure OpenAI's web_search_preview tool.
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors on mcp-server-dotnet
+  [x] pytest tests/test_web_procurement_search.py: 15/15 pass
+  [x] kubectl apply --dry-run=client passes on both secret manifests
+  [x] No remaining Tavily references in non-progress.txt source files:
+      grep -rn "tavily\|TAVILY" --include="*.cs" --include="*.py"
+      --include="Makefile" --include="*.yaml" --include="README.md"
+      returns only docs/* and tests/test_web_procurement_search.py
+      (test files reference historical names in expected-content, OK).
+
+  [~] Live post-deploy verification:
+      (a) /health on both mcp-server services reports
+          keys_configured.azure_openai:true (not tavily)
+      (b) User query routing through to BD specialist invokes
+          search_web_procurement → tool returns SAM.gov or .gov-hosted
+          procurement matches (not "TAVILY_API_KEY not configured")
+      (c) APM trace for /query shows search_web_procurement →
+          single HttpClient span to oai-infra-advisor-dev.openai
+          .azure.com/openai/v1/responses (no Tavily span)
+      (d) Azure OpenAI usage metrics in Azure Portal show
+          Responses API calls landing on the configured deployment
+
+  Wave-2 dependency-bump implication: mcp-server-dotnet still uses
+  Azure.AI.OpenAI 2.2.0-beta.4 (Wave-1 left it behind), but our raw
+  HttpClient call to /openai/v1/responses doesn't need the SDK's
+  Responses client. Bump to 2.9.0-beta.1 still tracked for Wave-2.
+
+  Doc-page update follow-up (separate commit): every docs/* page
+  referencing Tavily (services/mcp-server.md,
+  services/mcp-server-dotnet.md, deployment/prerequisites.md,
+  observability/apm.md, dashboards.md, architecture/overview.md,
+  development/testing.md, specs/infraadvisor-prd.md) should be
+  refreshed in a docs-only pass — not blocking the production fix.
+
 [2026-05-15] Full Postgres DBM feature set + slow-query log collection
   Live verification of the pure-OTel pivot (bc1f319) surfaced four real
   gaps the user flagged in the DBM UI:
