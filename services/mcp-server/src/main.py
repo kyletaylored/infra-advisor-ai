@@ -391,14 +391,17 @@ TOOL_NAMES = [
 async def health(request: Request) -> JSONResponse:
     """Liveness probe — returns service status, available tool names, and API key status."""
     samgov_key = os.environ.get("SAMGOV_API_KEY", "")
-    tavily_key = os.environ.get("TAVILY_API_KEY", "")
+    # Web search now uses Azure OpenAI's web_search_preview tool — the same
+    # AZURE_OPENAI_API_KEY drives every AI call in this service. No separate
+    # vendor key required.
+    azure_openai_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
     return JSONResponse({
         "status": "ok",
         "service": os.environ.get("DD_SERVICE", "infratools-mcp"),
         "tools": TOOL_NAMES,
         "keys_configured": {
             "samgov": bool(samgov_key),
-            "tavily": bool(tavily_key),
+            "azure_openai": bool(azure_openai_key),
         },
     })
 

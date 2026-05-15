@@ -72,7 +72,7 @@ create-airflow-secret: ## Create airflow-azure-secret K8s Secret in airflow name
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ airflow-azure-secret created in namespace airflow"
 
-create-mcp-server-secret: ## Create mcp-server-secret K8s Secret (Azure, EIA, ERCOT, SAM.gov, Tavily keys)
+create-mcp-server-secret: ## Create mcp-server-secret K8s Secret (Azure, EIA, ERCOT, SAM.gov keys)
 	@if [ -z "$(AZURE_SEARCH_ENDPOINT)" ];  then echo "ERROR: AZURE_SEARCH_ENDPOINT is not set";  exit 1; fi
 	@if [ -z "$(AZURE_SEARCH_API_KEY)" ];   then echo "ERROR: AZURE_SEARCH_API_KEY is not set";   exit 1; fi
 	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ];  then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set";  exit 1; fi
@@ -80,7 +80,6 @@ create-mcp-server-secret: ## Create mcp-server-secret K8s Secret (Azure, EIA, ER
 	@if [ -z "$(EIA_API_KEY)" ];            then echo "ERROR: EIA_API_KEY is not set";            exit 1; fi
 	@if [ -z "$(ERCOT_API_KEY)" ];          then echo "WARN: ERCOT_API_KEY is not set — ERCOT tool will be disabled"; fi
 	@if [ -z "$(SAMGOV_API_KEY)" ];         then echo "WARN: SAMGOV_API_KEY is not set — procurement opportunities tool will be disabled"; fi
-	@if [ -z "$(TAVILY_API_KEY)" ];         then echo "WARN: TAVILY_API_KEY is not set — web procurement search tool will be disabled"; fi
 	kubectl create secret generic mcp-server-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=AZURE_SEARCH_ENDPOINT=$(AZURE_SEARCH_ENDPOINT) \
@@ -90,7 +89,6 @@ create-mcp-server-secret: ## Create mcp-server-secret K8s Secret (Azure, EIA, ER
 		--from-literal=EIA_API_KEY=$(EIA_API_KEY) \
 		--from-literal=ERCOT_API_KEY=$(ERCOT_API_KEY) \
 		--from-literal=SAMGOV_API_KEY=$(SAMGOV_API_KEY) \
-		--from-literal=TAVILY_API_KEY=$(TAVILY_API_KEY) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ mcp-server-secret created in namespace $(NAMESPACE)"
 
@@ -102,7 +100,6 @@ create-mcp-server-dotnet-secret: ## Create mcp-server-dotnet-secret K8s Secret (
 	@if [ -z "$(EIA_API_KEY)" ];            then echo "WARN: EIA_API_KEY is not set — EIA tool will be disabled"; fi
 	@if [ -z "$(ERCOT_API_KEY)" ];          then echo "WARN: ERCOT_API_KEY is not set — ERCOT tool will be disabled"; fi
 	@if [ -z "$(SAMGOV_API_KEY)" ];         then echo "WARN: SAMGOV_API_KEY is not set — SAM.gov tool will be disabled"; fi
-	@if [ -z "$(TAVILY_API_KEY)" ];         then echo "WARN: TAVILY_API_KEY is not set — web search tool will be disabled"; fi
 	kubectl create secret generic mcp-server-dotnet-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=AZURE_SEARCH_ENDPOINT=$(AZURE_SEARCH_ENDPOINT) \
@@ -112,7 +109,6 @@ create-mcp-server-dotnet-secret: ## Create mcp-server-dotnet-secret K8s Secret (
 		$(if $(EIA_API_KEY),--from-literal=EIA_API_KEY=$(EIA_API_KEY),) \
 		$(if $(ERCOT_API_KEY),--from-literal=ERCOT_API_KEY=$(ERCOT_API_KEY),) \
 		$(if $(SAMGOV_API_KEY),--from-literal=SAMGOV_API_KEY=$(SAMGOV_API_KEY),) \
-		$(if $(TAVILY_API_KEY),--from-literal=TAVILY_API_KEY=$(TAVILY_API_KEY),) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ mcp-server-dotnet-secret created in namespace $(NAMESPACE)"
 

@@ -1,15 +1,12 @@
 import ddtrace.auto  # must be first import — enables APM auto-instrumentation
 
-import asyncio
 import json
 import logging
 import os
-import re
 import time
 from typing import Optional
 
 import httpx
-from openai import AzureOpenAI
 from pydantic import BaseModel
 
 from observability.metrics import emit_external_api, emit_tool_call
@@ -19,16 +16,25 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
+#
+# This tool used to call Tavily Search → gpt-4.1-nano extraction in two hops.
+# It now calls Azure OpenAI's Responses API with the web_search_preview tool
+# in a single round trip:
+#
+#   POST {AZURE_OPENAI_ENDPOINT}/openai/v1/responses?api-version=preview
+#
+# That endpoint runs the live web search server-side and emits structured
+# results matching a JSON schema. Keeps the whole AI stack inside Azure
+# (one vendor key, one usage meter) and halves both the latency and the
+# external dependency surface.
 
-TAVILY_SEARCH_URL = "https://api.tavily.com/search"
-
-_INCLUDE_DOMAINS = [
-    ".gov",
-    ".us",
-    "demandstar.com",
-    "bidnetdirect.com",
-    "bonfirehub.com",
-]
+_SECTOR_TERMS = {
+    "transportation": "transportation infrastructure",
+    "water": "water treatment infrastructure",
+    "energy": "energy power infrastructure",
+    "buildings": "commercial building construction",
+    "environmental": "environmental remediation",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -45,158 +51,75 @@ class WebProcurementSearchInput(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Query builder (unchanged logic — just passed to Tavily instead of Brave)
+# JSON-schema for structured results
 # ---------------------------------------------------------------------------
+#
+# The Responses API constrains the model to this shape via
+# text.format.json_schema. strict=true means the model cannot return
+# fields outside the schema — keeps downstream parsing trivial.
+
+_RESULTS_SCHEMA: dict = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["results"],
+    "properties": {
+        "results": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "agency_name", "project_title", "project_description",
+                    "estimated_value_usd", "deadline", "contact_email",
+                    "source_url", "result_type", "confidence",
+                ],
+                "properties": {
+                    "agency_name": {"type": ["string", "null"]},
+                    "project_title": {"type": ["string", "null"]},
+                    "project_description": {"type": ["string", "null"], "maxLength": 240},
+                    "estimated_value_usd": {"type": ["integer", "null"]},
+                    "deadline": {
+                        "type": ["string", "null"],
+                        "description": "ISO 8601 date (YYYY-MM-DD) or null when unknown",
+                    },
+                    "contact_email": {"type": ["string", "null"]},
+                    "source_url": {"type": "string"},
+                    "result_type": {"enum": ["rfp", "award", "bond", "budget", "other"]},
+                    "confidence": {"enum": ["high", "medium", "low"]},
+                },
+            },
+        },
+    },
+}
 
 
-def _build_search_query(input_data: WebProcurementSearchInput) -> str:
-    """Build a targeted search query string from the structured input."""
-    parts = [input_data.query]
-
+def _build_instructions(input_data: WebProcurementSearchInput) -> str:
+    qualifiers = [input_data.query]
     if input_data.geography:
-        # Add site: hints to bias results toward .gov / .us domains
-        parts.append("site:.gov OR site:.us")
+        qualifiers.append(f"in {input_data.geography}")
+    if input_data.sector and input_data.sector in _SECTOR_TERMS:
+        qualifiers.append(_SECTOR_TERMS[input_data.sector])
 
-    sector_terms = {
-        "transportation": "transportation infrastructure",
-        "water": "water treatment infrastructure",
-        "energy": "energy power infrastructure",
-        "buildings": "commercial building construction",
-        "environmental": "environmental remediation",
-    }
-    if input_data.sector and input_data.sector in sector_terms:
-        parts.append(sector_terms[input_data.sector])
+    type_phrase = {
+        "rfp": "active requests for proposals (RFPs) and solicitations",
+        "bond": "bond elections and municipal bond initiatives",
+        "budget": "infrastructure budget and capital improvement plans",
+        "award": "recent procurement awards",
+    }.get(input_data.result_type or "", "procurement opportunities and announcements")
 
-    if input_data.result_type == "rfp":
-        parts.append('"request for proposals" OR "RFP" OR "solicitation"')
-    elif input_data.result_type == "bond":
-        parts.append('"bond election" OR "municipal bond"')
-    elif input_data.result_type == "budget":
-        parts.append('"infrastructure budget" OR "capital improvement plan"')
-
-    return " ".join(parts)
-
-
-# ---------------------------------------------------------------------------
-# Tavily search
-# ---------------------------------------------------------------------------
-
-
-async def _tavily_search(query: str, limit: int) -> list[dict] | dict:
-    """
-    Call the Tavily Search API and return a list of result dicts.
-
-    Each item has keys: url, title, content (pre-fetched and cleaned by Tavily).
-    Returns a dict with an 'error' key on failure.
-    """
-    tavily_api_key = os.environ.get("TAVILY_API_KEY", "")
-    if not tavily_api_key:
-        return {"error": "TAVILY_API_KEY not configured", "retriable": False}
-
-    body = {
-        "api_key": tavily_api_key,
-        "query": query,
-        "search_depth": "advanced",
-        "include_domains": _INCLUDE_DOMAINS,
-        "max_results": limit,
-    }
-
-    api_start = time.monotonic()
-    try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(TAVILY_SEARCH_URL, json=body)
-            latency_ms = (time.monotonic() - api_start) * 1000
-
-            if resp.status_code >= 400:
-                emit_external_api("tavily", latency_ms, error_type=f"http_{resp.status_code}")
-                return {
-                    "error": f"Tavily Search API error: HTTP {resp.status_code}",
-                    "retriable": resp.status_code >= 500,
-                }
-
-            emit_external_api("tavily", latency_ms)
-            data = resp.json()
-
-    except httpx.TimeoutException:
-        latency_ms = (time.monotonic() - api_start) * 1000
-        emit_external_api("tavily", latency_ms, error_type="timeout")
-        return {"error": "Tavily Search API request timed out.", "retriable": True}
-
-    except httpx.RequestError as exc:
-        latency_ms = (time.monotonic() - api_start) * 1000
-        emit_external_api("tavily", latency_ms, error_type="request_error")
-        return {"error": f"Tavily Search API request failed: {exc}", "retriable": True}
-
-    except Exception:
-        latency_ms = (time.monotonic() - api_start) * 1000
-        emit_external_api("tavily", latency_ms, error_type="unexpected")
-        logger.exception("Unexpected error calling Tavily Search")
-        return {"error": "Unexpected error calling Tavily Search.", "retriable": False}
-
-    raw_results: list[dict] = data.get("results", [])
-    return [
-        {
-            "url": r.get("url", ""),
-            "title": r.get("title", ""),
-            "content": r.get("content", ""),
-        }
-        for r in raw_results
-    ]
-
-
-# ---------------------------------------------------------------------------
-# Azure OpenAI extraction (sync — run in executor)
-# ---------------------------------------------------------------------------
-
-
-def _extract_procurement_data(text: str, source_url: str) -> dict | None:
-    """
-    Sync call to Azure OpenAI for structured procurement data extraction.
-
-    Returns a normalised dict or None if extraction fails, confidence is low,
-    or result_type is "other".
-    """
-    try:
-        client = AzureOpenAI(
-            azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
-            api_key=os.environ["AZURE_OPENAI_API_KEY"],
-            api_version="2025-01-01-preview",
-        )
-        deployment = os.environ.get("AZURE_OPENAI_EVAL_DEPLOYMENT_NAME", "gpt-4.1-nano")
-        prompt = f"""Extract procurement information from this government webpage text.
-Return ONLY valid JSON with these fields:
-- agency_name (string or null)
-- project_title (string or null)
-- project_description (max 200 chars, string or null)
-- estimated_value_usd (integer or null)
-- deadline (ISO date string or null)
-- contact_email (string or null)
-- source_url (string - use "{source_url}")
-- result_type ("rfp" | "award" | "bond" | "budget" | "other")
-- confidence ("high" | "medium" | "low")
-
-Return null for any field you cannot confidently determine.
-Text: {text[:2500]}"""
-
-        response = client.chat.completions.create(
-            model=deployment,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-            max_tokens=400,
-        )
-        content = response.choices[0].message.content or ""
-        json_match = re.search(r"\{.*\}", content, re.DOTALL)
-        if not json_match:
-            return None
-        data = json.loads(json_match.group())
-        if data.get("confidence") == "low" or data.get("result_type") == "other":
-            return None
-        data["_source"] = "web_search"
-        data["_search_engine"] = "Tavily"
-        return data
-    except Exception:
-        logger.debug("Extraction failed for %s", source_url, exc_info=True)
-        return None
+    return (
+        f"Search the web for up to {input_data.limit} {type_phrase} matching: "
+        f"{' '.join(qualifiers)}. "
+        "Prefer official government domains (.gov, .us, state/county/city procurement portals) "
+        "and recognized procurement aggregators (demandstar.com, bidnetdirect.com, bonfirehub.com). "
+        "For each hit, extract structured fields. "
+        "Use the source_url that links directly to the official announcement page. "
+        "Set confidence='high' only when the page clearly states the project title, agency, "
+        "and deadline; 'medium' when 1-2 fields are inferred; 'low' when most details are "
+        "missing. Return ONLY high or medium confidence results. Set result_type appropriately "
+        "(rfp/award/bond/budget/other). If you cannot find any matching opportunities, return "
+        "an empty results array."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -211,44 +134,106 @@ async def search_web_procurement(
     Search government and procurement portal websites for RFPs, bond elections,
     budget documents, and contract awards related to infrastructure projects.
 
-    Uses Tavily Search to find relevant pages with pre-fetched content, then
-    extracts structured procurement data using Azure OpenAI (gpt-4.1-nano).
+    Uses Azure OpenAI's Responses API with the web_search_preview tool — the
+    model runs a live web search and emits structured procurement records
+    matching the JSON schema in a single call.
 
-    Returns a list of normalised procurement records on success, or a structured
-    error dict. Never raises.
+    Returns a list of normalised procurement records on success, or a
+    structured error dict. Never raises.
     """
     tool_start = time.monotonic()
 
-    # Step 1 — Check for API key before doing any work
-    if not os.environ.get("TAVILY_API_KEY"):
+    azure_endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "")
+    azure_api_key = os.environ.get("AZURE_OPENAI_API_KEY", "")
+    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4.1-mini")
+
+    if not azure_endpoint or not azure_api_key:
         emit_tool_call("search_web_procurement", (time.monotonic() - tool_start) * 1000, "error")
-        return {"error": "TAVILY_API_KEY not configured", "retriable": False}
+        return {
+            "error": "AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_KEY not configured",
+            "retriable": False,
+            "source": "azure_openai",
+        }
 
-    # Step 2 — Build the search query
-    query = _build_search_query(input_data)
-    logger.info("web_procurement search query=%r limit=%d", query, input_data.limit)
+    instructions = _build_instructions(input_data)
+    logger.info(
+        "web_procurement search query=%r geography=%r sector=%r result_type=%r limit=%d",
+        input_data.query, input_data.geography, input_data.sector,
+        input_data.result_type, input_data.limit,
+    )
 
-    # Step 3 — Call Tavily (returns pre-fetched content — no separate page fetches needed)
-    search_result = await _tavily_search(query, input_data.limit)
-    if isinstance(search_result, dict) and "error" in search_result:
+    payload = {
+        "model": deployment,
+        "input": instructions,
+        "tools": [{"type": "web_search_preview"}],
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "procurement_results",
+                "schema": _RESULTS_SCHEMA,
+                "strict": True,
+            },
+        },
+    }
+
+    url = f"{azure_endpoint.rstrip('/')}/openai/v1/responses?api-version=preview"
+    headers = {"api-key": azure_api_key, "Content-Type": "application/json"}
+
+    api_start = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            latency_ms = (time.monotonic() - api_start) * 1000
+            if resp.status_code >= 400:
+                body = resp.text
+                emit_external_api("azure_openai", latency_ms, error_type=f"http_{resp.status_code}")
+                logger.warning(
+                    "web_procurement Azure OpenAI HTTP %d: %s",
+                    resp.status_code, body[:300],
+                )
+                emit_tool_call("search_web_procurement", (time.monotonic() - tool_start) * 1000, "error")
+                return {
+                    "error": f"Azure OpenAI Responses API error: HTTP {resp.status_code}",
+                    "retriable": resp.status_code >= 500 or resp.status_code == 429,
+                    "source": "azure_openai",
+                }
+            emit_external_api("azure_openai", latency_ms)
+            response_data = resp.json()
+    except httpx.TimeoutException:
+        emit_external_api("azure_openai", (time.monotonic() - api_start) * 1000, error_type="timeout")
         emit_tool_call("search_web_procurement", (time.monotonic() - tool_start) * 1000, "error")
-        return search_result
+        return {"error": "Azure OpenAI Responses API request timed out.", "retriable": True, "source": "azure_openai"}
+    except httpx.RequestError as exc:
+        emit_external_api("azure_openai", (time.monotonic() - api_start) * 1000, error_type="request_error")
+        emit_tool_call("search_web_procurement", (time.monotonic() - tool_start) * 1000, "error")
+        return {"error": f"Azure OpenAI Responses API request failed: {exc}", "retriable": True, "source": "azure_openai"}
+    except Exception:
+        emit_external_api("azure_openai", (time.monotonic() - api_start) * 1000, error_type="unexpected")
+        emit_tool_call("search_web_procurement", (time.monotonic() - tool_start) * 1000, "error")
+        logger.exception("Unexpected error calling Azure OpenAI Responses API")
+        return {"error": "Unexpected error calling Azure OpenAI.", "retriable": False, "source": "azure_openai"}
 
-    if not search_result:
-        logger.info("web_procurement: no results returned from Tavily")
+    # Responses API shape: { "output": [{type:"message", content:[{type:"output_text", text:"..."}]}] }
+    # Concatenate every output_text content piece; the schema-constrained JSON
+    # body is normally a single text item but we walk all of them defensively.
+    output_text = ""
+    for item in response_data.get("output", []):
+        for part in item.get("content", []):
+            if part.get("type") == "output_text":
+                output_text += part.get("text") or ""
+
+    if not output_text.strip():
+        logger.warning("web_procurement: no output_text in response")
         emit_tool_call("search_web_procurement", (time.monotonic() - tool_start) * 1000, "success", result_count=0)
         return []
 
-    # Step 4 — Extract structured data from each result's pre-fetched content (run in executor)
-    loop = asyncio.get_event_loop()
-    extraction_tasks = [
-        loop.run_in_executor(None, _extract_procurement_data, item["content"], item["url"])
-        for item in search_result
-    ]
-    extraction_results = await asyncio.gather(*extraction_tasks, return_exceptions=False)
-
-    # Step 5 — Collect non-None results
-    results: list[dict] = [r for r in extraction_results if r is not None]
+    try:
+        parsed = json.loads(output_text)
+        results = parsed.get("results", []) if isinstance(parsed, dict) else []
+    except json.JSONDecodeError:
+        logger.warning("web_procurement: failed to parse model JSON")
+        emit_tool_call("search_web_procurement", (time.monotonic() - tool_start) * 1000, "error")
+        return {"error": "Model returned malformed JSON", "retriable": True, "source": "azure_openai"}
 
     emit_tool_call(
         "search_web_procurement",
@@ -256,5 +241,5 @@ async def search_web_procurement(
         "success",
         result_count=len(results),
     )
-    logger.info("web_procurement: %d results from %d Tavily results", len(results), len(search_result))
+    logger.info("web_procurement: %d results returned", len(results))
     return results

@@ -1,7 +1,8 @@
-"""Tests for the search_web_procurement tool (Tavily-backed).
+"""Tests for the search_web_procurement tool (Azure OpenAI Responses API).
 
-All external HTTP calls are mocked with respx / monkeypatch so no real
-credentials or network access are required.
+All external HTTP calls are mocked with respx so no real Azure OpenAI
+credentials or network access are required. We stub the responses endpoint
+to return the schema-constrained JSON the production model would emit.
 """
 
 import os
@@ -24,9 +25,8 @@ import respx
 from httpx import Response
 
 from tools.web_procurement_search import (
-    TAVILY_SEARCH_URL,
     WebProcurementSearchInput,
-    _build_search_query,
+    _build_instructions,
     search_web_procurement,
 )
 
@@ -34,100 +34,99 @@ from tools.web_procurement_search import (
 # Shared helpers
 # ---------------------------------------------------------------------------
 
-_TAVILY_RESPONSE = {
-    "results": [
-        {
-            "url": "https://procurement.texas.gov/rfp/12345",
-            "title": "TxDOT Bridge Rehabilitation RFP",
-            "content": "TxDOT is soliciting proposals for bridge rehabilitation on IH-35. Deadline September 1, 2026. Contact rfp@txdot.gov. Estimated value $5,000,000.",
-        },
-        {
-            "url": "https://www.twdb.texas.gov/projects/water-supply-rfp",
-            "title": "TWDB Water Supply Project Solicitation",
-            "content": "TWDB requests proposals for water supply infrastructure in Central Texas. Budget $2,500,000. Responses due October 15, 2026.",
-        },
-    ]
-}
+_AZURE_ENDPOINT = "https://fake-openai.openai.azure.com"
+_RESPONSES_URL = f"{_AZURE_ENDPOINT}/openai/v1/responses"
 
-_EXTRACTED_RECORD = {
-    "agency_name": "TxDOT",
-    "project_title": "Bridge Rehabilitation IH-35",
-    "project_description": "Rehabilitation of bridges on IH-35 corridor.",
-    "estimated_value_usd": 5000000,
-    "deadline": "2026-09-01",
-    "contact_email": "rfp@txdot.gov",
-    "source_url": "https://procurement.texas.gov/rfp/12345",
-    "result_type": "rfp",
-    "confidence": "high",
-    "_source": "web_search",
-    "_search_engine": "Tavily",
+# Two-item happy-path payload matching the Azure Responses API shape +
+# our procurement_results json_schema envelope.
+_RESPONSES_PAYLOAD = {
+    "output": [
+        {
+            "type": "message",
+            "content": [{
+                "type": "output_text",
+                "text": (
+                    '{"results":['
+                    '{"agency_name":"TxDOT",'
+                    '"project_title":"Bridge Rehabilitation IH-35",'
+                    '"project_description":"Rehabilitation on IH-35.",'
+                    '"estimated_value_usd":5000000,'
+                    '"deadline":"2026-09-01",'
+                    '"contact_email":"rfp@txdot.gov",'
+                    '"source_url":"https://procurement.texas.gov/rfp/12345",'
+                    '"result_type":"rfp","confidence":"high"},'
+                    '{"agency_name":"TWDB",'
+                    '"project_title":"Water Supply Solicitation",'
+                    '"project_description":null,'
+                    '"estimated_value_usd":2500000,'
+                    '"deadline":"2026-10-15",'
+                    '"contact_email":null,'
+                    '"source_url":"https://www.twdb.texas.gov/projects/water-supply-rfp",'
+                    '"result_type":"rfp","confidence":"medium"}'
+                    ']}'
+                ),
+            }],
+        }
+    ]
 }
 
 
 def _env_vars(monkeypatch) -> None:
-    """Set required env vars for tests."""
-    monkeypatch.setenv("TAVILY_API_KEY", "test-tavily-key")
-    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://fake-openai.openai.azure.com/")
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", _AZURE_ENDPOINT)
     monkeypatch.setenv("AZURE_OPENAI_API_KEY", "fake-openai-key")
-    monkeypatch.setenv("AZURE_OPENAI_EVAL_DEPLOYMENT_NAME", "gpt-4.1-nano")
+    monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4.1-mini")
 
 
 # ---------------------------------------------------------------------------
-# Query construction tests (logic unchanged from Brave version)
+# Instruction-building tests
 # ---------------------------------------------------------------------------
 
 
-def test_query_construction_with_site_hints():
-    """_build_search_query should add site:.gov OR site:.us when geography is provided."""
+def test_instructions_include_query_and_geography():
     inp = WebProcurementSearchInput(query="bridge rehabilitation", geography="Texas")
-    result = _build_search_query(inp)
+    out = _build_instructions(inp)
+    assert "bridge rehabilitation" in out
+    assert "in Texas" in out
+    # Default phrasing when no result_type given
+    assert "procurement opportunities" in out
 
-    assert "bridge rehabilitation" in result
-    assert "site:.gov OR site:.us" in result
 
-
-def test_query_with_rfp_type():
-    """_build_search_query should append RFP-related terms when result_type='rfp'."""
+def test_instructions_for_rfp_type():
     inp = WebProcurementSearchInput(query="water treatment plant", result_type="rfp")
-    result = _build_search_query(inp)
-
-    assert "water treatment plant" in result
-    assert '"request for proposals"' in result or "RFP" in result or "solicitation" in result
+    out = _build_instructions(inp)
+    assert "requests for proposals" in out.lower()
 
 
-def test_query_sector_terms_appended():
-    """Sector terms should be appended for known sectors."""
-    inp = WebProcurementSearchInput(query="energy project", sector="transportation")
-    result = _build_search_query(inp)
-
-    assert "transportation infrastructure" in result
-
-
-def test_query_bond_type():
-    """Bond result_type should add bond-related search terms."""
+def test_instructions_for_bond_type():
     inp = WebProcurementSearchInput(query="Austin infrastructure", result_type="bond")
-    result = _build_search_query(inp)
+    out = _build_instructions(inp)
+    assert "bond" in out.lower()
 
-    assert '"bond election"' in result or '"municipal bond"' in result
+
+def test_instructions_apply_sector_term():
+    inp = WebProcurementSearchInput(query="energy project", sector="transportation")
+    out = _build_instructions(inp)
+    assert "transportation infrastructure" in out
 
 
-def test_query_no_optional_fields():
-    """With no optional fields, query should just be the raw query string."""
+def test_instructions_default_no_optional_fields():
     inp = WebProcurementSearchInput(query="Texas infrastructure procurement")
-    result = _build_search_query(inp)
-
-    assert result == "Texas infrastructure procurement"
+    out = _build_instructions(inp)
+    assert "Texas infrastructure procurement" in out
+    # No "in <geography>" qualifier when geography is unset
+    assert " in " not in out.split("Search the web")[1][:200]
 
 
 # ---------------------------------------------------------------------------
-# Missing API key test
+# Configuration-error tests
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_missing_tavily_api_key_returns_error(monkeypatch):
-    """Without TAVILY_API_KEY, the tool should return a structured error dict."""
-    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+async def test_missing_azure_endpoint_returns_error(monkeypatch):
+    """Without AZURE_OPENAI_ENDPOINT, the tool returns a structured error dict."""
+    monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_API_KEY", raising=False)
 
     inp = WebProcurementSearchInput(query="Texas bridge RFP")
     result = await search_web_procurement(inp)
@@ -135,96 +134,65 @@ async def test_missing_tavily_api_key_returns_error(monkeypatch):
     assert isinstance(result, dict)
     assert "error" in result
     assert result.get("retriable") is False
+    assert result.get("source") == "azure_openai"
 
 
 # ---------------------------------------------------------------------------
-# Tavily API error handling
+# Azure OpenAI error handling
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_tavily_api_error_returns_structured_error(monkeypatch):
-    """A non-2xx response from Tavily should return a structured error dict."""
+async def test_responses_api_error_returns_structured_error(monkeypatch):
+    """A non-2xx Azure Responses response yields a structured error dict."""
     _env_vars(monkeypatch)
 
     with respx.mock() as mock:
-        mock.post(TAVILY_SEARCH_URL).mock(return_value=Response(401, text="Unauthorized"))
+        mock.post(url__startswith=_RESPONSES_URL).mock(
+            return_value=Response(401, text="Unauthorized")
+        )
 
         inp = WebProcurementSearchInput(query="water treatment RFP", limit=4)
         result = await search_web_procurement(inp)
 
     assert isinstance(result, dict)
     assert "error" in result
-    assert "Tavily" in result["error"]
-
-
-# ---------------------------------------------------------------------------
-# Content passed directly to extraction (no separate HTTP fetches)
-# ---------------------------------------------------------------------------
+    assert "Azure OpenAI" in result["error"]
+    assert result["source"] == "azure_openai"
 
 
 @pytest.mark.asyncio
-async def test_content_passed_directly_to_extraction(monkeypatch):
-    """
-    Verify that Tavily's content field is passed directly to _extract_procurement_data
-    without any additional HTTP requests being made.
-    """
+async def test_5xx_marked_retriable(monkeypatch):
+    """5xx responses should be flagged retriable=True so the caller may retry."""
     _env_vars(monkeypatch)
 
-    captured_texts: list[str] = []
-
-    import tools.web_procurement_search as mod
-
-    def _fake_extract(text: str, source_url: str):
-        captured_texts.append(text)
-        rec = dict(_EXTRACTED_RECORD)
-        rec["source_url"] = source_url
-        return rec
-
-    monkeypatch.setattr(mod, "_extract_procurement_data", _fake_extract)
-
     with respx.mock() as mock:
-        # Only mock the Tavily endpoint — no page-fetch URLs registered
-        mock.post(TAVILY_SEARCH_URL).mock(return_value=Response(200, json=_TAVILY_RESPONSE))
+        mock.post(url__startswith=_RESPONSES_URL).mock(
+            return_value=Response(503, text="Unavailable")
+        )
 
-        inp = WebProcurementSearchInput(query="bridge RFP", geography="Texas", limit=4)
+        inp = WebProcurementSearchInput(query="water treatment RFP")
         result = await search_web_procurement(inp)
 
-    # Extraction was called with the pre-fetched content from Tavily directly
-    assert len(captured_texts) == 2
-    assert "TxDOT is soliciting" in captured_texts[0]
-    assert "TWDB requests proposals" in captured_texts[1]
-
-    # Results are a plain list (no _partial_results envelope)
-    assert isinstance(result, list)
-    assert len(result) == 2
-    for rec in result:
-        assert rec["_source"] == "web_search"
-        assert rec["_search_engine"] == "Tavily"
-
-
-# ---------------------------------------------------------------------------
-# Extraction filtering
-# ---------------------------------------------------------------------------
+    assert isinstance(result, dict)
+    assert result.get("retriable") is True
 
 
 @pytest.mark.asyncio
-async def test_extraction_skips_low_confidence(monkeypatch):
-    """When _extract_procurement_data returns None (low confidence), record is excluded."""
+async def test_429_marked_retriable(monkeypatch):
+    """Rate-limit (429) should be flagged retriable=True."""
     _env_vars(monkeypatch)
 
-    import tools.web_procurement_search as mod
-
-    monkeypatch.setattr(mod, "_extract_procurement_data", lambda text, url: None)
-
     with respx.mock() as mock:
-        mock.post(TAVILY_SEARCH_URL).mock(return_value=Response(200, json=_TAVILY_RESPONSE))
+        mock.post(url__startswith=_RESPONSES_URL).mock(
+            return_value=Response(429, text="Too Many Requests")
+        )
 
-        inp = WebProcurementSearchInput(query="bridge RFP", geography="Texas", limit=8)
+        inp = WebProcurementSearchInput(query="water treatment RFP")
         result = await search_web_procurement(inp)
 
-    assert isinstance(result, list)
-    assert len(result) == 0
+    assert isinstance(result, dict)
+    assert result.get("retriable") is True
 
 
 # ---------------------------------------------------------------------------
@@ -233,21 +201,14 @@ async def test_extraction_skips_low_confidence(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_successful_end_to_end_extraction(monkeypatch):
-    """Happy path: Tavily returns results with content, extraction produces records."""
+async def test_successful_end_to_end(monkeypatch):
+    """Happy path: Azure OpenAI returns structured JSON, tool unwraps the results array."""
     _env_vars(monkeypatch)
 
-    import tools.web_procurement_search as mod
-
-    def _fake_extract(text: str, source_url: str):
-        rec = dict(_EXTRACTED_RECORD)
-        rec["source_url"] = source_url
-        return rec
-
-    monkeypatch.setattr(mod, "_extract_procurement_data", _fake_extract)
-
     with respx.mock() as mock:
-        mock.post(TAVILY_SEARCH_URL).mock(return_value=Response(200, json=_TAVILY_RESPONSE))
+        mock.post(url__startswith=_RESPONSES_URL).mock(
+            return_value=Response(200, json=_RESPONSES_PAYLOAD)
+        )
 
         inp = WebProcurementSearchInput(
             query="bridge rehabilitation",
@@ -260,24 +221,77 @@ async def test_successful_end_to_end_extraction(monkeypatch):
 
     assert isinstance(result, list)
     assert len(result) == 2
-    assert result[0]["_source"] == "web_search"
-    assert result[0]["_search_engine"] == "Tavily"
-    assert "source_url" in result[0]
+    assert result[0]["agency_name"] == "TxDOT"
+    assert result[0]["source_url"] == "https://procurement.texas.gov/rfp/12345"
+    assert result[1]["confidence"] == "medium"
 
 
 @pytest.mark.asyncio
-async def test_empty_tavily_results_returns_empty_list(monkeypatch):
-    """When Tavily returns no results, the tool returns an empty list."""
+async def test_empty_results_returned_as_empty_list(monkeypatch):
+    """When the model finds nothing, an empty results array yields an empty list."""
     _env_vars(monkeypatch)
 
-    with respx.mock() as mock:
-        mock.post(TAVILY_SEARCH_URL).mock(return_value=Response(200, json={"results": []}))
+    empty_payload = {
+        "output": [{
+            "type": "message",
+            "content": [{"type": "output_text", "text": '{"results":[]}'}],
+        }]
+    }
 
-        inp = WebProcurementSearchInput(query="obscure Wyoming decommissioning RFP", limit=4)
+    with respx.mock() as mock:
+        mock.post(url__startswith=_RESPONSES_URL).mock(
+            return_value=Response(200, json=empty_payload)
+        )
+
+        inp = WebProcurementSearchInput(query="obscure Wyoming decommissioning RFP")
         result = await search_web_procurement(inp)
 
     assert isinstance(result, list)
     assert len(result) == 0
+
+
+@pytest.mark.asyncio
+async def test_no_output_text_returns_empty_list(monkeypatch):
+    """If the API returns no output_text content, treat as empty results."""
+    _env_vars(monkeypatch)
+
+    no_text_payload = {"output": [{"type": "message", "content": []}]}
+
+    with respx.mock() as mock:
+        mock.post(url__startswith=_RESPONSES_URL).mock(
+            return_value=Response(200, json=no_text_payload)
+        )
+
+        inp = WebProcurementSearchInput(query="anything")
+        result = await search_web_procurement(inp)
+
+    assert isinstance(result, list)
+    assert len(result) == 0
+
+
+@pytest.mark.asyncio
+async def test_malformed_json_returns_structured_error(monkeypatch):
+    """Malformed JSON output from the model returns a structured error dict."""
+    _env_vars(monkeypatch)
+
+    bad_payload = {
+        "output": [{
+            "type": "message",
+            "content": [{"type": "output_text", "text": "not valid json"}],
+        }]
+    }
+
+    with respx.mock() as mock:
+        mock.post(url__startswith=_RESPONSES_URL).mock(
+            return_value=Response(200, json=bad_payload)
+        )
+
+        inp = WebProcurementSearchInput(query="anything")
+        result = await search_web_procurement(inp)
+
+    assert isinstance(result, dict)
+    assert "error" in result
+    assert "malformed" in result["error"].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -286,27 +300,54 @@ async def test_empty_tavily_results_returns_empty_list(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_tavily_request_body(monkeypatch):
-    """Verify the Tavily request is sent with correct fields including include_domains."""
+async def test_request_body_includes_web_search_tool(monkeypatch):
+    """Verify the request includes the web_search_preview tool + json_schema response format."""
     _env_vars(monkeypatch)
-
-    import tools.web_procurement_search as mod
-    monkeypatch.setattr(mod, "_extract_procurement_data", lambda text, url: None)
 
     captured_body: dict = {}
 
     def _capture_request(request):
         import json as _json
         captured_body.update(_json.loads(request.content))
-        return Response(200, json={"results": []})
+        return Response(200, json={"output": [{"type": "message", "content": [
+            {"type": "output_text", "text": '{"results":[]}'}
+        ]}]})
 
     with respx.mock() as mock:
-        mock.post(TAVILY_SEARCH_URL).mock(side_effect=_capture_request)
+        mock.post(url__startswith=_RESPONSES_URL).mock(side_effect=_capture_request)
 
         inp = WebProcurementSearchInput(query="water RFP Texas", limit=5)
         await search_web_procurement(inp)
 
-    assert captured_body.get("search_depth") == "advanced"
-    assert ".gov" in captured_body.get("include_domains", [])
-    assert captured_body.get("max_results") == 5
-    assert "api_key" in captured_body
+    assert captured_body.get("model") == "gpt-4.1-mini"
+    assert isinstance(captured_body.get("input"), str)
+    assert "water RFP Texas" in captured_body["input"]
+    tools = captured_body.get("tools", [])
+    assert any(t.get("type") == "web_search_preview" for t in tools)
+    text_format = captured_body.get("text", {}).get("format", {})
+    assert text_format.get("type") == "json_schema"
+    assert text_format.get("name") == "procurement_results"
+    assert text_format.get("strict") is True
+
+
+@pytest.mark.asyncio
+async def test_request_uses_api_key_header(monkeypatch):
+    """The Azure OpenAI api-key header must be set on the outbound request."""
+    _env_vars(monkeypatch)
+
+    captured_headers: dict = {}
+
+    def _capture_request(request):
+        captured_headers.update(dict(request.headers))
+        return Response(200, json={"output": [{"type": "message", "content": [
+            {"type": "output_text", "text": '{"results":[]}'}
+        ]}]})
+
+    with respx.mock() as mock:
+        mock.post(url__startswith=_RESPONSES_URL).mock(side_effect=_capture_request)
+
+        inp = WebProcurementSearchInput(query="anything")
+        await search_web_procurement(inp)
+
+    # httpx normalizes header keys to lowercase
+    assert captured_headers.get("api-key") == "fake-openai-key"

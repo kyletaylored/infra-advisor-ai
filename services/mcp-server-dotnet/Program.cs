@@ -58,7 +58,10 @@ app.MapGet("/health", () => Results.Ok(new
     keys_configured = new
     {
         samgov = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("SAMGOV_API_KEY")),
-        tavily = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("TAVILY_API_KEY")),
+        // Web search now uses Azure OpenAI's web_search_preview tool — same
+        // AZURE_OPENAI_API_KEY/ENDPOINT as the rest of the integration. No
+        // separate third-party key required.
+        azure_openai = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY")),
     },
 }));
 

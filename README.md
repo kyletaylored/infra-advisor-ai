@@ -69,7 +69,7 @@ flowchart LR
     Q["User Query"] --> Router["Router Agent\nLLM structured output\n→ RouteDecision"]
     Router -->|engineering| E["Engineering Specialist\nBridges · TxDOT · Energy · Water · FEMA"]
     Router -->|water_energy| W["Water/Energy Specialist\nEPA · TWDB · EIA · ERCOT"]
-    Router -->|business_development| B["BD Specialist\nSAM.gov · USASpending · Tavily"]
+    Router -->|business_development| B["BD Specialist\nSAM.gov · USASpending · Azure web_search"]
     Router -->|document| D["Document Specialist\nSOWs · Risk summaries · Cost estimates"]
     Router -->|general| G["General Specialist\nAll tools"]
     E & W & B & D & G --> Ans["Answer + Citations"]
@@ -175,7 +175,8 @@ Managed by a single `DatadogAgent` custom resource via the Datadog Operator.
 - **Datadog account** (US3 site) with API + App keys
 - **EIA API key** — free at [eia.gov](https://www.eia.gov/opendata/)
 - **SAM.gov API key** — free at [api.sam.gov](https://api.sam.gov) (enables procurement opportunities tool)
-- **Tavily API key** — free tier at [tavily.com](https://tavily.com) (enables web RFP search tool)
+
+The web RFP search tool runs on Azure OpenAI's `web_search_preview` tool — no separate vendor key required; it uses the same `AZURE_OPENAI_API_KEY` listed below.
 
 ## Quick Start
 
@@ -201,7 +202,7 @@ make create-ghcr-secret          # GHCR imagePullSecret
 make create-secrets              # all application secrets (reads from .env)
 ```
 
-`make create-secrets` runs all individual secret targets: MCP server (Azure + EIA + ERCOT + SAM.gov + Tavily), agent API (Azure OpenAI), auth API (JWT + Postgres), Datadog Postgres (DBM), and airflow secrets.
+`make create-secrets` runs all individual secret targets: MCP server (Azure + EIA + ERCOT + SAM.gov), agent API (Azure OpenAI), auth API (JWT + Postgres), Datadog Postgres (DBM), and airflow secrets.
 
 ### 4. Deploy to Kubernetes
 

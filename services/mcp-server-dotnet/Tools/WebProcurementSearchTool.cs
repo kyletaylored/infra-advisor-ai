@@ -1,23 +1,38 @@
 using System.ComponentModel;
+using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
-using Azure;
-using Azure.AI.OpenAI;
 using ModelContextProtocol.Server;
-using OpenAI.Chat;
 
 namespace InfraAdvisor.McpServer.Tools;
 
+// Web search for state / local procurement pages using Azure OpenAI's
+// Responses API with the web_search_preview tool. Replaces the previous
+// two-hop Tavily-search → gpt-4.1-nano-extraction pipeline with a single
+// Azure OpenAI call: the Responses API runs the search, the model
+// distills hits into structured procurement records via a JSON schema
+// response format, and we return that JSON to the agent.
+//
+// Why: keeps the entire AI stack inside the Azure ecosystem (one vendor,
+// one usage meter, OTel HttpClient already instrumented), removes the
+// Tavily dependency entirely.
+//
+// Requirements:
+//   AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY  — same secret already
+//     used by the gpt-4.1-mini deployment
+//   AZURE_OPENAI_DEPLOYMENT_NAME (default: gpt-4.1-mini) — must be a
+//     deployment that supports web_search_preview (gpt-4o family or
+//     gpt-4.1 family). gpt-4.1-nano does NOT support it.
+//
+// Endpoint contract:
+//   POST {endpoint}/openai/v1/responses?api-version=preview
+//   body: { model, input, tools=[{type:web_search_preview}],
+//           text.format = json_schema(procurement_results) }
 [McpServerToolType]
-public sealed class WebProcurementSearchTool(IHttpClientFactory httpFactory, ILogger<WebProcurementSearchTool> logger)
+public sealed class WebProcurementSearchTool(
+    IHttpClientFactory httpFactory,
+    ILogger<WebProcurementSearchTool> logger)
 {
-    private const string TavilySearchUrl = "https://api.tavily.com/search";
-
-    private static readonly List<string> IncludeDomains = new()
-    {
-        ".gov", ".us", "demandstar.com", "bidnetdirect.com", "bonfirehub.com"
-    };
-
     private static readonly Dictionary<string, string> SectorTerms = new()
     {
         ["transportation"] = "transportation infrastructure",
@@ -30,8 +45,10 @@ public sealed class WebProcurementSearchTool(IHttpClientFactory httpFactory, ILo
     [McpServerTool(Name = "search_web_procurement")]
     [Description(
         "Search government websites for state/local RFPs, bond elections, and budget announcements. " +
-        "Uses Tavily Search to find .gov and .us procurement pages, then extracts structured data using gpt-4.1-nano. " +
-        "Requires TAVILY_API_KEY env var. " +
+        "Uses Azure OpenAI's Responses API with the web_search_preview tool — runs a live web search " +
+        "and extracts structured procurement records in one call. " +
+        "Requires AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY, and a deployment that supports " +
+        "web_search_preview (gpt-4o or gpt-4.1 family — not gpt-4.1-nano). " +
         "sector: 'transportation' | 'water' | 'energy' | 'buildings' | 'environmental'. " +
         "result_type: 'rfp' | 'bond' | 'budget' | 'award' | 'any'.")]
     public async Task<string> SearchWebProcurementAsync(
@@ -42,183 +59,204 @@ public sealed class WebProcurementSearchTool(IHttpClientFactory httpFactory, ILo
         [Description("Maximum number of results to return")] int limit = 8,
         CancellationToken cancellationToken = default)
     {
-        var tavilyKey = Environment.GetEnvironmentVariable("TAVILY_API_KEY") ?? "";
-        if (string.IsNullOrEmpty(tavilyKey))
-            return SerializeError("TAVILY_API_KEY not configured", "web_procurement", false);
+        var azEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? "";
+        var azApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY") ?? "";
+        var deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT_NAME") ?? "gpt-4.1-mini";
 
-        // Build search query
-        var searchQuery = BuildSearchQuery(query, geography, sector, result_type);
-        logger.LogInformation("web_procurement search query={Query} limit={Limit}", searchQuery, limit);
+        if (string.IsNullOrEmpty(azEndpoint) || string.IsNullOrEmpty(azApiKey))
+            return SerializeError("AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_KEY not configured", "azure_openai", false);
 
-        // Call Tavily
-        var searchResult = await TavilySearchAsync(tavilyKey, searchQuery, limit, cancellationToken);
-        if (searchResult is null)
-            return SerializeError("Tavily search returned null", "tavily", true);
-        if (searchResult.ContainsKey("error"))
-            return JsonSerializer.Serialize(searchResult);
+        var instructions = BuildInstructions(query, geography, sector, result_type, limit);
+        logger.LogInformation(
+            "web_procurement search query={Query} geography={Geography} sector={Sector} result_type={ResultType} limit={Limit}",
+            query, geography, sector, result_type, limit);
 
-        var items = searchResult.TryGetValue("items", out var i) && i is List<Dictionary<string, string>> list ? list : new List<Dictionary<string, string>>();
-
-        if (items.Count == 0)
+        var payload = new
         {
-            logger.LogInformation("web_procurement: no results returned from Tavily");
-            return JsonSerializer.Serialize(Array.Empty<object>());
-        }
-
-        // Extract structured data from each result concurrently (run in thread pool to avoid blocking)
-        var extractionTasks = items.Select(item =>
-            Task.Run(() => ExtractProcurementData(item.GetValueOrDefault("content", ""), item.GetValueOrDefault("url", "")), cancellationToken)
-        ).ToList();
-
-        var extractionResults = await Task.WhenAll(extractionTasks);
-        var results = extractionResults.Where(r => r != null).ToList();
-
-        logger.LogInformation("web_procurement: {Count} results from {Total} Tavily results", results.Count, items.Count);
-        return JsonSerializer.Serialize(results);
-    }
-
-    private async Task<Dictionary<string, object?>?> TavilySearchAsync(string apiKey, string query, int limit, CancellationToken cancellationToken)
-    {
-        var body = new
-        {
-            api_key = apiKey,
-            query,
-            search_depth = "advanced",
-            include_domains = IncludeDomains,
-            max_results = limit,
+            model = deployment,
+            input = instructions,
+            tools = new object[] { new { type = "web_search_preview" } },
+            text = new
+            {
+                format = new
+                {
+                    type = "json_schema",
+                    name = "procurement_results",
+                    schema = ResultsSchema(),
+                    strict = true,
+                },
+            },
         };
 
+        var url = $"{azEndpoint.TrimEnd('/')}/openai/v1/responses?api-version=preview";
         var client = httpFactory.CreateClient();
-        client.Timeout = TimeSpan.FromSeconds(30);
+        client.Timeout = TimeSpan.FromSeconds(60);
 
         HttpResponseMessage resp;
         try
         {
-            var content = new StringContent(JsonSerializer.Serialize(body), System.Text.Encoding.UTF8, "application/json");
-            resp = await client.PostAsync(TavilySearchUrl, content, cancellationToken);
+            using var req = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8,
+                    new MediaTypeHeaderValue("application/json")),
+            };
+            req.Headers.TryAddWithoutValidation("api-key", azApiKey);
+            resp = await client.SendAsync(req, cancellationToken);
         }
         catch (TaskCanceledException)
         {
-            return new Dictionary<string, object?> { ["error"] = "Tavily Search API request timed out.", ["retriable"] = true };
+            return SerializeError("Azure OpenAI Responses API request timed out", "azure_openai", true);
         }
         catch (Exception ex)
         {
-            return new Dictionary<string, object?> { ["error"] = $"Tavily Search API request failed: {ex.Message}", ["retriable"] = true };
+            return SerializeError($"Azure OpenAI Responses API request failed: {ex.Message}", "azure_openai", true);
         }
 
         var statusCode = (int)resp.StatusCode;
+        var body = await resp.Content.ReadAsStringAsync(cancellationToken);
+
         if (statusCode >= 400)
-            return new Dictionary<string, object?> { ["error"] = $"Tavily Search API error: HTTP {statusCode}", ["retriable"] = statusCode >= 500 };
-
-        var json = await resp.Content.ReadAsStringAsync(cancellationToken);
-        using var doc = JsonDocument.Parse(json);
-        var data = doc.RootElement;
-
-        var rawResults = data.TryGetProperty("results", out var r) ? r.EnumerateArray().ToList() : new List<JsonElement>();
-        var items = rawResults.Select(item => new Dictionary<string, string>
         {
-            ["url"] = item.TryGetProperty("url", out var u) ? u.GetString() ?? "" : "",
-            ["title"] = item.TryGetProperty("title", out var t) ? t.GetString() ?? "" : "",
-            ["content"] = item.TryGetProperty("content", out var c) ? c.GetString() ?? "" : "",
-        }).ToList();
+            logger.LogWarning("web_procurement: Azure OpenAI HTTP {Status}: {Body}",
+                statusCode, body.Length > 300 ? body[..300] : body);
+            return SerializeError($"Azure OpenAI Responses API error: HTTP {statusCode}", "azure_openai",
+                retriable: statusCode >= 500 || statusCode == 429);
+        }
 
-        return new Dictionary<string, object?> { ["items"] = items };
+        // Responses API shape: { "output": [{type:"message", content:[{type:"output_text", text:"..."}]}] }
+        // The structured JSON we asked for lives inside the message's output_text field.
+        var jsonText = ExtractOutputText(body);
+        if (string.IsNullOrWhiteSpace(jsonText))
+        {
+            logger.LogWarning("web_procurement: no output_text in response");
+            return JsonSerializer.Serialize(Array.Empty<object>());
+        }
+
+        // Unwrap the procurement_results envelope; agents expect the bare array.
+        try
+        {
+            using var doc = JsonDocument.Parse(jsonText);
+            if (doc.RootElement.TryGetProperty("results", out var resultsEl) &&
+                resultsEl.ValueKind == JsonValueKind.Array)
+            {
+                logger.LogInformation("web_procurement: returned {Count} results", resultsEl.GetArrayLength());
+                return resultsEl.GetRawText();
+            }
+            return jsonText;
+        }
+        catch (JsonException ex)
+        {
+            logger.LogWarning("web_procurement: failed to parse model JSON: {Error}", ex.Message);
+            return SerializeError("Model returned malformed JSON", "azure_openai", true);
+        }
     }
 
-    private Dictionary<string, object?>? ExtractProcurementData(string text, string sourceUrl)
+    private static string BuildInstructions(
+        string query, string? geography, string? sector, string? resultType, int limit)
+    {
+        var qualifiers = new List<string> { query };
+        if (!string.IsNullOrEmpty(geography)) qualifiers.Add($"in {geography}");
+        if (!string.IsNullOrEmpty(sector) && SectorTerms.TryGetValue(sector, out var sectorTerm))
+            qualifiers.Add(sectorTerm);
+        var typePhrase = resultType switch
+        {
+            "rfp" => "active requests for proposals (RFPs) and solicitations",
+            "bond" => "bond elections and municipal bond initiatives",
+            "budget" => "infrastructure budget and capital improvement plans",
+            "award" => "recent procurement awards",
+            _ => "procurement opportunities and announcements",
+        };
+
+        return
+            $"Search the web for up to {limit} {typePhrase} matching: {string.Join(" ", qualifiers)}. " +
+            "Prefer official government domains (.gov, .us, state/county/city procurement portals) " +
+            "and recognized procurement aggregators (demandstar.com, bidnetdirect.com, bonfirehub.com). " +
+            "For each hit, extract structured fields. " +
+            "Use the source_url that links directly to the official announcement page. " +
+            "Set confidence='high' only when the page clearly states the project title, " +
+            "agency, and deadline; 'medium' when 1-2 fields are inferred; 'low' when most " +
+            "details are missing. Return ONLY high or medium confidence results. " +
+            "Set result_type appropriately (rfp/award/bond/budget/other). " +
+            "If you cannot find any matching opportunities, return an empty results array.";
+    }
+
+    private static object ResultsSchema() => new
+    {
+        type = "object",
+        additionalProperties = false,
+        required = new[] { "results" },
+        properties = new
+        {
+            results = new
+            {
+                type = "array",
+                items = new
+                {
+                    type = "object",
+                    additionalProperties = false,
+                    required = new[]
+                    {
+                        "agency_name", "project_title", "project_description",
+                        "estimated_value_usd", "deadline", "contact_email",
+                        "source_url", "result_type", "confidence",
+                    },
+                    properties = new
+                    {
+                        agency_name = new { type = new[] { "string", "null" } },
+                        project_title = new { type = new[] { "string", "null" } },
+                        project_description = new
+                        {
+                            type = new[] { "string", "null" },
+                            maxLength = 240,
+                        },
+                        estimated_value_usd = new { type = new[] { "integer", "null" } },
+                        deadline = new
+                        {
+                            type = new[] { "string", "null" },
+                            description = "ISO 8601 date (YYYY-MM-DD) or null when unknown",
+                        },
+                        contact_email = new { type = new[] { "string", "null" } },
+                        source_url = new { type = "string" },
+                        result_type = new { @enum = new[] { "rfp", "award", "bond", "budget", "other" } },
+                        confidence = new { @enum = new[] { "high", "medium", "low" } },
+                    },
+                },
+            },
+        },
+    };
+
+    // Walks the Responses API output array and concatenates every
+    // output_text content piece into a single string. The model returns
+    // a single text item when using text.format=json_schema, but be
+    // defensive against multi-item responses.
+    private static string ExtractOutputText(string responseBody)
     {
         try
         {
-            var azEndpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? "";
-            var azApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_API_KEY") ?? "";
-            if (string.IsNullOrEmpty(azEndpoint) || string.IsNullOrEmpty(azApiKey))
+            using var doc = JsonDocument.Parse(responseBody);
+            if (!doc.RootElement.TryGetProperty("output", out var output) ||
+                output.ValueKind != JsonValueKind.Array)
+                return "";
+
+            var sb = new StringBuilder();
+            foreach (var item in output.EnumerateArray())
             {
-                logger.LogDebug("Azure OpenAI not configured for web procurement extraction");
-                return null;
-            }
-
-            var deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_EVAL_DEPLOYMENT_NAME") ?? "gpt-4.1-nano";
-            var aoaiClient = new AzureOpenAIClient(new Uri(azEndpoint), new AzureKeyCredential(azApiKey));
-            var chatClient = aoaiClient.GetChatClient(deployment);
-
-            var maxText = text.Length > 2500 ? text[..2500] : text;
-            var prompt = $"""
-                Extract procurement information from this government webpage text.
-                Return ONLY valid JSON with these fields:
-                - agency_name (string or null)
-                - project_title (string or null)
-                - project_description (max 200 chars, string or null)
-                - estimated_value_usd (integer or null)
-                - deadline (ISO date string or null)
-                - contact_email (string or null)
-                - source_url (string - use "{sourceUrl}")
-                - result_type ("rfp" | "award" | "bond" | "budget" | "other")
-                - confidence ("high" | "medium" | "low")
-
-                Return null for any field you cannot confidently determine.
-                Text: {maxText}
-                """;
-
-            var response = chatClient.CompleteChat(new[]
-            {
-                new UserChatMessage(prompt)
-            }, new ChatCompletionOptions { Temperature = 0, MaxOutputTokenCount = 400 });
-
-            var content = response.Value.Content[0].Text ?? "";
-            var jsonMatch = Regex.Match(content, @"\{.*\}", RegexOptions.Singleline);
-            if (!jsonMatch.Success) return null;
-
-            using var doc = JsonDocument.Parse(jsonMatch.Value);
-            var data = doc.RootElement;
-
-            var confidence = data.TryGetProperty("confidence", out var conf) ? conf.GetString() : null;
-            var resultType = data.TryGetProperty("result_type", out var rt) ? rt.GetString() : null;
-
-            if (confidence == "low" || resultType == "other") return null;
-
-            // Build result dict
-            var result = new Dictionary<string, object?>();
-            foreach (var prop in data.EnumerateObject())
-            {
-                result[prop.Name] = prop.Value.ValueKind switch
+                if (!item.TryGetProperty("content", out var content) ||
+                    content.ValueKind != JsonValueKind.Array) continue;
+                foreach (var part in content.EnumerateArray())
                 {
-                    JsonValueKind.String => prop.Value.GetString(),
-                    JsonValueKind.Number => prop.Value.TryGetInt64(out var i) ? (object)i : prop.Value.GetDouble(),
-                    JsonValueKind.True => true,
-                    JsonValueKind.False => false,
-                    JsonValueKind.Null => null,
-                    _ => prop.Value.ToString(),
-                };
+                    if (part.TryGetProperty("type", out var t) &&
+                        t.GetString() == "output_text" &&
+                        part.TryGetProperty("text", out var text))
+                        sb.Append(text.GetString());
+                }
             }
-            result["_source"] = "web_search";
-            result["_search_engine"] = "Tavily";
-            return result;
+            return sb.ToString();
         }
-        catch (Exception ex)
+        catch
         {
-            logger.LogDebug("Extraction failed for {Url}: {Error}", sourceUrl, ex.Message);
-            return null;
+            return "";
         }
-    }
-
-    private static string BuildSearchQuery(string query, string? geography, string? sector, string? resultType)
-    {
-        var parts = new List<string> { query };
-
-        if (!string.IsNullOrEmpty(geography))
-            parts.Add("site:.gov OR site:.us");
-
-        if (!string.IsNullOrEmpty(sector) && SectorTerms.TryGetValue(sector, out var sectorTerm))
-            parts.Add(sectorTerm);
-
-        if (resultType == "rfp")
-            parts.Add("\"request for proposals\" OR \"RFP\" OR \"solicitation\"");
-        else if (resultType == "bond")
-            parts.Add("\"bond election\" OR \"municipal bond\"");
-        else if (resultType == "budget")
-            parts.Add("\"infrastructure budget\" OR \"capital improvement plan\"");
-
-        return string.Join(" ", parts);
     }
 
     private static string SerializeError(string message, string source, bool retriable) =>
