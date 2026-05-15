@@ -9,9 +9,7 @@ using InfraAdvisor.AgentApi.Models;
 using InfraAdvisor.AgentApi.Observability;
 using InfraAdvisor.AgentApi.Services;
 using InfraAdvisor.AgentApi.Services.Evaluators;
-using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
-using ModelContextProtocol.Client;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -89,30 +87,24 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 builder.Services.AddSingleton(_ => new AzureOpenAIClient(
     new Uri(azureEndpoint), new AzureKeyCredential(azureApiKey)));
 
-// ── MCP client — connect once at startup, list tools, register both ──────────
-// We connect synchronously before builder.Build() so the tools list is
-// captured into the agent factory closure below. Connection failure aborts
-// startup with a clear log line.
-McpClient mcpClient;
-IList<AITool> mcpTools;
-try
-{
-    var transport = new HttpClientTransport(new HttpClientTransportOptions
-    {
-        Endpoint = new Uri(mcpServerUrl),
-        Name = "infra-advisor-agent-api-dotnet",
-    });
-    mcpClient = await McpClient.CreateAsync(transport);
-    var listed = await mcpClient.ListToolsAsync();
-    mcpTools = [.. listed];
-    Console.WriteLine($"[mcp] connected to {mcpServerUrl}; loaded {mcpTools.Count} tool(s): {string.Join(", ", listed.Select(t => t.Name))}");
-}
-catch (Exception ex)
-{
-    Console.Error.WriteLine($"[mcp] FATAL: failed to connect to {mcpServerUrl}: {ex.Message}");
-    throw;
-}
-builder.Services.AddSingleton(mcpClient);
+// ── MCP client holder — lazy connect with reconnect-on-session-expired ─────
+// Previously we did a synchronous McpClient.CreateAsync at startup and
+// registered the resulting client as a singleton. That worked fine until
+// mcp-server-dotnet restarted (any rollout, OOM, AKS rebalance) — the
+// cached client's session ID stopped resolving on the new server pod and
+// every tool call returned HTTP 404. The only mitigation was to manually
+// `kubectl rollout restart deployment/agent-api-dotnet`.
+//
+// McpClientHolder fixes that: it lazy-connects on first use, exposes
+// RefreshAsync() to recreate the client + tool list on demand, and
+// returns a monotonically-incrementing Generation that the AgentHolder
+// uses as a cache key. AgentService catches session-expired exceptions
+// and calls RefreshAsync — first request after an mcp-server restart
+// pays one extra round trip; everything after is normal.
+builder.Services.AddSingleton(sp => new McpClientHolder(
+    serverUrl: mcpServerUrl,
+    clientName: "infra-advisor-agent-api-dotnet",
+    logger: sp.GetRequiredService<ILogger<McpClientHolder>>()));
 
 // ── IChatClient pipeline (M.E.AI) ─────────────────────────────────────────────
 // .UseFunctionInvocation() runs the tool-call loop and emits execute_tool spans.
@@ -171,22 +163,17 @@ const string AgentSystemPrompt =
     "9. Respond in the same language the user writes in. Keep responses concise for data lookups; " +
     "detailed for engineering analysis and document drafts.";
 
-builder.Services.AddSingleton<AIAgent>(sp =>
-    new ChatClientAgent(
-            sp.GetRequiredService<IChatClient>(),
-            new ChatClientAgentOptions
-            {
-                Name = "infra-advisor",
-                ChatOptions = new ChatOptions
-                {
-                    Instructions = AgentSystemPrompt,
-                    Tools = mcpTools,
-                },
-            })
-        .AsBuilder()
-        .UseOpenTelemetry(sourceName: TelemetrySetup.ActivitySourceName,
-                          configure: cfg => cfg.EnableSensitiveData = true)
-        .Build());
+// AgentHolder builds (and rebuilds) the ChatClientAgent against the current
+// McpClientHolder tool list. ChatClientAgent's ChatOptions.Tools is captured
+// at construction, so the agent must be rebuilt after each MCP reconnect to
+// pick up the fresh AITool instances. Holder caches against
+// McpClientHolder.Generation — one rebuild per reconnect, not per request.
+builder.Services.AddSingleton(sp => new AgentHolder(
+    chatClient:     sp.GetRequiredService<IChatClient>(),
+    mcpHolder:      sp.GetRequiredService<McpClientHolder>(),
+    systemPrompt:   AgentSystemPrompt,
+    agentName:      "infra-advisor",
+    otelSourceName: TelemetrySetup.ActivitySourceName));
 
 // ── Prompt tracking + agent-span capture ──────────────────────────────────────
 // One ActivityListener does two jobs:
@@ -276,10 +263,31 @@ var availableModels = availableModelsRaw
 if (availableModels.Count == 0) availableModels.Add("gpt-4.1-mini");
 appState.AvailableModels.AddRange(availableModels);
 
-// MCP already connected at startup (above); Azure OpenAI client construction
-// is synchronous and pre-flighted by DI. Mark both ready.
+// MCP connects lazily on the first /query (via McpClientHolder). We mark
+// "connected" optimistically here so the /query gate doesn't reject the
+// very first call before the holder has run its connect — if the holder
+// can't reach mcp-server-dotnet it surfaces a clear exception inside the
+// handler. Azure OpenAI client construction is synchronous and pre-
+// flighted by DI.
 appState.McpConnected = true;
 appState.LlmConnected = true;
+
+// Pre-warm the MCP connection in the background so the first /query
+// doesn't pay the connect latency. Best-effort; failure is logged and
+// the next /query will retry.
+_ = Task.Run(async () =>
+{
+    try
+    {
+        var holder = app.Services.GetRequiredService<McpClientHolder>();
+        await holder.GetClientAsync(CancellationToken.None);
+    }
+    catch (Exception ex)
+    {
+        startupLogger.LogWarning(
+            "MCP pre-warm failed (will retry on first /query): {Error}", ex.Message);
+    }
+});
 
 // ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -398,12 +406,12 @@ app.MapGet("/suggestions/initial", async (
 app.MapGet("/models", (AppState state) =>
     Results.Ok(new { models = state.AvailableModels, @default = state.DefaultModel }));
 
-app.MapGet("/tools", async (McpClient mcp, AppState state, HttpContext httpContext) =>
+app.MapGet("/tools", async (McpClientHolder holder, AppState state, HttpContext httpContext) =>
 {
     if (!state.McpConnected)
         return Results.Problem(detail: "MCP client not available", statusCode: 503);
 
-    var tools = await mcp.ListToolsAsync(cancellationToken: httpContext.RequestAborted);
+    var tools = await holder.GetToolsAsync(httpContext.RequestAborted);
     var result = tools.Select(t => new
     {
         name = t.Name,

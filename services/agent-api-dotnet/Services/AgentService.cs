@@ -3,6 +3,8 @@ using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
+using ModelContextProtocol;
+using ModelContextProtocol.Client;
 using InfraAdvisor.AgentApi.Models;
 using InfraAdvisor.AgentApi.Services.Evaluators;
 
@@ -21,7 +23,8 @@ namespace InfraAdvisor.AgentApi.Services;
 // round-trip via SerializeSessionAsync / DeserializeSessionAsync), not here.
 public class AgentService
 {
-    private readonly AIAgent _agent;
+    private readonly AgentHolder _agentHolder;
+    private readonly McpClientHolder _mcpHolder;
     private readonly AgentSessionStore _sessions;
     private readonly RetrievalService _retrieval;
     private readonly IReadOnlyList<IResponseEvaluator> _evaluators;
@@ -29,6 +32,7 @@ public class AgentService
     private readonly Histogram<double> _faithfulnessHistogram;
     private readonly Counter<long> _conversationCounter;
     private readonly Counter<long> _toolCounter;
+    private readonly Counter<long> _mcpReconnectCounter;
     private readonly double _evalSampleRate;
     private readonly ILogger<AgentService> _logger;
 
@@ -40,7 +44,8 @@ public class AgentService
         new(Observability.TelemetrySetup.ActivitySourceName);
 
     public AgentService(
-        AIAgent agent,
+        AgentHolder agentHolder,
+        McpClientHolder mcpHolder,
         AgentSessionStore sessions,
         RetrievalService retrieval,
         IEnumerable<IResponseEvaluator> evaluators,
@@ -48,7 +53,8 @@ public class AgentService
         IMeterFactory meterFactory,
         ILogger<AgentService> logger)
     {
-        _agent = agent;
+        _agentHolder = agentHolder;
+        _mcpHolder = mcpHolder;
         _sessions = sessions;
         _retrieval = retrieval;
         _evaluators = evaluators.ToList();
@@ -70,6 +76,9 @@ public class AgentService
         _toolCounter = meter.CreateCounter<long>(
             "infra_advisor.tool.invoked",
             description: "Count of MCP tool invocations made by the agent. Tagged with tool.name + query.domain.");
+        _mcpReconnectCounter = meter.CreateCounter<long>(
+            "infra_advisor.mcp.reconnect",
+            description: "Count of MCP client reconnects triggered by session-expired errors. Tagged with reason.");
     }
 
     public async Task<AgentResult> RunAgentAsync(
@@ -93,13 +102,35 @@ public class AgentService
             ? $"Relevant InfraAdvisor best-practice context:\n{string.Join("\n\n", retrieved)}\n\n---\n\nUser question: {query}"
             : query;
 
+        var agent = await _agentHolder.GetAgentAsync(ct);
+
         // Session lookup / restore / save round-trip wraps the MAF agent call.
-        var session = await _sessions.GetOrCreateAsync(_agent, sessionId, ct);
+        var session = await _sessions.GetOrCreateAsync(agent, sessionId, ct);
 
         AgentResponse response;
         try
         {
-            response = await _agent.RunAsync(augmentedQuery, session, cancellationToken: ct);
+            response = await agent.RunAsync(augmentedQuery, session, cancellationToken: ct);
+        }
+        catch (Exception ex) when (IsMcpSessionExpired(ex))
+        {
+            // mcp-server-dotnet was restarted while this agent-api pod was
+            // up — the cached McpClient's session ID no longer maps to
+            // anything on the (new) server. Reconnect, rebuild the agent
+            // with the fresh tool list, recreate the agent session (the
+            // old one was tied to the old agent's context), and retry once.
+            _logger.LogWarning(
+                "MCP session expired for session={SessionId} — reconnecting and retrying once: {Error}",
+                sessionId, RootErrorMessage(ex));
+            _mcpReconnectCounter.Add(1,
+                new KeyValuePair<string, object?>("reason", "session_expired"));
+            await _mcpHolder.RefreshAsync(ct);
+            agent = await _agentHolder.GetAgentAsync(ct);
+            // Restored session JSON references AITool instances that came
+            // from the prior MCP client; recreate fresh against the new
+            // agent so the tool call routing wires correctly.
+            session = await agent.CreateSessionAsync(ct);
+            response = await agent.RunAsync(augmentedQuery, session, cancellationToken: ct);
         }
         catch (Exception ex)
         {
@@ -108,7 +139,7 @@ public class AgentService
             throw;
         }
 
-        await _sessions.SaveAsync(_agent, sessionId, session, ct);
+        await _sessions.SaveAsync(agent, sessionId, session, ct);
 
         var answer = response.Text ?? "";
         var sources = ExtractSourcesFromResponse(response);
@@ -194,6 +225,38 @@ public class AgentService
                 label, result.Value.ToString() ?? "", result.Reasoning, extraTags),
             _ => Task.CompletedTask,
         };
+
+    // Detect an MCP session-expired condition anywhere in the exception
+    // chain. mcp-server-dotnet returns HTTP 404 with "session has expired"
+    // when the Mcp-Session-Id the client holds no longer maps to a live
+    // session on the (post-restart) server. The .NET MCP client surfaces
+    // this as ClientTransportClosedException whose message includes the
+    // hint phrase. We also accept any McpException whose message names a
+    // session issue, in case the SDK wraps differently in future versions.
+    private static bool IsMcpSessionExpired(Exception ex)
+    {
+        for (var e = ex; e is not null; e = e.InnerException!)
+        {
+            if (e is ClientTransportClosedException) return true;
+            if (e is McpException && e.Message.Contains("session", StringComparison.OrdinalIgnoreCase))
+                return true;
+            // Bare HTTP 404 on the MCP transport — older SDK paths surfaced
+            // it without wrapping in ClientTransportClosedException.
+            if (e is HttpRequestException hex &&
+                (int?)hex.StatusCode == 404 &&
+                e.Message.Contains("/mcp", StringComparison.OrdinalIgnoreCase))
+                return true;
+            if (e.InnerException is null) break;
+        }
+        return false;
+    }
+
+    private static string RootErrorMessage(Exception ex)
+    {
+        var e = ex;
+        while (e.InnerException is not null) e = e.InnerException;
+        return e.Message;
+    }
 
     // Wraps ClassifyDomain in a manual Activity tagged so DD LLMObs renders
     // it as a "task" kind span (alongside the agent / chat / tool / embedding
