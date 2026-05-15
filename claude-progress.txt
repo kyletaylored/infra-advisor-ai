@@ -1,3 +1,117 @@
+[2026-05-15] Pure-OTel pivot: drop DD .NET tracer, fix MCP, attribute-based DBM
+  Three related fixes that together resolve the trace-split bug observed
+  during live verification and finalize the .NET stack as 100% OTel-
+  instrumented (matching the project's stated AECOM demo intent):
+
+  1. MCP session affinity (commits 3733111 + 5b719db revert):
+     ModelContextProtocol.AspNetCore 1.3.0 default is session-stateful;
+     each tool/call request carries an Mcp-Session-Id bound to a specific
+     server pod. Multi-replica round-robin causes follow-up requests to
+     hit the wrong pod → HTTP 400 JsonRpcError → LLM tool callback
+     returns "Function failed". Tried Stateless=true on the server
+     (commit 5b719db) but the .NET MCP client library still issues
+     session-aware requests → 400. Reverted Stateless=true and added
+     sessionAffinity:ClientIP (timeoutSeconds:10800) on the K8s Service
+     so every agent-api-dotnet request pins to the same server pod for
+     3h. Verified live: get_contract_awards now returns real responses;
+     no more "Function failed" errors.
+
+  2. DD .NET tracer removal (this commit):
+     The DD .NET tracer (admission-injected via dotnet-lib.version:v3)
+     ran in parallel with our OTel SDK pipeline and split trace_ids on
+     every request — DD tracer read RUM's legacy x-datadog-trace-id
+     header (64-bit, padded to 128) while OTel SDK generated its own
+     W3C trace_id ignoring that header. invoke_agent and its children
+     emitted on the DD-extracted trace_id; classify_domain / retrieval /
+     embeddings emitted on the OTel-generated one. Result: trace tree
+     literally cut in half across two trace_ids in DD UI. Removing the
+     admission annotation eliminates the conflicting tracer entirely —
+     OTel SDK reads RUM's W3C traceparent natively → unified trace_id
+     end-to-end (RUM → backend → MCP → upstream).
+
+     Files changed:
+       k8s/agent-api-dotnet/deployment.yaml
+       k8s/mcp-server-dotnet/deployment.yaml
+         - admission.datadoghq.com/dotnet-lib.version: v3  (REMOVED)
+       k8s/agent-api-dotnet/configmap.yaml
+       k8s/mcp-server-dotnet/configmap.yaml
+         REMOVED: DD_AGENT_HOST, DD_TRACE_AGENT_PORT, DD_DOGSTATSD_PORT,
+                  DD_TRACE_OTEL_ENABLED, DD_LOGS_INJECTION,
+                  DD_RUNTIME_METRICS_ENABLED, DD_DATA_STREAMS_ENABLED,
+                  DD_CODE_ORIGIN_FOR_SPANS_ENABLED, DD_DBM_PROPAGATION_MODE,
+                  DD_LLMOBS_ENABLED, DD_LLMOBS_ML_APP
+         KEPT: DD_ENV, DD_SERVICE, DD_VERSION, DD_SITE (DD agent uses
+               these for container metadata; OTEL_RESOURCE_ATTRIBUTES
+               is the OTel-side equivalent)
+
+     What we keep without the DD tracer (all via OTel SDK):
+       - Distributed tracing (W3C traceparent via AddAspNetCoreInstrumentation
+         + AddHttpClientInstrumentation)
+       - RUM → backend trace linkage (RUM sends both x-datadog-trace-id
+         AND traceparent; OTel SDK uses traceparent)
+       - LLM Observability (gen_ai.* spans flow via OTLP →
+         datadog-agent collector → LLM Obs ingest; never depended on
+         DD .NET tracer)
+       - Log → trace correlation (Serilog @tr/@sp from System.Diagnostics.
+         Activity; DD agent's csharp log source parses these)
+       - Custom prompt tracking, external evals, business metrics — all
+         OTel-emitted, unaffected
+       - MCP traceparent propagation (SDK 1.3.0 native)
+
+     What we lose:
+       - DD .NET tracer features riding on the CLR profiler:
+         Code Origin for Spans, ASM/AAP RASP, IAST
+       - DBM SQL-comment injection (replaced via attribute correlation
+         below)
+
+  3. DBM correlation via OTel attributes (this commit):
+     Per https://docs.datadoghq.com/opentelemetry/correlate/dbm_and_traces/,
+     DD's DBM ingest correlates OTel Npgsql spans with pg_stat_activity
+     samples via statement-matching + timing-window when the span carries
+     span.type=sql. Replaces DD tracer's SQL-comment injection mechanism.
+
+     datadog/datadog-agent.yaml
+       + processors.attributes/dbm — includes spans matching db.system
+         regex .+ (covers both "postgres" Npgsql.OpenTelemetry emits and
+         "postgresql" OTel canonical), sets span.type=sql. Wired into
+         the traces pipeline AFTER transform/llmobs so all signals are
+         applied.
+
+     Required attributes (verified emitted by Npgsql.OpenTelemetry 9.0.3
+     in the production trace df4f2e54...):
+       db.system: postgres   ✓
+       db.statement: <SQL>   ✓
+       db.name: infraadvisor ✓
+       db.user: infraadvisor ✓
+
+  Verified:
+  [x] All 5 YAML manifests pass kubectl apply --dry-run=client
+  [x] No .NET source changes required — all changes are infra-side
+  [x] Npgsql.OpenTelemetry already emits the required DBM attributes
+      (verified in live trace before this change)
+  [x] MCP tool calls succeed end-to-end (live verified post-affinity)
+
+  [~] Live post-deploy verification:
+      (a) One /query trace shows full trace tree under a SINGLE trace_id:
+          HTTP root → classify_domain → retrieve_best_practices →
+          embeddings → invoke_agent → chat → execute_tool → mcp-server
+          POST /mcp → upstream HttpClient
+      (b) Same trace_id is reachable from RUM session → backend → MCP
+          (the W3C traceparent inheritance chain)
+      (c) DD UI → Database Monitoring → infra-advisor-postgres → Sample
+          Queries shows agent-api-dotnet SELECT/INSERT statements with
+          "Traces" linkage column populated (not empty as before)
+      (d) Old DD .NET tracer init containers no longer present on the
+          new pod descriptions (kubectl describe pod → Init Containers
+          section should show only the user's own init containers, if
+          any, not dd-lib-dotnet-init / apm-inject / etc.)
+      (e) Pod startup faster (fewer init containers to pull/run)
+
+  Note: claude-progress.txt should be cross-referenced by the upcoming
+  rewrite of docs/src/content/docs/observability/llm-observability-
+  dotnet.md to add the new "Pure-OTel architecture: no DD .NET tracer"
+  section and the DBM-via-attributes recipe.
+
 [2026-05-14] Observability gap fixes: Serilog + Npgsql OTel + MCP diagnostic
   Three related .NET observability gaps surfaced during live testing:
     (a) logs not correlated with traces — plain-text console output,
