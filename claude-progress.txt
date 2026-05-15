@@ -1,3 +1,83 @@
+[2026-05-15] Full Postgres DBM feature set + slow-query log collection
+  Live verification of the pure-OTel pivot (bc1f319) surfaced four real
+  gaps the user flagged in the DBM UI:
+    (a) Postgres hostname showed as a pod IP (10.224.0.34) rather than
+        a stable identifier
+    (b) collect_schemas was disabled → DBM Schema Explorer had no schema
+        information for messages/conversations tables
+    (c) collect_settings was disabled → no pg_settings config versioning
+    (d) No index / lock / vacuum / function metrics or log collection
+
+  Files changed:
+    k8s/postgres/deployment.yaml
+      ad.datadoghq.com/postgres.checks annotation expanded:
+        + reported_hostname: "infra-advisor-postgres"  (fixes IP display)
+        + disable_generic_tags: true
+        + collect_activity_metrics, collect_function_metrics,
+          collect_count_metrics, collect_database_size_metrics,
+          collect_wal_metrics, collect_bloat_metrics,
+          collect_checksum_metrics, collect_buffercache_metrics
+        + collect_schemas: { enabled: true, max_tables: 300 }
+        + collect_settings: { enabled: true, collection_interval: 600 }
+        + collect_column_statistics: { enabled: true }
+        + relations: [{relation_regex: ".*"}]  (per-table index/lock/
+          vacuum metrics for every table)
+      ad.datadoghq.com/postgres.logs annotation:
+        + source: postgresql / service: infra-advisor-postgres
+      postgres container args:
+        + shared_preload_libraries: pg_stat_statements,pg_buffercache
+          (was just pg_stat_statements)
+        + track_functions=all  (required by collect_function_metrics)
+        + log_min_duration_statement=1000 (slow-query logging — queries
+          >1s land on stderr → DD log collector → DBM)
+        + log_line_prefix='%m [%p] %q[user=%u,db=%d,app=%a] '
+        + log_destination=stderr / logging_collector=off (so DD picks
+          up the stream directly)
+        + log_lock_waits=on / deadlock_timeout=1000  (fuel DBM lock-tree
+          visualization with real wait evidence)
+        + log_autovacuum_min_duration=1000
+
+    k8s/postgres/dbm-setup.sql
+      + CREATE EXTENSION pg_buffercache  (collect_buffercache_metrics
+        reads from pg_buffercache views — must be in shared_preload
+        AND an actual extension)
+      + datadog.column_statistics() function — pg_stats wrapper with
+        anyarray columns cast to text per DD's canonical template
+        (Postgres can't infer anyarray result types when no anyelement
+        input exists). SECURITY DEFINER for low-priv role access.
+
+  Verified live (post deployment apply + dbm-setup.sql re-run):
+  [x] Postgres pod 1/1 Running on new replica set (b6ddd968d)
+  [x] pg_buffercache extension installed (\dx confirms 1.4)
+  [x] datadog.explain_statement + datadog.column_statistics both
+      present (\df datadog.* shows both)
+  [x] DD agent reloaded postgres check with new instance ID
+      (postgres:abfcae21fb03e0f3) — Configuration Source matches the
+      autodiscovery containerd ID
+  [x] DD agent status reports:
+        resolved_hostname: infra-advisor-postgres   ← stable hostname
+        DBM Activity Samples (collecting)
+        DBM Metadata Samples (collect_schemas working)
+        DBM Query Metrics (query.samples per docs)
+        DBM Query Samples
+  [x] kubectl apply --dry-run=client passed for all manifests
+
+  [~] In DD UI:
+      (a) Database Monitoring → infra-advisor-postgres host appears
+          as "infra-advisor-postgres" (no IP)
+      (b) Schema Explorer populates with messages / conversations
+          tables under the public schema
+      (c) Settings tab shows pg_settings values tracked over time
+      (d) Per-table metrics (size, vacuum, locks, indexes) visible
+          via the relations:[".*"] pattern
+      (e) After a slow query (>1s) executes from agent-api-dotnet,
+          the matching postgres log line lands in DD Logs tagged
+          source:postgresql service:infra-advisor-postgres
+      (f) APM trace span for SELECT/INSERT shows a working "Traces
+          → DBM" linkage when expanded (this is the attribute-based
+          correlation from the pure-OTel pivot c7c2638 finally
+          having the full DBM context to correlate against)
+
 [2026-05-15] Pure-OTel pivot: drop DD .NET tracer, fix MCP, attribute-based DBM
   Three related fixes that together resolve the trace-split bug observed
   during live verification and finalize the .NET stack as 100% OTel-
