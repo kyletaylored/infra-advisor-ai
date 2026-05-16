@@ -1,3 +1,75 @@
+[2026-05-16] Eval pipeline diagnostics — admin UI panel + /eval/status endpoint
+
+  Read-only diagnostic surface for the external-evals pipeline. Without
+  this, the only way to know "is my eval pipeline actually firing?" was
+  to wait for traces to show up in DD LLMObs — which silently fails when
+  DD_API_KEY is missing or sample rate is low. Now visible from the app.
+
+  services/agent-api-dotnet/Services/EvalSubmissionLog.cs  [NEW]
+    Thread-safe 50-entry ring buffer (ConcurrentQueue + Interlocked
+    counters). Records every SubmitAsync call: label, metric_type, value,
+    success/duration_ms/error, trace_id_decimal + span_id_decimal,
+    truncated reasoning. Snapshot() reverses for newest-first UI.
+
+  services/agent-api-dotnet/Services/DatadogEvalsClient.cs
+    + Constructor takes EvalSubmissionLog.
+    + Exposes Enabled / MlApp / Site properties for /eval/status.
+    + Every SubmitAsync call records start/finish to the log including
+      the DD_API_KEY-missing case (logged with success=false +
+      Error="DD_API_KEY not set — submission skipped") so admins can
+      see what *would* have been submitted in a misconfigured env.
+    + try/catch/finally wraps the HTTP call with success tracking.
+
+  services/agent-api-dotnet/Program.cs
+    + builder.Services.AddSingleton<EvalSubmissionLog>();
+    + GET /eval/status — returns sample_rate, registered evaluators
+      (each with type_name + is_llm_judge flag), datadog config
+      (enabled / ml_app / site / api_key_configured), judge deployment,
+      submissions { total, failed, success_rate, recent[50] }.
+
+  services/ui/src/components/EvalDiagnostics.tsx  [NEW ~270 lines]
+    Polls /api-dotnet/eval/status every 10s. Three stacked Boxes:
+      - Header: sample rate %, DD enabled state, judge model, totals.
+      - Registered evaluators: list with deterministic vs LLM-judge
+        badge (purple/gray) and lucide icon (Bot vs BookOpen).
+      - Recent submissions: Table with time / label / value / status /
+        duration / reasoning-or-error, 2-line clamp on the last cell.
+    Empty-state message points the user at sample rate (1-in-10).
+    FormatValue helper renders boolean as colored badge, score as
+    monospace fixed(2), categorical as plain text.
+
+  services/ui/src/components/AdminTab.tsx
+    + Imports EvalDiagnostics.
+    + Adds a new VStack section "Eval pipeline (read-only)" after the
+      user-management table, before the confirmation dialog.
+
+  Why read-only: env-driven config (EVAL_SAMPLE_RATE, DD_API_KEY) means
+  runtime mutation via the UI would diverge from pod-restart-time
+  truth. Live mutation would also require persistence + auth scoping
+  that doesn't pay for itself for a demo-tier app. If we later want
+  mutation, the diagnostic surface is already there as a foundation.
+
+  docs/src/content/docs/observability/llm-observability-dotnet.md
+    Section 4.C updated to reflect async IResponseEvaluator, list the
+    four shipped evaluators (deterministic + LLM-judge), document
+    EvalInput.ToolResults, and add a new "Diagnostics" paragraph
+    pointing at the admin panel + /eval/status endpoint.
+
+  Verified:
+  [x] dotnet build: 0 warnings, 0 errors
+  [x] npx tsc --noEmit: 0 errors (ui type-check clean)
+
+  [~] Live verification (post-deploy):
+      (a) Admin tab loads, "Eval pipeline (read-only)" section renders
+          without console errors
+      (b) Fresh pod with EVAL_SAMPLE_RATE=1.0 and one /query call →
+          5 submissions appear in the Recent table within ~30s
+      (c) Pod with DD_API_KEY intentionally unset → submissions still
+          appear with success=false + "DD_API_KEY not set" in the
+          reasoning/error column (the "even when disabled, log it" path)
+      (d) Sample rate gauge matches the env-var value visible in the
+          running pod's environment
+
 [2026-05-16] Parity doc + M.E.AI Quality evaluators → DD External Evals API
 
   Two pieces of work in one phase:
