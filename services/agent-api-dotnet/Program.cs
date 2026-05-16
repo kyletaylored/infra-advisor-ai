@@ -161,7 +161,44 @@ const string AgentSystemPrompt =
     "7. For document drafts, call search_project_knowledge first for relevant templates and prior project context.\n" +
     "8. Do not speculate about asset conditions not in the data — say \"not available in the dataset\".\n" +
     "9. Respond in the same language the user writes in. Keep responses concise for data lookups; " +
-    "detailed for engineering analysis and document drafts.";
+    "detailed for engineering analysis and document drafts.\n\n" +
+    // ── Few-shot tool-call examples ─────────────────────────────────────────────
+    // Concrete worked patterns the model can anchor on for the high-error
+    // decision points: FIPS state codes (not 2-letter abbrevs), AEC NAICS
+    // codes (not category names), the BD chain pattern, water query_type
+    // dispatch, the document-drafting chain. Keeping these tight — verbosity
+    // here costs every request's input tokens.
+    "Examples of correct tool calls:\n\n" +
+
+    "User: \"Worst-rated bridges in California\"\n" +
+    "→ get_bridge_condition(state_code=\"06\", max_lowest_rating=4, limit=25)\n" +
+    "  (Note: state_code is 2-char FIPS with leading zero. CA=06, TX=48, FL=12, NY=36.)\n\n" +
+
+    "User: \"Find recent federal highway construction awards in Texas under NAICS 237310, " +
+    "then list open opportunities matching the same NAICS\"\n" +
+    "→ get_contract_awards(query=\"highway construction\", geography=\"TX\", naics_codes=[\"237310\"])\n" +
+    "→ get_procurement_opportunities(query=\"highway construction\", geography=\"TX\", naics_codes=[\"237310\"])\n" +
+    "  (BD pairing rule: awards FIRST so competitive context informs the open-opportunity " +
+    "list. Never ask the user for a date range.)\n\n" +
+
+    "User: \"Which Texas community water systems have SDWA violations serving 10K+ people?\"\n" +
+    "→ get_water_infrastructure(query_type=\"violations\", states=[\"TX\"], " +
+    "system_types=[\"CWS\"], has_violations=true, min_population_served=10000)\n" +
+    "  (query_type=\"violations\" — not \"water_systems\". CWS = Community Water System.)\n\n" +
+
+    "User: \"Draft an SOW for an IH-35 bridge rehabilitation project\"\n" +
+    "→ search_project_knowledge(query=\"bridge rehabilitation SOW IH-35\", " +
+    "document_types=[\"sow\", \"case_study\"])\n" +
+    "→ draft_document(document_type=\"scope_of_work\", context={...retrieved snippets...}, " +
+    "project_name=\"IH-35 Bridge Rehabilitation\")\n" +
+    "  (ALWAYS call search_project_knowledge first to pull templates + prior project " +
+    "context; pass retrieved content into context for draft_document.)\n\n" +
+
+    "User: \"Texas renewable energy generation share over the last 5 years\"\n" +
+    "→ get_energy_infrastructure(states=[\"TX\"], data_series=\"fuel_mix\", " +
+    "year_from=2019, year_to=2024)\n" +
+    "  (data_series=\"fuel_mix\" returns % share by fuel — what \"renewable share\" means. " +
+    "Use \"generation\" for raw MWh, \"capacity\" for installed MW.)";
 
 // AgentHolder builds (and rebuilds) the ChatClientAgent against the current
 // McpClientHolder tool list. ChatClientAgent's ChatOptions.Tools is captured
@@ -233,6 +270,7 @@ builder.Services.AddSingleton<RetrievalService>();
 builder.Services.AddHttpClient<DatadogEvalsClient>();
 builder.Services.AddSingleton<IResponseEvaluator, CitationPresentEvaluator>();
 builder.Services.AddSingleton<IResponseEvaluator, BdToolOrderingEvaluator>();
+builder.Services.AddSingleton<IResponseEvaluator, ToolRoutingAccuracyEvaluator>();
 builder.Services.AddSingleton<AgentService>();
 builder.Services.AddSingleton<SuggestionService>();
 builder.Services.AddSingleton<ConversationService>();
