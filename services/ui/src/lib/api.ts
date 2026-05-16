@@ -169,6 +169,123 @@ export async function sendQuery(
   return data;
 }
 
+// ── Streaming /query/stream ─────────────────────────────────────────────────
+// Server-Sent Events emitted by agent-api-dotnet's POST /query/stream. Each
+// event surfaces a step in the agent loop so the UI can render live progress.
+// The discriminator is `event` (matches the SSE event-name line); each
+// variant's payload mirrors Models/StreamEvent.cs on the backend.
+
+export type StreamEvent =
+  | { event: "step"; step: string; status: string; detail?: string | null }
+  | { event: "tool_call_start"; id: string; name: string; args_json?: string | null }
+  | {
+      event: "tool_call_end";
+      id: string;
+      name: string;
+      status: "ok" | "error";
+      result_summary?: string | null;
+      sources: string[];
+      duration_ms: number;
+    }
+  | { event: "text_chunk"; chunk: string }
+  | {
+      event: "done";
+      trace_id: string | null;
+      span_id: string | null;
+      session_id: string;
+      model: string;
+      sources: string[];
+      tools_called: string[];
+      query_domain: string;
+    }
+  | { event: "error"; message: string; trace_id: string | null };
+
+// Streams events from POST /query/stream as an AsyncIterable<StreamEvent>.
+// Caller consumes with `for await (const ev of sendQueryStream(...))`.
+// On HTTP-level error (non-2xx), yields a single { event: "error", ... }
+// then completes. On mid-stream error from the backend, the backend itself
+// emits an event: error block; we just pass it through.
+export async function* sendQueryStream(
+  query: string,
+  model?: string,
+  conversationId?: string,
+  userId?: string,
+  signal?: AbortSignal,
+): AsyncGenerator<StreamEvent, void, void> {
+  const sessionId = getRumSessionId() ?? getSessionId();
+  const response = await fetch(`${getApiBase()}/query/stream`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "text/event-stream",
+      "X-Session-ID": sessionId,
+      ...(conversationId ? { "X-Conversation-ID": conversationId } : {}),
+      ...(userId ? { "X-User-ID": userId } : {}),
+      ...rumHeaders(),
+    },
+    body: JSON.stringify({ query, session_id: sessionId, ...(model ? { model } : {}) }),
+    signal,
+  });
+
+  if (!response.ok) {
+    const { detail, traceId } = await extractErrorDetail(response);
+    console.error(`[api] sendQueryStream ${response.status}:`, detail);
+    yield { event: "error", message: detail, trace_id: traceId };
+    return;
+  }
+  if (!response.body) {
+    yield { event: "error", message: "Empty streaming response body", trace_id: null };
+    return;
+  }
+
+  // Standard SSE parsing: dispatch events on blank-line boundaries. We
+  // intentionally re-implement rather than pulling in eventsource-parser
+  // since the protocol is small and we only handle two field names.
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let blockEnd: number;
+      while ((blockEnd = buffer.indexOf("\n\n")) >= 0) {
+        const block = buffer.slice(0, blockEnd);
+        buffer = buffer.slice(blockEnd + 2);
+        const parsed = parseSseBlock(block);
+        if (parsed) yield parsed;
+      }
+    }
+    // Drain any final partial block (no trailing blank line).
+    if (buffer.trim().length > 0) {
+      const parsed = parseSseBlock(buffer);
+      if (parsed) yield parsed;
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function parseSseBlock(block: string): StreamEvent | null {
+  let eventName: string | null = null;
+  const dataLines: string[] = [];
+  for (const line of block.split("\n")) {
+    if (line.startsWith("event:")) eventName = line.slice(6).trim();
+    else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
+  }
+  if (!eventName || dataLines.length === 0) return null;
+  try {
+    const payload = JSON.parse(dataLines.join("\n"));
+    return { event: eventName, ...payload } as StreamEvent;
+  } catch (err) {
+    console.warn("[api] failed to parse SSE block:", err, block);
+    return null;
+  }
+}
+
 export interface SuggestionItem {
   label: string;
   query: string;

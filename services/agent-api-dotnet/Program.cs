@@ -360,6 +360,103 @@ app.MapPost("/query", async (
         Model: deployment));
 });
 
+// ── /query/stream — Server-Sent Events streaming variant ──────────────────────
+// Same agent pipeline as /query but yields one SSE block per StreamEvent so
+// the UI can show classify_domain / retrieve_best_practices / tool_call /
+// tool_call_end / text_chunk / done events live. NGINX in front of this
+// pod must skip buffering on this path — set in services/ui/nginx.conf and
+// reinforced by the X-Accel-Buffering: no response header below.
+//
+// Trade-off vs /query: no mid-stream MCP-session-expired retry (text we
+// already streamed can't be cleanly rewound). Clients can fall back to
+// /query if the streaming path fails; resilient reconnect lives there.
+app.MapPost("/query/stream", async (
+    QueryRequest body,
+    HttpContext httpContext,
+    AgentService agentService,
+    MemoryService memoryService,
+    ConversationService conversationSvc,
+    AppState state) =>
+{
+    if (!state.McpConnected || !state.LlmConnected)
+    {
+        return Results.Problem(detail: "Agent not ready", statusCode: 503);
+    }
+
+    var headerSessionId = httpContext.Request.Headers["X-Session-ID"].FirstOrDefault();
+    var conversationId = httpContext.Request.Headers["X-Conversation-ID"].FirstOrDefault();
+    var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
+    var sessionId = body.SessionId ?? headerSessionId ?? Guid.NewGuid().ToString();
+
+    string deployment;
+    if (!string.IsNullOrWhiteSpace(body.Model) && state.AvailableModels.Contains(body.Model))
+    {
+        deployment = body.Model;
+    }
+    else
+    {
+        var sessionModel = await memoryService.GetSessionModelAsync(sessionId);
+        deployment = state.AvailableModels.Contains(sessionModel) ? sessionModel : state.DefaultModel;
+    }
+
+    var agentSessionKey = !string.IsNullOrWhiteSpace(conversationId)
+        ? conversationId
+        : sessionId;
+
+    httpContext.Response.Headers.ContentType = "text/event-stream";
+    httpContext.Response.Headers.CacheControl = "no-cache";
+    httpContext.Response.Headers.Append("X-Accel-Buffering", "no");
+    httpContext.Response.Headers.Append("Connection", "keep-alive");
+
+    var jsonOpts = new JsonSerializerOptions
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    // Buckets for the final conversation persistence — written once on
+    // DoneEvent so the row in `messages` matches what /query would have
+    // saved.
+    var fullAnswer = new System.Text.StringBuilder();
+    var doneSources = new List<string>();
+    string? finalTraceId = null;
+    string? finalSpanId = null;
+
+    await foreach (var evt in agentService.RunAgentStreamingAsync(
+        body.Query, agentSessionKey, deployment, httpContext.RequestAborted))
+    {
+        // Accumulate side-effects we need post-stream.
+        switch (evt)
+        {
+            case TextChunkEvent t: fullAnswer.Append(t.Chunk); break;
+            case DoneEvent d:
+                doneSources.AddRange(d.Sources);
+                finalTraceId = d.TraceId;
+                finalSpanId = d.SpanId;
+                break;
+        }
+
+        // Serialize without the EventName field (it goes on the SSE
+        // "event:" line, not in the data payload).
+        var payload = JsonSerializer.Serialize((object)evt, evt.GetType(), jsonOpts);
+        await httpContext.Response.WriteAsync(
+            $"event: {evt.EventName}\ndata: {payload}\n\n",
+            httpContext.RequestAborted);
+        await httpContext.Response.Body.FlushAsync(httpContext.RequestAborted);
+    }
+
+    await memoryService.SetSessionModelAsync(sessionId, deployment);
+
+    if (!string.IsNullOrWhiteSpace(conversationId) && !string.IsNullOrWhiteSpace(userId))
+    {
+        await conversationSvc.SaveMessagesAsync(
+            conversationId, body.Query, fullAnswer.ToString(),
+            doneSources, finalTraceId, finalSpanId);
+    }
+
+    return Results.Empty;
+});
+
 app.MapPost("/suggestions", async (
     SuggestionsRequest body,
     SuggestionService suggestionService,

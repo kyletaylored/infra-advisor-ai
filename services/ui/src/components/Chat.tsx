@@ -11,8 +11,6 @@ import {
   IconButton,
   Link,
   NativeSelect,
-  Separator,
-  Spinner,
   Text,
   Textarea,
   VStack,
@@ -20,7 +18,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Gauge, HardHat, ShieldCheck, Briefcase, Compass, ExternalLink, ChartNoAxesGantt, ChevronLeft } from "lucide-react";
 import { hasSeenTour, startTour } from "../lib/tour";
-import { ApiError, BackendType, BridgeData, Citation, ConversationDetail, ConversationSummary, FeedbackRating, QueryResponse, SuggestionItem, createConversation, deleteConversation, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, getBackend, getConversation, getModel, newConversation, sendQuery, setBackend, setModel, setSessionId, submitFeedback } from "../lib/api";
+import { ApiError, BackendType, BridgeData, ConversationDetail, ConversationSummary, FeedbackRating, StreamEvent, SuggestionItem, createConversation, deleteConversation, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, getBackend, getConversation, getModel, newConversation, sendQueryStream, setBackend, setModel, setSessionId, submitFeedback } from "../lib/api";
 import {
   trackBridgeCardRendered,
   trackMessageCopied,
@@ -31,7 +29,7 @@ import {
 import { AboutModal } from "./AboutModal";
 import { AdminTab } from "./AdminTab";
 import { BridgeCard } from "./BridgeCard";
-import { CitationPanel } from "./CitationPanel";
+import { StepKind, StepStatus, ToolStepChip } from "./ToolStepChip";
 import { ConversationSidebar } from "./ConversationSidebar";
 import { QuerySuggestions } from "./QuerySuggestions";
 import { Sandbox } from "./Sandbox";
@@ -42,11 +40,24 @@ type Suggestion = SuggestionItem;
 const VERSION = import.meta.env.VITE_APP_VERSION as string | undefined;
 const REPO_URL = "https://github.com/kyletaylored/infra-advisor-ai";
 
+// One live step in the agent loop — shown as a ToolStepChip above the
+// message content. The id is stable across the running → ok/error
+// transitions so we update the same chip in place.
+export interface StreamStep {
+  id: string;                       // tool call id or internal step name
+  kind: StepKind;
+  status: StepStatus;
+  resultSummary?: string | null;
+  durationMs?: number;
+  argsJson?: string | null;
+  sources?: string[];
+}
+
 interface Message {
   role: "user" | "assistant";
   content: string;
   sources: string[];
-  citations: Citation[];
+  steps: StreamStep[];              // tool / pipeline steps; rendered above content
   bridges: BridgeData[];
   traceId?: string | null;
   spanId?: string | null;
@@ -207,20 +218,16 @@ function getFollowUpSuggestions(sources: string[]): Suggestion[] {
   return INITIAL_SUGGESTIONS;
 }
 
-function sourceToCitation(tool: string): Citation {
-  const meta = TOOL_META[tool];
-  return {
-    tool_name: tool,
-    content: meta ? meta.description : tool,
-    document_type: meta ? meta.document_type : "Tool",
-    source_url: meta?.source_url,
-    data_notes: meta?.data_notes,
-  };
-}
-
-function mergeCitations(existing: Citation[], incoming: Citation[]): Citation[] {
-  const seen = new Set(existing.map((c) => c.tool_name));
-  return [...existing, ...incoming.filter((c) => !seen.has(c.tool_name))];
+// Reconstruct lightweight tool chips from a list of tool names persisted on
+// a historical message. We don't have arg / timing / result_summary for
+// these — just a name → status:ok chip so the user sees which tools were
+// used without losing the visual continuity with live streams.
+function toStepsFromSources(sources: string[]): StreamStep[] {
+  return sources.map((tool) => ({
+    id: `historical:${tool}`,
+    kind: { kind: "tool" as const, toolName: tool },
+    status: "ok" as const,
+  }));
 }
 
 // ── Domain tiles shown in the empty state ────────────────────────────────────
@@ -479,7 +486,6 @@ export function Chat() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<{ message: string; traceId: string | null } | null>(null);
-  const [activeCitations, setActiveCitations] = useState<Citation[]>([]);
   const [activeMsgIdx, setActiveMsgIdx] = useState<number | null>(null);
   const [recommendations, setRecommendations] = useState<Suggestion[]>([]);
   const [availableModels, setAvailableModels] = useState<string[]>(["gpt-4.1-mini"]);
@@ -526,7 +532,6 @@ export function Chat() {
     if (!detail) return;
 
     setConversationId(detail.id);
-    setActiveCitations([]);
     setError(null);
     setInput("");
 
@@ -534,7 +539,11 @@ export function Chat() {
       role: m.role as "user" | "assistant",
       content: m.content,
       sources: m.sources,
-      citations: m.sources.map(sourceToCitation),
+      // Reconstruct lightweight step chips from persisted sources — one
+      // chip per tool, no live status. Gives loaded conversations the
+      // same chip-strip look as fresh ones without persisting the full
+      // step history on the backend.
+      steps: m.role === "assistant" ? toStepsFromSources(m.sources) : [],
       bridges: [],
       traceId: m.trace_id,
       spanId: m.span_id,
@@ -545,10 +554,6 @@ export function Chat() {
     if (lastAiIdx) {
       setActiveMsgIdx(lastAiIdx.i);
     }
-    const allCitations = loaded
-      .filter((m) => m.role === "assistant")
-      .reduce((acc: Citation[], m) => mergeCitations(acc, m.citations), []);
-    setActiveCitations(allCitations);
 
     if (detail.model && availableModels.includes(detail.model)) setSelectedModel(detail.model);
     if (detail.backend) setSelectedBackend(detail.backend as BackendType);
@@ -582,12 +587,37 @@ export function Chat() {
     setError(null);
     setLoading(true);
 
-    const userMessage: Message = { role: "user", content: query, sources: [], citations: [], bridges: [] };
-    setMessages((prev) => [...prev, userMessage]);
+    const userMessage: Message = { role: "user", content: query, sources: [], steps: [], bridges: [] };
+    // Empty assistant placeholder we mutate in place as stream events arrive.
+    const placeholder: Message = { role: "assistant", content: "", sources: [], steps: [], bridges: [] };
+    let assistantIdx = -1;
+    setMessages((prev) => {
+      const next = [...prev, userMessage, placeholder];
+      assistantIdx = next.length - 1;
+      setActiveMsgIdx(assistantIdx);
+      return next;
+    });
     trackQuerySubmitted(query.length);
 
+    // Mutator helpers — wrap setMessages with the captured assistantIdx so
+    // every event lands on the right slot even when React batches updates.
+    const patchAssistant = (mutate: (m: Message) => Message) => {
+      setMessages((prev) => prev.map((m, i) => (i === assistantIdx ? mutate(m) : m)));
+    };
+    const upsertStep = (step: StreamStep) => {
+      patchAssistant((m) => {
+        const existing = m.steps.findIndex((s) => s.id === step.id);
+        return existing >= 0
+          ? { ...m, steps: m.steps.map((s, i) => (i === existing ? { ...s, ...step } : s)) }
+          : { ...m, steps: [...m.steps, step] };
+      });
+    };
+
+    let finalSources: string[] = [];
+    let finalAnswer = "";
+
     try {
-      // Ensure a conversation exists before sending the query
+      // Ensure a conversation exists before streaming the query
       let convId = conversationId;
       if (!convId && user?.id) {
         const shortTitle = query.length > 60 ? query.slice(0, 57) + "…" : query;
@@ -599,32 +629,69 @@ export function Chat() {
         }
       }
 
-      const resp: QueryResponse = await sendQuery(query, selectedModel, convId ?? undefined, user?.id ?? undefined);
-      const bridges = extractBridgeData(resp.answer);
+      for await (const evt of sendQueryStream(query, selectedModel, convId ?? undefined, user?.id ?? undefined)) {
+        handleStreamEvent(evt);
+      }
+
+      function handleStreamEvent(evt: StreamEvent) {
+        switch (evt.event) {
+          case "step":
+            upsertStep({
+              id: `internal:${evt.step}`,
+              kind: { kind: "internal", stepName: evt.step },
+              status: evt.status === "running" ? "running" : evt.status === "done" ? "ok" : "error",
+              resultSummary: evt.detail ?? undefined,
+            });
+            break;
+          case "tool_call_start":
+            upsertStep({
+              id: evt.id,
+              kind: { kind: "tool", toolName: evt.name },
+              status: "running",
+              argsJson: evt.args_json ?? null,
+            });
+            break;
+          case "tool_call_end":
+            upsertStep({
+              id: evt.id,
+              kind: { kind: "tool", toolName: evt.name },
+              status: evt.status === "ok" ? "ok" : "error",
+              resultSummary: evt.result_summary ?? undefined,
+              durationMs: evt.duration_ms,
+              sources: evt.sources,
+            });
+            break;
+          case "text_chunk":
+            finalAnswer += evt.chunk;
+            patchAssistant((m) => ({ ...m, content: m.content + evt.chunk }));
+            break;
+          case "done":
+            finalSources = evt.sources;
+            patchAssistant((m) => ({
+              ...m,
+              sources: evt.sources,
+              traceId: evt.trace_id,
+              spanId: evt.span_id,
+              bridges: extractBridgeData(m.content),
+            }));
+            if (evt.model && evt.model !== selectedModel) setSelectedModel(evt.model);
+            break;
+          case "error":
+            setError({ message: evt.message, traceId: evt.trace_id });
+            break;
+        }
+      }
+
+      // Bridges extracted post-stream get tracked once for telemetry parity
+      // with the non-streaming path.
+      const bridges = extractBridgeData(finalAnswer);
       if (bridges.length > 0) trackBridgeCardRendered(bridges.length);
 
-      const citations = resp.sources.map((tool) => sourceToCitation(tool));
-      const aiMessage: Message = {
-        role: "assistant",
-        content: resp.answer,
-        sources: resp.sources,
-        citations,
-        bridges,
-        traceId: resp.trace_id,
-        spanId: resp.span_id,
-      };
-      setMessages((prev) => {
-        const next = [...prev, aiMessage];
-        setActiveMsgIdx(next.length - 1);
-        return next;
-      });
-      setActiveCitations((prev) => mergeCitations(prev, aiMessage.citations));
-      if (resp.model && resp.model !== selectedModel) setSelectedModel(resp.model);
-      // Show static domain follow-ups immediately, then upgrade to LLM-generated ones
-      setRecommendations(getFollowUpSuggestions(resp.sources));
-      fetchSuggestions(query, resp.answer, resp.sources)
+      // Static domain follow-ups first, then upgrade to LLM-generated ones.
+      setRecommendations(getFollowUpSuggestions(finalSources));
+      fetchSuggestions(query, finalAnswer, finalSources)
         .then((items) => { if (items.length > 0) setRecommendations(items); })
-        .catch(() => { /* keep static fallback already shown */ });
+        .catch(() => { /* keep static fallback */ });
     } catch (err) {
       setError({
         message: err instanceof Error ? err.message : "Unknown error",
@@ -659,7 +726,6 @@ export function Chat() {
 
     setConversationId(conv.id);
     setSessionId(conv.id);
-    setActiveCitations([]);
     setError(null);
     setInput("");
 
@@ -667,7 +733,7 @@ export function Chat() {
       role: m.role as "user" | "assistant",
       content: m.content,
       sources: m.sources,
-      citations: m.sources.map(sourceToCitation),
+      steps: m.role === "assistant" ? toStepsFromSources(m.sources) : [],
       bridges: [],
       traceId: m.trace_id,
       spanId: m.span_id,
@@ -678,10 +744,6 @@ export function Chat() {
     if (lastAiIdx) {
       setActiveMsgIdx(lastAiIdx.i);
     }
-    const allCitations = loaded
-      .filter((m) => m.role === "assistant")
-      .reduce((acc: Citation[], m) => mergeCitations(acc, m.citations), []);
-    setActiveCitations(allCitations);
 
     // Restore model/backend from conversation metadata
     if (detail.model && availableModels.includes(detail.model)) setSelectedModel(detail.model);
@@ -873,7 +935,6 @@ export function Chat() {
             onNew={() => {
               setSessionId(newConversation());
               setMessages([]);
-              setActiveCitations([]);
               setActiveMsgIdx(null);
               setRecommendations(INITIAL_SUGGESTIONS);
               setError(null);
@@ -913,6 +974,27 @@ export function Chat() {
                         borderWidth={msg.role === "assistant" ? "1px" : 0}
                         borderColor={msg.role === "assistant" && activeMsgIdx === i ? "blue.300" : "gray.200"}
                       >
+                        {/* Tool / pipeline step chips render ABOVE the content
+                            so users see the agent's reasoning as it runs.
+                            Empty for user messages and for assistants that
+                            never invoked a tool. */}
+                        {msg.role === "assistant" && msg.steps.length > 0 && (
+                          <VStack align="stretch" gap={1.5} mb={2}>
+                            {msg.steps.map((step) => (
+                              <ToolStepChip
+                                key={step.id}
+                                kind={step.kind}
+                                status={step.status}
+                                resultSummary={step.resultSummary}
+                                durationMs={step.durationMs}
+                                argsJson={step.argsJson}
+                                sources={step.sources}
+                                toolMeta={TOOL_META}
+                              />
+                            ))}
+                          </VStack>
+                        )}
+
                         {msg.role === "assistant" ? (
                           <MarkdownContent content={msg.content} />
                         ) : (
@@ -923,27 +1005,6 @@ export function Chat() {
                           <VStack mt={3} gap={2} align="stretch">
                             {msg.bridges.map((b, j) => <BridgeCard key={j} bridge={b} />)}
                           </VStack>
-                        )}
-
-                        {msg.sources.length > 0 && (
-                          <>
-                            <Separator my={2.5} borderColor={msg.role === "user" ? "blue.500" : "gray.100"} />
-                            <HStack flexWrap="wrap" gap={1}>
-                              {msg.sources.map((s) => (
-                                <Badge
-                                  key={s}
-                                  variant="subtle"
-                                  colorPalette={msg.role === "user" ? "blue" : "gray"}
-                                  fontSize="xs"
-                                  borderRadius="full"
-                                  px={2}
-                                  py={0.5}
-                                >
-                                  {TOOL_META[s]?.label ?? s}
-                                </Badge>
-                              ))}
-                            </HStack>
-                          </>
                         )}
 
                       </Box>
@@ -959,25 +1020,10 @@ export function Chat() {
                   </Flex>
                 ))}
 
-                {loading && (
-                  <Flex justify="flex-start" align="flex-start" gap={2.5} data-testid="loading-indicator">
-                    <AIAvatar />
-                    <Box
-                      bg="white"
-                      borderRadius="0 2xl 2xl 2xl"
-                      px={4}
-                      py={3}
-                      boxShadow="xs"
-                      borderWidth="1px"
-                      borderColor="gray.200"
-                    >
-                      <HStack gap={2}>
-                        <Spinner size="xs" color="blue.500" />
-                        <Text fontSize="xs" color="gray.400">Thinking…</Text>
-                      </HStack>
-                    </Box>
-                  </Flex>
-                )}
+                {/* Global "Thinking..." indicator removed — the empty
+                    assistant placeholder + first step chip serve the same
+                    purpose live, and persistent loading state would render
+                    a redundant empty bubble during streaming. */}
 
                 {error && (
                   <Alert.Root status="error" borderRadius="xl" fontSize="sm">
@@ -1005,23 +1051,9 @@ export function Chat() {
             )}
           </Box>
 
-          {/* ── Sources strip ──────────────────────────────────────────────── */}
-          {activeCitations.length > 0 && (
-            <Box
-              data-testid="sources-panel"
-              data-tour="citation-sidebar"
-              borderTopWidth="1px"
-              borderColor="gray.100"
-              bg="gray.50"
-              px={5}
-              py={2}
-              flexShrink={0}
-              maxH="180px"
-              overflowY="auto"
-            >
-              <CitationPanel citations={activeCitations} />
-            </Box>
-          )}
+          {/* Sources strip + CitationPanel removed — tool step chips on each
+              assistant message now carry the same source / data_notes /
+              source_url info inline via the expandable detail row. */}
 
           {/* ── Input bar ──────────────────────────────────────────────────── */}
           <Box

@@ -7,6 +7,7 @@ using ModelContextProtocol;
 using ModelContextProtocol.Client;
 using InfraAdvisor.AgentApi.Models;
 using InfraAdvisor.AgentApi.Services.Evaluators;
+using StreamEvent = InfraAdvisor.AgentApi.Models.StreamEvent;
 
 namespace InfraAdvisor.AgentApi.Services;
 
@@ -273,6 +274,204 @@ public class AgentService
         activity?.SetTag("output.value", domain);
         activity?.SetTag("query.domain", domain);
         return domain;
+    }
+
+    // Streaming variant of RunAgentAsync. Yields StreamEvent records the
+    // /query/stream endpoint serializes as Server-Sent Events. Same pipeline
+    // as the non-streaming version (classify → retrieve → agent.RunStreamingAsync
+    // → session save → metrics → evals), with two differences:
+    //   - tool calls + text chunks surface live as the model emits them
+    //   - MCP session-expired retry is NOT attempted mid-stream (text
+    //     already streamed to the client can't be cleanly rewound).
+    //     The retry path lives in RunAgentAsync; clients can fall back
+    //     to /query if the streaming path fails.
+    public async IAsyncEnumerable<StreamEvent> RunAgentStreamingAsync(
+        string query,
+        string sessionId,
+        string deployment,
+        [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
+    {
+        // 1. classify_domain (sync) — instant; report as a completed step.
+        var domain = ClassifyDomainTraced(query);
+        yield return new StepEvent("classify_domain", "done", domain);
+
+        // 2. retrieve_best_practices — let the user see it's happening.
+        yield return new StepEvent("retrieve_best_practices", "running");
+        var retrieved = await _retrieval.RetrieveAsync(query, topK: 3, ct);
+        yield return new StepEvent("retrieve_best_practices", "done", $"{retrieved.Count} docs");
+
+        var augmentedQuery = retrieved.Count > 0
+            ? $"Relevant InfraAdvisor best-practice context:\n{string.Join("\n\n", retrieved)}\n\n---\n\nUser question: {query}"
+            : query;
+
+        var agent = await _agentHolder.GetAgentAsync(ct);
+        var session = await _sessions.GetOrCreateAsync(agent, sessionId, ct);
+
+        // Track tool-call lifecycle as the model emits FunctionCallContent
+        // / FunctionResultContent updates. Start times are captured at
+        // ToolCallStart so the End event reports duration even when MAF
+        // emits the call + result back-to-back in a single update batch.
+        var toolStarts = new Dictionary<string, (long StartTicks, string Name)>();
+        var allSources = new List<string>();
+        var toolsCalledOrdered = new List<string>();
+        var fullAnswer = new System.Text.StringBuilder();
+        Exception? streamError = null;
+
+        var updates = agent.RunStreamingAsync(augmentedQuery, session, cancellationToken: ct);
+        var enumerator = updates.GetAsyncEnumerator(ct);
+
+        while (true)
+        {
+            // Wrap MoveNextAsync so iterator exceptions become an
+            // ErrorEvent we yield — yield-return inside a try/catch is
+            // a C# constraint, so we step manually here.
+            bool moved;
+            try { moved = await enumerator.MoveNextAsync(); }
+            catch (Exception ex)
+            {
+                streamError = ex;
+                break;
+            }
+            if (!moved) break;
+
+            var update = enumerator.Current;
+            foreach (var ev in HandleUpdate(update, toolStarts, allSources, toolsCalledOrdered, fullAnswer))
+                yield return ev;
+        }
+        await enumerator.DisposeAsync();
+
+        if (streamError is not null)
+        {
+            _logger.LogWarning("agent.RunStreamingAsync failed for session={SessionId}: {Error}",
+                sessionId, streamError.Message);
+            yield return new ErrorEvent(streamError.Message, TraceId: Activity.Current?.TraceId.ToString());
+            yield break;
+        }
+
+        await _sessions.SaveAsync(agent, sessionId, session, ct);
+
+        var domainTag = new KeyValuePair<string, object?>("query.domain", domain);
+        _conversationCounter.Add(1, domainTag);
+        foreach (var tool in toolsCalledOrdered.Distinct())
+            _toolCounter.Add(1,
+                new KeyValuePair<string, object?>("tool.name", tool),
+                domainTag);
+
+        var distinctSources = allSources.Distinct().ToList();
+        var distinctTools = toolsCalledOrdered.Distinct().ToList();
+
+        ScheduleEvaluations(query, fullAnswer.ToString(), distinctTools, distinctSources, domain);
+
+        yield return new DoneEvent(
+            TraceId: GetTraceIdDecimal(),
+            SpanId: GetSpanIdDecimal(),
+            SessionId: sessionId,
+            Model: deployment,
+            Sources: distinctSources,
+            ToolsCalled: distinctTools,
+            QueryDomain: domain);
+    }
+
+    // Process one AgentResponseUpdate into zero-or-more StreamEvents. Pure
+    // function over the running state buckets — extracted so the iterator
+    // method stays scannable.
+    private static IEnumerable<StreamEvent> HandleUpdate(
+        AgentResponseUpdate update,
+        Dictionary<string, (long StartTicks, string Name)> toolStarts,
+        List<string> allSources,
+        List<string> toolsCalledOrdered,
+        System.Text.StringBuilder fullAnswer)
+    {
+        foreach (var content in update.Contents)
+        {
+            switch (content)
+            {
+                case FunctionCallContent fc:
+                    toolStarts[fc.CallId] = (Stopwatch.GetTimestamp(), fc.Name);
+                    toolsCalledOrdered.Add(fc.Name);
+                    yield return new ToolCallStartEvent(
+                        Id: fc.CallId,
+                        Name: fc.Name,
+                        ArgsJson: fc.Arguments is null ? null : JsonSerializer.Serialize(fc.Arguments));
+                    break;
+
+                case FunctionResultContent fr:
+                    var sources = new List<string>();
+                    var resultStr = fr.Result?.ToString() ?? "";
+                    TryExtractSources(resultStr, sources);
+                    allSources.AddRange(sources);
+
+                    var (startTicks, name) = toolStarts.TryGetValue(fr.CallId, out var s) ? s : (0L, fr.CallId);
+                    var durationMs = startTicks > 0
+                        ? (Stopwatch.GetTimestamp() - startTicks) * 1000.0 / Stopwatch.Frequency
+                        : 0.0;
+
+                    yield return new ToolCallEndEvent(
+                        Id: fr.CallId,
+                        Name: name,
+                        Status: fr.Exception is null ? "ok" : "error",
+                        ResultSummary: SummarizeToolResult(resultStr),
+                        Sources: sources,
+                        DurationMs: durationMs);
+                    break;
+
+                case TextContent tc when !string.IsNullOrEmpty(tc.Text):
+                    fullAnswer.Append(tc.Text);
+                    yield return new TextChunkEvent(tc.Text);
+                    break;
+            }
+        }
+    }
+
+    // Compact one-liner summary for a tool result. Strategy: try to parse
+    // as JSON and report array length / object key count; fall back to
+    // a length-bounded character count for plain text.
+    private static string? SummarizeToolResult(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        try
+        {
+            using var doc = JsonDocument.Parse(raw);
+            return doc.RootElement.ValueKind switch
+            {
+                JsonValueKind.Array => $"{doc.RootElement.GetArrayLength()} records",
+                JsonValueKind.Object when doc.RootElement.TryGetProperty("error", out _) =>
+                    "error",
+                JsonValueKind.Object => $"{CountObjectKeys(doc.RootElement)} fields",
+                _ => null,
+            };
+        }
+        catch
+        {
+            var len = raw.Length;
+            return len < 1024 ? $"{len} chars" : $"{len / 1024} KB";
+        }
+    }
+
+    private static int CountObjectKeys(JsonElement obj)
+    {
+        var n = 0;
+        foreach (var _ in obj.EnumerateObject()) n++;
+        return n;
+    }
+
+    // Decimal-encoded trace/span IDs match the rest of our DD plumbing
+    // (RUM injection, eval-metric joins). Lower-64-bit-of-128 for trace,
+    // raw 64-bit for span — same pattern Program.cs uses on /query.
+    private static string? GetTraceIdDecimal()
+    {
+        var hex = Activity.Current?.TraceId.ToString();
+        if (hex is not { Length: 32 }) return hex;
+        return ulong.TryParse(hex[16..], System.Globalization.NumberStyles.HexNumber, null, out var lo)
+            ? lo.ToString() : hex;
+    }
+
+    private static string? GetSpanIdDecimal()
+    {
+        var hex = Activity.Current?.SpanId.ToString();
+        if (hex is null) return null;
+        return ulong.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out var id)
+            ? id.ToString() : hex;
     }
 
     public void RecordFaithfulness(double score, string sessionId, string domain)
