@@ -1,3 +1,133 @@
+[2026-05-16] Security hardening — close CRITICAL + HIGH from public-repo audit
+
+  Read-only audit by general-purpose subagent (.claude/agents/security-
+  audit.md defines the same role for future sessions). Findings saved
+  to security-audit-2026-05-16.md (gitignored). Eight findings across
+  CRITICAL+HIGH closed in three commits.
+
+  Commit 8736524 — agent-api auth + rate limit (CRITICAL-3, HIGH-1, HIGH-2):
+    Before: any visitor could POST /query to either backend, burn Azure
+    OpenAI quota, run prompt-injection probes, or operate as a free
+    anonymous LLM proxy. Conversations endpoints trusted a spoofable
+    X-User-ID header. auth-api had open registration where the first
+    registrant became admin automatically — race on every DB rotation.
+    CORS was wildcard-with-credentials.
+
+    services/agent-api/src/auth.py             [NEW]
+      ILogEventEnricher-equivalent JWT validator + slowapi Limiter
+      keyed on JWT sub (falls to client IP for unauth). Same HS256/
+      JWT_SECRET shape as auth-api so tokens issued by /auth/login
+      validate without round-trip. Fails closed if JWT_SECRET unset.
+      headers_enabled=False to avoid the Response= param requirement
+      on every handler.
+
+    services/agent-api/src/main.py
+      Depends(require_auth) on /query, /query/stream, /suggestions,
+      /suggestions/initial, /tools, /tools/{name}, /feedback,
+      /conversations*, /session/{id}. /health and /models intentionally
+      stay public (liveness + UI bootstrap). /query rate-limited to
+      20/min/user, /suggestions to 60/min, /tools/{name} to 30/min.
+      Conversations endpoints now derive user_id from JWT sub (X-User-ID
+      header ignored).
+
+    services/agent-api/pyproject.toml: + python-jose, + slowapi.
+    services/agent-api/tests/test_agent_integration.py: TestClient
+      headers default to a test-signed bearer token; all 23 tests pass.
+
+    services/agent-api-dotnet/Program.cs
+      AddAuthentication(JwtBearer) + AddAuthorization + AddRateLimiter
+      with PartitionedRateLimiter keyed on User.FindFirst("sub").
+      .RequireAuthorization().RequireRateLimiting("query") on /query +
+      /query/stream; .RequireAuthorization() on /suggestions*, /tools,
+      /feedback, /session, /conversations*. Conversations endpoints
+      now SubClaim(httpContext) — X-User-ID ignored. JWT_SECRET env
+      required at startup; missing = throw.
+
+    services/agent-api-dotnet/InfraAdvisor.AgentApi.csproj:
+      + Microsoft.AspNetCore.Authentication.JwtBearer 10.0.0.
+
+    services/auth-api/src/main.py
+      CORS allow_origins env-driven (ALLOWED_ORIGINS, comma-separated).
+      allow_methods/headers tightened from "*" to explicit allowlists.
+      /register always creates is_admin=False. Idempotent
+      _bootstrap_admin() runs on startup if BOOTSTRAP_ADMIN_EMAIL +
+      BOOTSTRAP_ADMIN_PASSWORD env vars are set and no user with that
+      email exists; otherwise no-op.
+
+    services/ui/src/lib/api.ts
+      authHeader() helper imports getToken() from auth.ts. Added to
+      every fetch() to /api/, /api-dotnet/, including /query, stream,
+      /suggestions, /feedback, /session, /conversations*. Conversations
+      functions' userId parameter renamed _userId to mark it ignored
+      (the server reads JWT sub).
+
+    Makefile
+      create-agent-api-secret + create-agent-api-dotnet-secret now
+      require JWT_SECRET (shared with auth-api). create-auth-api-secret
+      optionally accepts BOOTSTRAP_ADMIN_EMAIL/PASSWORD.
+
+  Commit c9189e7 — admin surfaces lockdown (CRITICAL-1, CRITICAL-2):
+    Before: Airflow login was admin/admin (Helm createUserJob.defaultUser).
+    Scheduler env carried six shared production secrets, so admin =
+    full key exfiltration via a one-line DAG. MailHog inbox was on a
+    public Azure LoadBalancer + proxied at /mailhog/ — any user's
+    password reset token was readable.
+
+    k8s/airflow/values.yaml: createUserJob.defaultUser.username +
+      password = "REPLACE_VIA_HELM_SET" placeholders that fail the job
+      if not overridden. Real values come from AIRFLOW_ADMIN_USERNAME
+      + AIRFLOW_ADMIN_PASSWORD env via Helm --set in install-airflow /
+      upgrade-airflow Makefile targets. Both targets gate on env vars.
+
+    k8s/mailhog/service.yaml: LoadBalancer service deleted entirely.
+      ClusterIP service for SMTP (port 1025) unchanged. Local UI
+      inspection via kubectl port-forward.
+
+    services/ui/nginx.conf: /mailhog/ location block removed.
+
+    docs/src/content/docs/index.mdx: Azure RG name + MailHog URL row
+      removed from live-environment table. architecture/overview.md +
+      services/index.md: /mailhog/* row removed; Airflow row notes
+      "admin auth required".
+
+    .gitignore: security-audit-*.md added so future reports don't ship
+      in the public repo.
+
+  Commit 2ed742d — CI SHA-pinning (HIGH-3):
+    .github/workflows/build-push.yml deploy step replaced
+    `kubectl rollout restart` with `kubectl set image deployment/<svc>
+    <container>=ghcr.io/.../<svc>:<short-sha>`. Each pod pins to the
+    specific git SHA that just built; a compromised :latest tag no
+    longer rolls out on next restart. Initial `make deploy-k8s` apply
+    still uses :latest from manifests for first-deploy convenience.
+
+  Verified:
+  [x] dotnet build agent-api-dotnet: 0 warnings, 0 errors
+  [x] uv run pytest agent-api: 23 passed
+  [x] npx tsc --noEmit agent-api UI: 0 errors
+
+  [~] Live-deployment verification (operator actions required):
+      (a) Set JWT_SECRET in agent-api-secret + agent-api-dotnet-secret
+          (same value as auth-api). Pod won't start without it.
+      (b) Set AIRFLOW_ADMIN_USERNAME + AIRFLOW_ADMIN_PASSWORD in .env;
+          run make upgrade-airflow.
+      (c) Set BOOTSTRAP_ADMIN_EMAIL + BOOTSTRAP_ADMIN_PASSWORD in
+          auth-api-secret for first-deploy admin user. Remove env vars
+          from the secret after the user exists.
+      (d) kubectl delete svc mailhog-ui -n infra-advisor (one-time
+          cleanup of the existing LoadBalancer object).
+      (e) Verify Cloudflare DNS for infra-advisor-ai.kyletaylor.dev is
+          orange-cloud (proxied), not grey-cloud.
+      (f) Add Cloudflare Access policy in front of /airflow path for
+          defense in depth (admin password is now real, but Cloudflare
+          Access SSO is a stronger second gate).
+      (g) Rotate AZURE_OPENAI_API_KEY + DD_API_KEY + AZURE_SEARCH_API_KEY
+          if the old Airflow admin:admin window was ever live in
+          production — those creds were one DAG away from exfiltration.
+
+  MEDIUM findings (root + NetworkPolicy + Redis password + RG names in
+  CI/Bicep + Airflow shared env) deferred to a follow-up round.
+
 [2026-05-16] Docs restructure — single LLM Engineering Guide mirrors DD's docs
 
   Replaced the Python-vs-.NET LLMObs documentation fork with one
