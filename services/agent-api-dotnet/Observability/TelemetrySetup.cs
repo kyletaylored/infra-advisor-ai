@@ -93,14 +93,16 @@ public static class TelemetrySetup
                     otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
                 }));
 
-        // Structured JSON logs via Serilog. The DD .NET tracer
-        // (admission-injected via dotnet-lib.version: v3) auto-injects
-        // dd.trace_id / dd.span_id into the LogContext when
-        // DD_LOGS_INJECTION=true is set on the pod — no enricher needed
-        // app-side. RenderedCompactJsonFormatter outputs one JSON object
-        // per line, which DD Agent's csharp log source parses cleanly.
+        // Structured JSON logs via Serilog. DatadogTraceContextEnricher
+        // copies the ambient OTel Activity's trace/span IDs into each log
+        // event as dd.trace_id / dd.span_id — required for DD APM trace
+        // → Logs correlation now that we no longer run the DD .NET tracer
+        // (which used to handle this via DD_LOGS_INJECTION=true).
+        // RenderedCompactJsonFormatter emits one JSON object per line for
+        // the DD Agent's csharp log source.
         builder.Host.UseSerilog((ctx, services, lc) => lc
             .Enrich.FromLogContext()
+            .Enrich.With(new DatadogTraceContextEnricher())
             .Enrich.WithProperty("service.name", "infra-advisor-agent-api-dotnet")
             .WriteTo.Console(new RenderedCompactJsonFormatter()));
 

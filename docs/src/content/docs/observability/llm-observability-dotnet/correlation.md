@@ -58,26 +58,54 @@ The Datadog .NET tracer accomplishes this via SQL-comment injection (`DD_DBM_PRO
 
 ## Log → trace correlation
 
-OTel SDK + Serilog gives you log ↔ trace linkage automatically when:
-
-1. Serilog enriches logs from the `LogContext` (the request's ambient Activity).
-2. Logs emit in JSON with the OTel trace/span ID fields (`@tr`, `@sp`).
-3. The DD agent's container log collector recognizes the `csharp` source and parses those fields.
+Pure OTel doesn't enrich Serilog out of the box — the DD .NET tracer used to inject `dd.trace_id` / `dd.span_id` automatically when `DD_LOGS_INJECTION=true`, but we no longer run that tracer. A small custom Serilog enricher (`DatadogTraceContextEnricher`) reads `Activity.Current` and writes the two fields onto every log event.
 
 ```csharp
-// TelemetrySetup.cs
+// DatadogTraceContextEnricher.cs
+internal sealed class DatadogTraceContextEnricher : ILogEventEnricher
+{
+    public void Enrich(LogEvent logEvent, ILogEventPropertyFactory _)
+    {
+        var activity = Activity.Current;
+        if (activity is null) return;
+
+        var traceIdHex = activity.TraceId.ToHexString();   // 32 chars
+        var spanIdHex  = activity.SpanId.ToHexString();    // 16 chars
+
+        if (ulong.TryParse(traceIdHex.AsSpan(16), NumberStyles.HexNumber,
+                CultureInfo.InvariantCulture, out var traceLow64) &&
+            ulong.TryParse(spanIdHex, NumberStyles.HexNumber,
+                CultureInfo.InvariantCulture, out var spanId))
+        {
+            logEvent.AddPropertyIfAbsent(new LogEventProperty(
+                "dd.trace_id",
+                new ScalarValue(traceLow64.ToString(CultureInfo.InvariantCulture))));
+            logEvent.AddPropertyIfAbsent(new LogEventProperty(
+                "dd.span_id",
+                new ScalarValue(spanId.ToString(CultureInfo.InvariantCulture))));
+        }
+    }
+}
+```
+
+Wire it into `TelemetrySetup.cs`:
+
+```csharp
 builder.Host.UseSerilog((ctx, services, lc) => lc
     .Enrich.FromLogContext()
+    .Enrich.With(new DatadogTraceContextEnricher())
     .Enrich.WithProperty("service.name", "infra-advisor-agent-api-dotnet")
     .WriteTo.Console(new RenderedCompactJsonFormatter()));
 ```
+
+The DD agent's container log collector recognizes the `csharp` source and parses these two fields verbatim:
 
 ```yaml
 # deployment.yaml annotation
 ad.datadoghq.com/agent-api-dotnet.logs: '[{"source":"csharp","service":"infra-advisor-agent-api-dotnet"}]'
 ```
 
-That's it. Click any APM trace → Logs tab at the bottom shows the matching structured log lines. No `DD_LOGS_INJECTION`, no enricher, no DD .NET tracer.
+Why lower 64 bits in decimal? DD's log-trace correlation pipeline matches W3C 128-bit trace IDs by their low 64 bits in decimal form — the same shape the DD .NET tracer historically emitted. The agent stores the high 64 bits separately and recombines them at correlation time. Click any APM trace → Logs tab at the bottom shows the matching structured log lines.
 
 ## References
 
