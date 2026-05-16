@@ -1,0 +1,142 @@
+---
+title: Spans and traces
+description: The shape of an LLM Observability trace, how to query it, and the UI patterns (sessions, agent view) that turn it into something useful.
+sidebar:
+  order: 1
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+Once your service is [instrumented](../../instrumentation/python/), every request produces an LLMObs trace. This page is about what that trace looks like, how to slice it, and the UI features that make it more than a pretty waterfall.
+
+## Anatomy of one /query trace
+
+Both InfraAdvisor backends produce a similar trace shape, with implementation-specific details. The keystone is one `trace_id` from RUM browser → agent → MCP server → upstream API, propagated via W3C `traceparent`.
+
+<Tabs syncKey="lang">
+  <TabItem label="Python (ddtrace)">
+
+```
+[infra-advisor-ui]                                  SERVICE
+RUM browser trace                          (rum)    ← W3C traceparent injected
+└── [agent-api]
+    POST /api/query                        workflow ← FastAPI auto
+    └── query-processing                   workflow ← LLMObs.workflow()
+        ├── load-history                   task
+        ├── router (agent)                 agent    ← LLMObs.agent()
+        │   └── ChatOpenAI.ainvoke         llm      ← auto: langchain
+        ├── specialist-engineering (agent) agent    ← LLMObs.agent()
+        │   ├── ChatOpenAI.ainvoke         llm      ← auto
+        │   └── MCP tool call              tool     ← auto: mcp
+        │       └── HTTP POST → mcp-server (http)
+        └── extract-sources                task
+```
+
+  </TabItem>
+  <TabItem label=".NET (OpenTelemetry)">
+
+```
+[infra-advisor-ui]                                  SERVICE
+RUM browser trace                          (rum)    ← W3C traceparent injected
+└── [agent-api-dotnet]
+    POST /query                            workflow ← AspNetCore
+    ├── classify_domain                    task     ← manual ActivitySource
+    ├── retrieve_best_practices            retrieval ← manual
+    │   └── embeddings                     embedding ← M.E.AI auto
+    └── invoke_agent                       agent    ← MAF auto
+        └── chat                           llm      ← M.E.AI auto
+            ├── HTTP POST → Azure OpenAI   (http)
+            └── execute_tool               tool     ← M.E.AI auto
+                └── HTTP POST → mcp-server (http)
+                    └── [mcp-server-dotnet]
+                        POST /mcp/         workflow
+                        └── tools/call     (mcp)
+```
+
+  </TabItem>
+</Tabs>
+
+The two trees expose the same logical decisions (route → specialist → tool) under different framework idioms.
+
+## Querying spans
+
+The DD trace explorer supports the full APM query language plus LLMObs-specific filters. The most useful shapes:
+
+| Goal | Query |
+|---|---|
+| All traces for one user/session | `@ml_app:infra-advisor-ai @session.id:<uuid>` |
+| Only failed queries | `@ml_app:infra-advisor-ai status:error` |
+| Slow LLM calls | `@ml_app:infra-advisor-ai operation_name:chat duration:>5s` |
+| One conversation, all turns | `@ml_app:infra-advisor-ai @meta.gen_ai.conversation.id:<id>` group by `trace_id` |
+| Traces that used a specific tool | `@ml_app:infra-advisor-ai @meta.tools_called:get_bridge_condition` |
+| Tool routing accuracy regressions | `@ml_app:infra-advisor-ai @evaluations.tool_routing_accuracy.value:false` |
+
+Save these as **Saved Views** in the trace explorer. The trace explorer's "Group by → trace_id" view is the right default for LLMObs work because one logical request is always one trace.
+
+## Sessions and RUM linking
+
+In LLMObs, a **session** is a series of related traces sharing a `session.id` tag. We set it from the browser-supplied RUM session header so LLMObs sessions group by browser session — and link to RUM session replay.
+
+<Tabs syncKey="lang">
+  <TabItem label="Python (ddtrace)">
+
+```python
+# In the FastAPI handler:
+rum_session = request.headers.get("X-DD-RUM-Session-ID")
+session_id = rum_session or internal_chat_uuid
+
+LLMObs.annotate(
+    span=workflow_span,
+    tags={
+        "session.id": session_id,
+        **({"session.rum_id": rum_session} if rum_session else {}),
+    },
+)
+```
+
+  </TabItem>
+  <TabItem label=".NET (OpenTelemetry)">
+
+```csharp
+// In the /query endpoint:
+var rumSession = httpContext.Request.Headers["X-DD-RUM-Session-ID"].FirstOrDefault();
+var sessionId = rumSession ?? internalChatUuid;
+Activity.Current?.SetTag("session.id", sessionId);
+if (rumSession != null) Activity.Current?.SetTag("session.rum_id", rumSession);
+```
+
+MAF's `AgentSession` also automatically emits `gen_ai.conversation.id` which DD groups by — orthogonal to `session.id`. The two coexist (session ≈ browser tab, conversation ≈ chat thread).
+
+  </TabItem>
+</Tabs>
+
+Click any LLMObs trace → "View session replay" to land on the user's actual click stream at the moment they sent the query.
+
+## The Agent view
+
+DD's "Agent" view in LLMObs collapses a trace into a decision-graph: nodes for each `agent` / `task` span, edges for sequential calls. It's the right view for explaining a single bad answer:
+
+- Did the router pick the wrong specialist? (compare `query.domain` tag to the actual query)
+- Did the specialist call the wrong tool? (look at `tools_called` and the tool's input args)
+- Did the LLM ignore tool results? (read the prompt + completion next to the tool output)
+
+The view works automatically as long as your span kinds are correct. If a step is missing from the Agent view, it's almost always because its span kind isn't being set — see [Instrumentation](../../instrumentation/python/#explicit-orchestration-spans) for the .NET escape hatch.
+
+## Patterns: common LLMObs queries
+
+A handful of saved views worth keeping handy:
+
+1. **"Last 10 errors in production"** — `@ml_app:... env:production status:error` sorted by `@duration` desc. The slowest errors are usually the most interesting.
+2. **"Tool starvation"** — `@ml_app:... @meta.agent.tools_called:""` finds traces where the agent answered without using any tools, which is sometimes wrong (especially for data-lookup queries).
+3. **"Hallucination candidates"** — `@evaluations.meai_groundedness.value:<2` (.NET) or `@evaluations.faithfulness.value:<0.5` (Python) — traces where the LLM-judge flagged the answer as poorly grounded.
+4. **"New prompt regression"** — `@meta.prompt.version:v2-* @evaluations.meai_relevance.value:<3`. Useful right after a prompt rollout.
+
+<Aside type="tip">
+**Group by trace_id, almost always.** LLMObs's UI sometimes defaults to grouping by span. For agent debugging you want one row per logical request — that's `trace_id`.
+</Aside>
+
+## What's next
+
+- [APM correlation](../apm-correlation/) — getting DBM and log lines onto the same trace.
+- [MCP clients](../mcp-clients/) — cross-service trace propagation for tool-call sub-spans.
+- [Metrics](../metrics/) — counters that ride alongside traces for cheaper aggregations.

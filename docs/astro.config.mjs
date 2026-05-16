@@ -91,22 +91,51 @@ export default defineConfig({
                     items: [
                         { label: 'Overview', slug: 'observability' },
                         { label: 'APM & Tracing', slug: 'observability/apm' },
-                        { label: 'LLM Observability', slug: 'observability/llm-observability' },
-                        {
-                            label: 'LLM Observability (.NET)',
-                            collapsed: true,
-                            items: [
-                                { label: 'Overview', slug: 'observability/llm-observability-dotnet' },
-                                { label: 'Span kinds & prompts', slug: 'observability/llm-observability-dotnet/span-kinds' },
-                                { label: 'Evaluations', slug: 'observability/llm-observability-dotnet/evaluations' },
-                                { label: 'Metrics', slug: 'observability/llm-observability-dotnet/metrics' },
-                                { label: 'Correlation', slug: 'observability/llm-observability-dotnet/correlation' },
-                                { label: 'Recipes', slug: 'observability/llm-observability-dotnet/recipes' },
-                                { label: 'Troubleshooting', slug: 'observability/llm-observability-dotnet/troubleshooting' },
-                            ],
-                        },
                         { label: 'RUM & Session Replay', slug: 'observability/rum' },
                         { label: 'Dashboards & Monitors', slug: 'observability/dashboards' },
+                    ],
+                },
+                {
+                    label: 'LLM Engineering Guide',
+                    items: [
+                        { label: 'Overview', slug: 'llm-engineering' },
+                        { label: 'Quickstart', slug: 'llm-engineering/quickstart' },
+                        {
+                            label: 'Instrumentation',
+                            collapsed: true,
+                            items: [
+                                { label: 'Python (ddtrace)', slug: 'llm-engineering/instrumentation/python' },
+                                { label: '.NET (OpenTelemetry)', slug: 'llm-engineering/instrumentation/dotnet' },
+                            ],
+                        },
+                        {
+                            label: 'Monitoring',
+                            collapsed: true,
+                            items: [
+                                { label: 'Spans and traces', slug: 'llm-engineering/monitoring/spans-and-traces' },
+                                { label: 'APM correlation', slug: 'llm-engineering/monitoring/apm-correlation' },
+                                { label: 'MCP clients', slug: 'llm-engineering/monitoring/mcp-clients' },
+                                { label: 'Prompt tracking', slug: 'llm-engineering/monitoring/prompt-tracking' },
+                                { label: 'Metrics', slug: 'llm-engineering/monitoring/metrics' },
+                                { label: 'Operations', slug: 'llm-engineering/monitoring/operations' },
+                            ],
+                        },
+                        {
+                            label: 'Evaluations',
+                            collapsed: true,
+                            items: [
+                                { label: 'Managed', slug: 'llm-engineering/evaluations/managed' },
+                                { label: 'LLM-as-Judge (DD UI)', slug: 'llm-engineering/evaluations/llm-judge-ui' },
+                                { label: 'External', slug: 'llm-engineering/evaluations/external' },
+                                { label: 'Annotation queues', slug: 'llm-engineering/evaluations/annotation-queues' },
+                                { label: 'Export API', slug: 'llm-engineering/evaluations/export-api' },
+                                { label: 'Developer guide', slug: 'llm-engineering/evaluations/developer-guide' },
+                            ],
+                        },
+                        { label: 'Experiments', slug: 'llm-engineering/experiments' },
+                        { label: 'Datadog MCP server', slug: 'llm-engineering/datadog-mcp' },
+                        { label: 'Data security & RBAC', slug: 'llm-engineering/security-rbac' },
+                        { label: 'Glossary', slug: 'llm-engineering/glossary' },
                     ],
                 },
                 {

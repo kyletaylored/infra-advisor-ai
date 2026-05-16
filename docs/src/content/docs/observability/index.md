@@ -83,6 +83,7 @@ DD_VERSION: latest
 ## Sections in this chapter
 
 - [APM & Tracing](/infra-advisor-ai/observability/apm/) — Span coverage by service, log-trace correlation, DBM, code origin, error trace linking
-- [LLM Observability](/infra-advisor-ai/observability/llm-observability/) — Multi-level span tree, auto vs explicit instrumentation, session linking, user feedback evaluations, faithfulness scoring
 - [RUM & Session Replay](/infra-advisor-ai/observability/rum/) — SDK initialization, custom events, RUM→LLM Obs linking, distributed tracing, sourcemaps
 - [Dashboards & Monitors](/infra-advisor-ai/observability/dashboards/) — All 5 dashboards, 3 monitors, 1 Synthetics test — purpose, widgets, and import instructions
+
+For LLM-specific observability — instrumentation, evaluations, prompt tracking, sessions, experiments — see the dedicated **[LLM Engineering Guide](/infra-advisor-ai/llm-engineering/)** section in the left sidebar.
