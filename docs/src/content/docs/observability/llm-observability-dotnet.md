@@ -159,13 +159,15 @@ ActivitySource.AddActivityListener(new ActivityListener { /* stamps spans */ });
 
 **How we wired it:**
 
-1. **`IResponseEvaluator`** (`Services/Evaluators/`) — returns `EvalResult(metricType, value, reasoning)` for one agent response. Two shipped today:
-   - `CitationPresentEvaluator` — boolean; regex against domain identifiers (NBI / PWSID / award_id).
-   - `BdToolOrderingEvaluator` — boolean; asserts `get_contract_awards` precedes `get_procurement_opportunities`.
+1. **`IResponseEvaluator`** (`Services/Evaluators/`) — async; returns `Task<EvalResult>` so LLM-judge evaluators can await downstream model calls. Four shipped today:
+   - `CitationPresentEvaluator` — deterministic boolean; regex against domain identifiers (NBI / PWSID / award_id).
+   - `BdToolOrderingEvaluator` — deterministic boolean; asserts `get_contract_awards` precedes `get_procurement_opportunities`.
+   - `MeaiRelevanceEvaluator` — LLM-judge score (1–5); wraps `Microsoft.Extensions.AI.Evaluation.Quality.RelevanceEvaluator`.
+   - `MeaiGroundednessEvaluator` — LLM-judge score (1–5); wraps `GroundednessEvaluator` with tool-call outputs as grounding context.
 
-2. **`DatadogEvalsClient`** — typed `HttpClient` wrapping DD's `POST /api/intake/llm-obs/v2/eval-metric`. Tags `source:otel`, addresses the agent span by trace_id + span_id captured in `AgentSpanContext`.
+2. **`DatadogEvalsClient`** — typed `HttpClient` wrapping DD's `POST /api/intake/llm-obs/v2/eval-metric`. Tags `source:otel`, addresses the agent span by trace_id + span_id captured in `AgentSpanContext`. Records every submission attempt to `EvalSubmissionLog` (50-entry ring buffer) for the admin diagnostics panel.
 
-`AgentService.RunAgentAsync` rolls `Random.Shared.NextDouble() < EVAL_SAMPLE_RATE` (default 0.1); if hit, fires `Task.Run` background eval that walks every `IResponseEvaluator` and POSTs. Fire-and-forget so `/query` latency is unchanged.
+`AgentService.RunAgentAsync` rolls `Random.Shared.NextDouble() < EVAL_SAMPLE_RATE` (default 0.1); if hit, fires `Task.Run` background eval that walks every `IResponseEvaluator` and POSTs. Fire-and-forget so `/query` latency is unchanged. `EvalInput` includes `ToolResults` (capped at 4 KB per call) so judge-style evaluators have the raw tool output to verify claims against.
 
 **Extending it** — adding a deterministic evaluator:
 
@@ -173,12 +175,14 @@ ActivitySource.AddActivityListener(new ActivityListener { /* stamps spans */ });
 public class MyEvaluator : IResponseEvaluator
 {
     public string Label => "my_check";
-    public EvalResult Evaluate(EvalInput input) =>
-        new EvalResult("boolean", someBoolean, reasoning: "why");
+    public Task<EvalResult> EvaluateAsync(EvalInput input, CancellationToken ct) =>
+        Task.FromResult(new EvalResult("boolean", someBoolean, reasoning: "why"));
 }
 ```
 
 Then `builder.Services.AddSingleton<IResponseEvaluator, MyEvaluator>()` in `Program.cs`. DI injects all `IResponseEvaluator` implementations into `AgentService` as `IEnumerable<>`. No further wiring.
+
+**Diagnostics** — `GET /eval/status` returns the live pipeline snapshot: sample rate, registered evaluators (with `is_llm_judge` flag), DD submission config, judge deployment, and the last 50 submission outcomes with timestamps, durations, and reasoning excerpts. The admin UI's **Eval pipeline (read-only)** panel polls this endpoint every 10 s. Read-only by design — env-driven config (`EVAL_SAMPLE_RATE`, `DD_API_KEY`) means runtime mutation would diverge from pod-restart-time truth. The panel is the fastest way to confirm "is the pipeline alive?" without leaving the app, especially when DD is disabled and submissions would otherwise be invisible.
 
 ### 4.D — Annotation queues (human review)
 

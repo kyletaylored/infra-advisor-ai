@@ -16,6 +16,7 @@ import {
 import { Trash2, Shield } from "lucide-react";
 import { User, createUser, deleteUser, listUsers, patchUser } from "../lib/auth";
 import { useAuth } from "../hooks/useAuth";
+import { EvalDiagnostics } from "./EvalDiagnostics";
 
 // ── Checkbox helper ───────────────────────────────────────────────────────────
 
@@ -376,6 +377,21 @@ export function AdminTab() {
         <Text fontSize="xs" color="gray.400" textAlign="center">
           Use the action buttons to manage roles and accounts. Your own account cannot be modified.
         </Text>
+
+        {/* ── Eval pipeline diagnostics (read-only) ──────────────────────
+            Surfaces the same /eval/status snapshot that ops uses from the
+            CLI. Read-only by design: env-driven config (EVAL_SAMPLE_RATE,
+            DD_API_KEY) means runtime mutation would diverge from pod
+            restart-time truth. See docs/llm-observability-dotnet.md. */}
+        <Box>
+          <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={1}>
+            Eval pipeline (read-only)
+          </Text>
+          <Text fontSize="xs" color="gray.500" mb={3}>
+            Snapshot of the .NET agent's external-evaluations pipeline. To change sample rate or judge model, update env vars and restart the agent-api-dotnet pod.
+          </Text>
+          <EvalDiagnostics />
+        </Box>
       </VStack>
 
       {/* Confirmation dialog */}

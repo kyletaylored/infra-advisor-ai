@@ -22,6 +22,7 @@ public class DatadogEvalsClient
 {
     private readonly HttpClient _http;
     private readonly ILogger<DatadogEvalsClient> _logger;
+    private readonly EvalSubmissionLog _log;
     private readonly string? _apiKey;
     private readonly string _site;
     private readonly string _mlApp;
@@ -29,10 +30,12 @@ public class DatadogEvalsClient
 
     public DatadogEvalsClient(
         HttpClient http,
-        ILogger<DatadogEvalsClient> logger)
+        ILogger<DatadogEvalsClient> logger,
+        EvalSubmissionLog log)
     {
         _http = http;
         _logger = logger;
+        _log = log;
         _apiKey = Environment.GetEnvironmentVariable("DD_API_KEY");
         _site = Environment.GetEnvironmentVariable("DD_SITE") ?? "datadoghq.com";
         _mlApp = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME")
@@ -42,6 +45,10 @@ public class DatadogEvalsClient
         if (!_enabled)
             _logger.LogWarning("DD_API_KEY not set; DatadogEvalsClient disabled — external evals will not be submitted.");
     }
+
+    public bool Enabled => _enabled;
+    public string MlApp => _mlApp;
+    public string Site => _site;
 
     public Task SubmitBooleanAsync(
         string traceIdDecimal, string spanIdDecimal,
@@ -81,8 +88,28 @@ public class DatadogEvalsClient
         IEnumerable<string>? extraTags,
         CancellationToken ct)
     {
-        if (!_enabled) return;
+        if (!_enabled)
+        {
+            // Even when DD submission is disabled, record the attempt in
+            // the diagnostic log so the admin panel can show "would have
+            // submitted X but DD_API_KEY missing".
+            _log.Record(new EvalSubmissionEntry(
+                Timestamp: DateTimeOffset.UtcNow,
+                Label: label,
+                MetricType: metricType,
+                Value: valueField.Value,
+                Reasoning: TruncateForLog(reasoning),
+                TraceIdDecimal: traceIdDecimal,
+                SpanIdDecimal: spanIdDecimal,
+                Success: false,
+                DurationMs: 0,
+                Error: "DD_API_KEY not set — submission skipped"));
+            return;
+        }
 
+        var startedAt = DateTimeOffset.UtcNow;
+        var success = false;
+        string? error = null;
         try
         {
             // DD's eval-metric API uses JSON:API-style envelope. `metrics` is
@@ -127,16 +154,40 @@ public class DatadogEvalsClient
             if (!resp.IsSuccessStatusCode)
             {
                 var body = await resp.Content.ReadAsStringAsync(ct);
+                error = $"HTTP {(int)resp.StatusCode}: {Truncate(body, 120)}";
                 _logger.LogWarning(
                     "DD eval submission failed: {Status} {Label} — {Body}",
                     (int)resp.StatusCode, label, Truncate(body, 200));
             }
+            else
+            {
+                success = true;
+            }
         }
         catch (Exception ex)
         {
+            error = $"{ex.GetType().Name}: {Truncate(ex.Message, 120)}";
             _logger.LogWarning("DD eval submission threw for {Label}: {Error}", label, ex.Message);
         }
+        finally
+        {
+            var durationMs = (int)(DateTimeOffset.UtcNow - startedAt).TotalMilliseconds;
+            _log.Record(new EvalSubmissionEntry(
+                Timestamp: startedAt,
+                Label: label,
+                MetricType: metricType,
+                Value: valueField.Value,
+                Reasoning: TruncateForLog(reasoning),
+                TraceIdDecimal: traceIdDecimal,
+                SpanIdDecimal: spanIdDecimal,
+                Success: success,
+                DurationMs: durationMs,
+                Error: error));
+        }
     }
+
+    private static string? TruncateForLog(string? reasoning) =>
+        reasoning is null ? null : Truncate(reasoning, 240);
 
     private static string Truncate(string s, int max) =>
         s.Length <= max ? s : s[..max] + "…";

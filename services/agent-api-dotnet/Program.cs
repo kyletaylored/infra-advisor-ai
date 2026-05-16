@@ -267,6 +267,11 @@ var feedbackCounter = bizMeter.CreateCounter<long>(
 builder.Services.AddSingleton<MemoryService>();
 builder.Services.AddSingleton<AgentSessionStore>();
 builder.Services.AddSingleton<RetrievalService>();
+// In-memory ring buffer of recent eval-submission outcomes, surfaced by the
+// admin diagnostics panel via GET /eval/status. Single instance shared with
+// every DatadogEvalsClient submission so the panel can see the most recent
+// 50 attempts across all evaluators.
+builder.Services.AddSingleton<EvalSubmissionLog>();
 builder.Services.AddHttpClient<DatadogEvalsClient>();
 builder.Services.AddSingleton<IResponseEvaluator, CitationPresentEvaluator>();
 builder.Services.AddSingleton<IResponseEvaluator, BdToolOrderingEvaluator>();
@@ -558,6 +563,77 @@ app.MapGet("/tools", async (McpClientHolder holder, AppState state, HttpContext 
         description = t.Description,
     });
     return Results.Ok(result);
+});
+
+// ── /eval/status — read-only diagnostics for the admin UI ─────────────────────
+// Exposes the running eval pipeline state so admins can answer: "is the eval
+// pipeline actually firing? at what sample rate? which evaluators are
+// registered? are submissions reaching Datadog? what's the recent failure
+// rate?" without grepping pod logs or hitting DD's UI.
+//
+// Read-only by design — mutating sample rate / toggling evaluators at runtime
+// would require an audit story we haven't designed yet. See claude-progress.txt
+// entry for the "Option A diagnostic panel" decision rationale.
+app.MapGet("/eval/status", (
+    IEnumerable<InfraAdvisor.AgentApi.Services.Evaluators.IResponseEvaluator> evaluators,
+    DatadogEvalsClient ddEvals,
+    EvalSubmissionLog log) =>
+{
+    var snapshot = log.Snapshot();
+    var sampleRate = double.TryParse(
+        Environment.GetEnvironmentVariable("EVAL_SAMPLE_RATE"),
+        System.Globalization.NumberStyles.Float,
+        System.Globalization.CultureInfo.InvariantCulture,
+        out var r) ? Math.Clamp(r, 0.0, 1.0) : 0.1;
+
+    return Results.Ok(new
+    {
+        sample_rate = sampleRate,
+        eval_pipeline = new
+        {
+            registered_evaluators = evaluators.Select(e => new
+            {
+                label = e.Label,
+                type_name = e.GetType().Name,
+                is_llm_judge = e.GetType().Name.StartsWith("Meai", StringComparison.Ordinal),
+            }).ToList(),
+        },
+        datadog = new
+        {
+            enabled = ddEvals.Enabled,
+            ml_app = ddEvals.MlApp,
+            site = ddEvals.Site,
+            api_key_configured = ddEvals.Enabled,
+        },
+        judge = new
+        {
+            deployment = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-4.1-mini",
+            note = "M.E.AI Quality evaluator prompts tuned best for GPT-4o-class models. " +
+                   "Scores from this deployment are useful as trend signal; " +
+                   "absolute thresholds need recalibration.",
+        },
+        submissions = new
+        {
+            total = snapshot.TotalSubmitted,
+            failed = snapshot.TotalFailed,
+            success_rate = snapshot.TotalSubmitted == 0
+                ? (double?)null
+                : Math.Round(1.0 - (double)snapshot.TotalFailed / snapshot.TotalSubmitted, 3),
+            recent = snapshot.Recent.Select(e => new
+            {
+                timestamp_iso = e.Timestamp.ToString("o"),
+                label = e.Label,
+                metric_type = e.MetricType,
+                value = e.Value,
+                success = e.Success,
+                duration_ms = e.DurationMs,
+                trace_id_decimal = e.TraceIdDecimal,
+                span_id_decimal = e.SpanIdDecimal,
+                reasoning = e.Reasoning,
+                error = e.Error,
+            }).ToList(),
+        },
+    });
 });
 
 app.MapPost("/feedback", (FeedbackRequest body) =>
