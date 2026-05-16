@@ -1,3 +1,119 @@
+[2026-05-15] Streaming agent UI: inline tool-call chips, drop CitationPanel
+  Replaces the static "Thinking…" indicator with live agent reasoning —
+  users see each tool call start, complete, and the response text stream
+  in real time. Removes the bottom CitationPanel + per-message sources
+  badge strip since the inline chips carry the same information with
+  better context (per-step, expandable detail, args + data_notes inline).
+
+  Backend — Server-Sent Events streaming endpoint:
+    services/agent-api-dotnet/Models/StreamEvent.cs  [NEW]
+      Discriminated record hierarchy with EventName the SSE event line
+      uses. Variants: StepEvent (classify_domain / retrieve_best_practices),
+      ToolCallStartEvent, ToolCallEndEvent (with result_summary, sources,
+      duration_ms), TextChunkEvent, DoneEvent (trace_id, span_id, model,
+      sources, tools_called), ErrorEvent.
+
+    services/agent-api-dotnet/Services/AgentService.cs
+      + RunAgentStreamingAsync — yields IAsyncEnumerable<StreamEvent>.
+        Same classify → retrieve → agent pipeline as RunAgentAsync, but
+        wraps agent.RunStreamingAsync(...) instead of RunAsync and emits
+        events as each AgentResponseUpdate arrives. Stops on MCP errors
+        without retry (mid-stream rewind isn't safe; clients fall back
+        to /query for that path).
+      + HandleUpdate static helper — maps FunctionCallContent /
+        FunctionResultContent / TextContent → stream events. Tracks tool
+        start times in a Dictionary<CallId, (StartTicks, Name)> so the
+        End event reports duration even when MAF emits call + result
+        back-to-back in one update.
+      + SummarizeToolResult — short one-liner for the chip (e.g.
+        "12 records", "5 fields", "error", or "N chars" for plain text).
+
+    services/agent-api-dotnet/Program.cs
+      + POST /query/stream endpoint. Sets Content-Type:text/event-stream,
+        Cache-Control:no-cache, X-Accel-Buffering:no, Connection:keep-alive
+        for proxy compatibility. Iterates RunAgentStreamingAsync and
+        writes "event: <name>\ndata: <json>\n\n" blocks, flushing after
+        each. Accumulates TextChunkEvent into a StringBuilder for the
+        end-of-stream conversation save (matches /query's persisted form).
+        Existing /query endpoint retained for non-streaming consumers
+        and for MCP session-expired retry fallback.
+
+    services/ui/nginx.conf
+      + new location /api-dotnet/query/stream block BEFORE the generic
+        /api-dotnet/ catch-all so the longer prefix wins. proxy_buffering
+        off, proxy_cache off, http_version 1.1, 300s timeouts —
+        SSE-required settings.
+
+  Frontend — streaming consumer + inline chips:
+    services/ui/src/components/ToolStepChip.tsx  [NEW]
+      Compact one-liner chip: state icon + tool icon + label + result
+      summary + duration. Click expands an inline detail row with Args
+      (pretty JSON), About this data (TOOL_META.data_notes), Citations
+      (per-step sources), Data source URL. Uses Chakra Collapsible.Root.
+      Two kinds: "tool" (MCP tool calls — labelled from TOOL_META) and
+      "internal" (classify_domain → "Classify intent",
+      retrieve_best_practices → "Best-practice retrieval").
+
+    services/ui/src/lib/api.ts
+      + StreamEvent discriminated union type matching the backend records
+      + sendQueryStream — AsyncGenerator that POSTs to /query/stream and
+        yields parsed StreamEvent objects. Hand-rolled SSE block parser
+        (no extra deps; protocol is small enough we don't need a library).
+      + parseSseBlock — splits "event:" / "data:" lines, JSON-parses the
+        data payload, merges with the event name into a typed object.
+
+    services/ui/src/components/Chat.tsx
+      - removed CitationPanel import + JSX block + sources-panel test ID
+      - removed activeCitations state + setActiveCitations sites (4 of them)
+      - removed sourceToCitation + mergeCitations helpers (now dead)
+      - removed global "Thinking…" loading bubble (step chips are the
+        new live indicator)
+      - removed per-message Badge sources strip (chips above the message
+        carry the same info plus expandable detail)
+      - dropped unused Badge/Separator/Spinner from Chakra imports
+      - Message interface: dropped `citations: Citation[]` field,
+        added `steps: StreamStep[]` field
+      + toStepsFromSources helper — reconstructs lightweight chips from
+        persisted historical conversation messages
+      + submit() rewritten: inserts empty assistant placeholder message,
+        consumes for await (const evt of sendQueryStream(...)), updates
+        the same placeholder in-place via patchAssistant / upsertStep.
+        text_chunk events append to .content live; tool_call_start /
+        tool_call_end events upsert keyed by tool call id.
+      + ToolStepChip rendered ABOVE message content in the assistant
+        bubble (chronological agent reasoning)
+
+    services/ui/src/components/CitationPanel.tsx  [DELETED]
+
+  Acceptance criteria (preserved through the rewrite):
+  [x] dotnet build -c Release: 0 errors on agent-api-dotnet
+  [x] npx tsc --noEmit: 0 errors on services/ui
+  [x] /query endpoint and its full pipeline (MCP retry, conversation
+      persistence, eval submission) untouched — streaming added alongside
+  [x] CitationPanel.tsx no longer exists; no remaining import or JSX
+      reference to it across the codebase
+  [x] Historical conversations (loaded via ?c= or sidebar) render with
+      reconstructed chips (one per persisted source) for visual continuity
+
+  [~] Live verification:
+      (a) Fresh /query from the UI: chips appear above the answer in
+          this order — Classify intent → Best-practice retrieval →
+          one chip per execute_tool — then the answer streams below
+          them token-by-token
+      (b) Each tool chip is clickable: expand shows pretty-printed
+          arguments, the tool's data_notes, the per-step _source list
+          (if any), and the upstream data source URL
+      (c) NGINX correctly streams chunks without buffering: open browser
+          dev tools → Network tab → /api-dotnet/query/stream request
+          shows "EventStream" (or chunked) type with events arriving
+          throughout the request rather than all at the end
+      (d) Conversation save still works — refresh after streaming
+          finishes loads the same conversation with reconstructed chips
+      (e) DD APM trace shape unchanged from /query: full trace tree
+          (workflow / agent / llm / tool / embedding / retrieval) for
+          /query/stream too, since RunStreamingAsync emits the same
+          OTel spans
+
 [2026-05-15] Resilient MCP client reconnect — no more manual restarts
   Previously: McpClient.CreateAsync ran once at startup and the resulting
   client + tool list were captured into the AIAgent singleton's closure.
