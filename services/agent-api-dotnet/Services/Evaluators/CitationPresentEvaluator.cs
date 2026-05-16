@@ -26,19 +26,19 @@ public class CitationPresentEvaluator : IResponseEvaluator
         @"award[_\s]id|structure[_\s]number)\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    public EvalResult Evaluate(EvalInput input)
+    public Task<EvalResult> EvaluateAsync(EvalInput input, CancellationToken ct)
     {
         if (input.Answer.Length < 120)
-            return new EvalResult("boolean", true, "Exempt: short/clarifying response");
+            return Task.FromResult(new EvalResult("boolean", true, "Exempt: short/clarifying response"));
 
         if (input.Sources.Count > 0)
-            return new EvalResult("boolean", true,
-                $"Tool-derived sources present: {string.Join(", ", input.Sources.Take(3))}");
+            return Task.FromResult(new EvalResult("boolean", true,
+                $"Tool-derived sources present: {string.Join(", ", input.Sources.Take(3))}"));
 
         if (IdPattern.IsMatch(input.Answer))
-            return new EvalResult("boolean", true, "Inline identifier match in answer text");
+            return Task.FromResult(new EvalResult("boolean", true, "Inline identifier match in answer text"));
 
-        return new EvalResult("boolean", false,
-            "No tool-derived source and no domain-specific identifier (NBI / PWSID / EIA / FEMA / award_id) in answer");
+        return Task.FromResult(new EvalResult("boolean", false,
+            "No tool-derived source and no domain-specific identifier (NBI / PWSID / EIA / FEMA / award_id) in answer"));
     }
 }

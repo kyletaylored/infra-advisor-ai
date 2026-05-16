@@ -14,6 +14,15 @@
     <PackageReference Include="Microsoft.Extensions.AI" Version="10.6.0" />
     <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.6.0" />
 
+    <!-- M.E.AI.Evaluation — LLM-as-judge evaluator framework. .Quality has
+         the canonical Relevance / Coherence / Groundedness evaluators that
+         power our MeaiRelevanceEvaluator / MeaiGroundednessEvaluator
+         IResponseEvaluator implementations. Each evaluator runs through
+         the same Datadog External Evaluations API path as the
+         deterministic evaluators (DatadogEvalsClient). -->
+    <PackageReference Include="Microsoft.Extensions.AI.Evaluation" Version="10.6.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.Evaluation.Quality" Version="10.6.0" />
+
     <!-- Microsoft Agents Framework — ChatClientAgent, AgentSession, serialize/
          deserialize for Redis-backed session persistence. UseOpenTelemetry on
          the agent builder emits the invoke_agent span DD LLMObs uses as the

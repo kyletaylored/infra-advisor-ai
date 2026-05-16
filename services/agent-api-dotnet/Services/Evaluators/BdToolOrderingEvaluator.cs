@@ -15,23 +15,23 @@ public class BdToolOrderingEvaluator : IResponseEvaluator
     private const string AwardsTool = "get_contract_awards";
     private const string OppsTool   = "get_procurement_opportunities";
 
-    public EvalResult Evaluate(EvalInput input)
+    public Task<EvalResult> EvaluateAsync(EvalInput input, CancellationToken ct)
     {
         var awardsIdx = IndexOf(input.ToolsCalled, AwardsTool);
         var oppsIdx   = IndexOf(input.ToolsCalled, OppsTool);
 
         if (awardsIdx < 0 && oppsIdx < 0)
-            return new EvalResult("boolean", true, "Rule N/A: neither BD tool called");
+            return Task.FromResult(new EvalResult("boolean", true, "Rule N/A: neither BD tool called"));
 
         if (awardsIdx < 0 || oppsIdx < 0)
-            return new EvalResult("boolean", true,
-                "Rule N/A: only one BD tool called (ordering doesn't apply)");
+            return Task.FromResult(new EvalResult("boolean", true,
+                "Rule N/A: only one BD tool called (ordering doesn't apply)"));
 
-        return awardsIdx < oppsIdx
+        return Task.FromResult(awardsIdx < oppsIdx
             ? new EvalResult("boolean", true,
                 $"Correct order: {AwardsTool} at #{awardsIdx} before {OppsTool} at #{oppsIdx}")
             : new EvalResult("boolean", false,
-                $"Wrong order: {OppsTool} at #{oppsIdx} called before {AwardsTool} at #{awardsIdx}");
+                $"Wrong order: {OppsTool} at #{oppsIdx} called before {AwardsTool} at #{awardsIdx}"));
     }
 
     private static int IndexOf(IReadOnlyList<string> list, string item)

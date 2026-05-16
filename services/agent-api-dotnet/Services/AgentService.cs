@@ -160,7 +160,8 @@ public class AgentService
         // unchanged. Captured AgentSpanContext lets us address the agent
         // span specifically (not the HTTP root) when joining to DD's
         // eval-metric API.
-        ScheduleEvaluations(query, answer, toolsCalled, sources, domain);
+        var toolResults = ExtractToolResultsFromResponse(response);
+        ScheduleEvaluations(query, answer, toolsCalled, toolResults, sources, domain);
 
         return new AgentResult(
             Answer: answer,
@@ -171,7 +172,8 @@ public class AgentService
 
     private void ScheduleEvaluations(
         string query, string answer,
-        List<string> toolsCalled, List<string> sources, string domain)
+        List<string> toolsCalled, List<string> toolResults,
+        List<string> sources, string domain)
     {
         if (_evalSampleRate <= 0 || _evaluators.Count == 0) return;
         if (Random.Shared.NextDouble() >= _evalSampleRate) return;
@@ -183,7 +185,7 @@ public class AgentService
             return;
         }
 
-        var input = new EvalInput(query, answer, toolsCalled, sources, domain);
+        var input = new EvalInput(query, answer, toolsCalled, toolResults, sources, domain);
         var evaluators = _evaluators;
         var client = _ddEvals;
         var promptVersionTag = $"prompt.version:{Environment.GetEnvironmentVariable("PROMPT_VERSION") ?? "v1"}";
@@ -194,7 +196,7 @@ public class AgentService
             {
                 try
                 {
-                    var result = ev.Evaluate(input);
+                    var result = await ev.EvaluateAsync(input, CancellationToken.None);
                     var extraTags = new[]
                     {
                         $"query.domain:{domain}",
@@ -314,6 +316,7 @@ public class AgentService
         var toolStarts = new Dictionary<string, (long StartTicks, string Name)>();
         var allSources = new List<string>();
         var toolsCalledOrdered = new List<string>();
+        var toolResults = new List<string>();
         var fullAnswer = new System.Text.StringBuilder();
         Exception? streamError = null;
 
@@ -335,7 +338,7 @@ public class AgentService
             if (!moved) break;
 
             var update = enumerator.Current;
-            foreach (var ev in HandleUpdate(update, toolStarts, allSources, toolsCalledOrdered, fullAnswer))
+            foreach (var ev in HandleUpdate(update, toolStarts, allSources, toolsCalledOrdered, toolResults, fullAnswer))
                 yield return ev;
         }
         await enumerator.DisposeAsync();
@@ -360,7 +363,7 @@ public class AgentService
         var distinctSources = allSources.Distinct().ToList();
         var distinctTools = toolsCalledOrdered.Distinct().ToList();
 
-        ScheduleEvaluations(query, fullAnswer.ToString(), distinctTools, distinctSources, domain);
+        ScheduleEvaluations(query, fullAnswer.ToString(), distinctTools, toolResults, distinctSources, domain);
 
         yield return new DoneEvent(
             TraceId: GetTraceIdDecimal(),
@@ -380,6 +383,7 @@ public class AgentService
         Dictionary<string, (long StartTicks, string Name)> toolStarts,
         List<string> allSources,
         List<string> toolsCalledOrdered,
+        List<string> toolResults,
         System.Text.StringBuilder fullAnswer)
     {
         foreach (var content in update.Contents)
@@ -400,6 +404,10 @@ public class AgentService
                     var resultStr = fr.Result?.ToString() ?? "";
                     TryExtractSources(resultStr, sources);
                     allSources.AddRange(sources);
+                    // Capture the tool result for LLM-judge evaluators
+                    // (Groundedness needs the data to check claims against).
+                    // Cap at 4KB to keep judge prompts reasonable.
+                    toolResults.Add(resultStr.Length > 4000 ? resultStr[..4000] + "…" : resultStr);
 
                     var (startTicks, name) = toolStarts.TryGetValue(fr.CallId, out var s) ? s : (0L, fr.CallId);
                     var durationMs = startTicks > 0
@@ -504,6 +512,30 @@ public class AgentService
             }
         }
         return sources;
+    }
+
+    // Raw tool RESULTS captured from the agent response. LLM-judge evaluators
+    // (Groundedness) need this to verify answer claims against the actual data
+    // the tools returned. Each result is the JSON / text string the model
+    // received back from the tool — we cap each at 4KB to keep judge prompts
+    // sane.
+    private static List<string> ExtractToolResultsFromResponse(AgentResponse response)
+    {
+        const int maxChars = 4000;
+        var results = new List<string>();
+        foreach (var message in response.Messages)
+        {
+            foreach (var content in message.Contents)
+            {
+                if (content is FunctionResultContent fr && fr.Result is not null)
+                {
+                    var s = fr.Result.ToString() ?? "";
+                    if (s.Length > maxChars) s = s[..maxChars] + "…";
+                    results.Add(s);
+                }
+            }
+        }
+        return results;
     }
 
     private static List<string> ExtractToolsCalledFromResponse(AgentResponse response)

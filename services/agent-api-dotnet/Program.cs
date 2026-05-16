@@ -271,6 +271,11 @@ builder.Services.AddHttpClient<DatadogEvalsClient>();
 builder.Services.AddSingleton<IResponseEvaluator, CitationPresentEvaluator>();
 builder.Services.AddSingleton<IResponseEvaluator, BdToolOrderingEvaluator>();
 builder.Services.AddSingleton<IResponseEvaluator, ToolRoutingAccuracyEvaluator>();
+// LLM-as-judge — wrappers around Microsoft.Extensions.AI.Evaluation.Quality.
+// Uses the same IChatClient as the agent (gpt-4.1-mini) for the judge call;
+// per-eval cost is one extra inference call on each sampled trace.
+builder.Services.AddSingleton<IResponseEvaluator, MeaiRelevanceEvaluator>();
+builder.Services.AddSingleton<IResponseEvaluator, MeaiGroundednessEvaluator>();
 builder.Services.AddSingleton<AgentService>();
 builder.Services.AddSingleton<SuggestionService>();
 builder.Services.AddSingleton<ConversationService>();

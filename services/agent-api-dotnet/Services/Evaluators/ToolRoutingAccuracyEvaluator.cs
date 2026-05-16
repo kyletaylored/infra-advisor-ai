@@ -71,15 +71,15 @@ public class ToolRoutingAccuracyEvaluator : IResponseEvaluator
             "search_txdot_open_data", "txdot_query"),
     };
 
-    public EvalResult Evaluate(EvalInput input)
+    public Task<EvalResult> EvaluateAsync(EvalInput input, CancellationToken ct)
     {
         var matchedRules = Rules
             .Where(r => r.Pattern.IsMatch(input.Query))
             .ToList();
 
         if (matchedRules.Count == 0)
-            return new EvalResult("boolean", true,
-                "Rule N/A: no high-confidence routing pattern matched the query");
+            return Task.FromResult(new EvalResult("boolean", true,
+                "Rule N/A: no high-confidence routing pattern matched the query"));
 
         var calledTools = new HashSet<string>(input.ToolsCalled, StringComparer.Ordinal);
         var failed = matchedRules
@@ -87,11 +87,11 @@ public class ToolRoutingAccuracyEvaluator : IResponseEvaluator
             .ToList();
 
         if (failed.Count == 0)
-            return new EvalResult("boolean", true,
-                $"Routed correctly: {string.Join(", ", matchedRules.Select(r => $"{r.RuleName} → {r.ExpectedTool}"))}");
+            return Task.FromResult(new EvalResult("boolean", true,
+                $"Routed correctly: {string.Join(", ", matchedRules.Select(r => $"{r.RuleName} → {r.ExpectedTool}"))}"));
 
         var details = string.Join("; ", failed.Select(r =>
             $"{r.RuleName} expected {r.ExpectedTool} but tools called were [{string.Join(", ", input.ToolsCalled)}]"));
-        return new EvalResult("boolean", false, $"Routing mismatch: {details}");
+        return Task.FromResult(new EvalResult("boolean", false, $"Routing mismatch: {details}"));
     }
 }
