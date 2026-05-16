@@ -1,3 +1,129 @@
+[2026-05-16] Docs restructure — single LLM Engineering Guide mirrors DD's docs
+
+  Replaced the Python-vs-.NET LLMObs documentation fork with one
+  language-agnostic guide whose structure mirrors Datadog's LLM
+  Observability docs section. Each topic page shows both
+  implementations in tabbed code blocks (Python ddtrace | .NET OTel)
+  using real code from agent-api and agent-api-dotnet.
+
+  Prior state: observability/llm-observability.md (Python-flavored, ~120
+  lines) AND observability/llm-observability-dotnet/ (7 sub-pages after
+  an earlier same-day split). Two parallel docs that had drifted out of
+  sync; readers had to pick a language doc before knowing what they
+  needed. Both deleted.
+
+  New top-level sidebar section "LLM Engineering Guide" with 18 pages:
+
+    llm-engineering/
+      index.md
+      quickstart.md
+      instrumentation/{python,dotnet}.md
+      monitoring/{spans-and-traces,apm-correlation,mcp-clients,
+                  prompt-tracking,metrics,operations}.md
+      evaluations/{managed,llm-judge-ui,external,annotation-queues,
+                   export-api,developer-guide}.md
+      experiments.md
+      datadog-mcp.md
+      security-rbac.md
+      glossary.md
+
+  Two consolidations from DD's literal outline:
+   - "Spans and traces" merges DD's Querying + Patterns + Agent
+     Monitoring into one page.
+   - "Operations" merges Automation Rules + Cost into a short
+     ops-checklist page.
+  Experiments is a stub — InfraAdvisor has no production exposure to
+  DD Experiments yet; the page sets the adoption roadmap (annotation
+  queue -> dataset promotion -> CI gate on prompt PRs) and links to DD
+  docs for each subtopic.
+
+  Code samples are pulled from:
+   - services/agent-api/src/agent.py + observability/llm_obs.py (Python)
+   - services/agent-api-dotnet/Services/*, Observability/* (.NET)
+  No fabricated examples; if a feature is single-language (M.E.AI
+  Quality .NET-only, ddtrace auto-instrumentation Python-only), the
+  page notes that and shows only the relevant tab.
+
+  observability/index.md gets a one-line pointer to the new section;
+  Observability sidebar entry now scopes to APM / RUM / Dashboards.
+
+  Verified:
+  [x] npx astro build: 0 errors, 58 pages emitted
+  [x] All <Tabs syncKey="lang"> blocks render with both Python + .NET
+  [x] Sidebar collapsible groups (Instrumentation, Monitoring,
+      Evaluations) collapse correctly with starlight defaults
+  [x] No remaining cross-refs to deleted observability/llm-observability*
+      paths anywhere in /docs/src
+
+  [~] Live-pages verification (post-deploy to gh-pages):
+      (a) Side-nav TOC fits without overflow on the longest page
+          (developer-guide.md is the test case at ~220 lines)
+      (b) Tabs syncKey persists across pages — picking ".NET" on
+          quickstart should remain selected when navigating to
+          monitoring/spans-and-traces
+      (c) Internal cross-page links work (relative ../ paths used
+          throughout — verify on gh-pages base path)
+
+[2026-05-16] Serilog log<->trace correlation via custom enricher
+
+  Bug: after we removed the DD .NET tracer (pure-OTel migration), the
+  Serilog setup in both .NET services still had a stale comment
+  claiming "DD_LOGS_INJECTION=true auto-injects dd.trace_id /
+  dd.span_id". The DD tracer was gone — nothing was actually writing
+  trace context into log events. APM trace -> Logs tab was silently
+  empty even though both spans and logs were being ingested.
+
+  services/agent-api-dotnet/Observability/DatadogTraceContextEnricher.cs  [NEW]
+  services/mcp-server-dotnet/Observability/DatadogTraceContextEnricher.cs  [NEW]
+    Identical 50-line ILogEventEnricher in both services (separate
+    csproj files, duplication beats sharing for a class this small).
+    Reads Activity.Current; writes top-level CLEF keys:
+      dd.trace_id = lower 64 bits of W3C trace_id, base-10
+      dd.span_id  = span_id, base-10
+    Decimal-low-64 is the historic DD .NET tracer format; the agent's
+    csharp log integration recognizes it verbatim. The high 64 bits
+    of the 128-bit W3C trace_id are preserved in the OTel trace
+    metadata and recombined at correlation time by DD's log pipeline.
+
+  services/agent-api-dotnet/Observability/TelemetrySetup.cs
+  services/mcp-server-dotnet/Observability/TelemetrySetup.cs
+    .Enrich.With(new DatadogTraceContextEnricher()) added to the
+    Serilog UseSerilog config. Stale "DD .NET tracer auto-injects"
+    comment also corrected on both sides.
+
+  docs/src/content/docs/llm-engineering/monitoring/apm-correlation.md
+    Documents the enricher under "Log <-> trace correlation" with the
+    full code and explains the low-64-bit decimal choice. Python tab
+    documents the equivalent ddtrace path (DD_LOGS_INJECTION=true
+    handles it automatically with DD_LOG_FORMAT=json).
+
+  Property name choice: Serilog's LogEventProperty constructor accepts
+  any non-whitespace string for the name — the strict identifier rules
+  only apply to {Template} placeholders, not direct construction. So
+  "dd.trace_id" (with the literal dot) is a valid Serilog property
+  name and CompactJsonFormatter emits it as a top-level JSON key,
+  matching DD's expected field name verbatim.
+
+  Verified:
+  [x] dotnet build (both services): 0 warnings, 0 errors
+  [x] Enricher only fires when Activity.Current != null (e.g. startup
+      log lines emitted before the request scope opens get no trace
+      tags, which is correct)
+  [x] ulong.TryParse path handles malformed/zero IDs without throwing
+
+  [~] Live verification (post-deploy):
+      (a) kubectl logs deploy/agent-api-dotnet shows dd.trace_id and
+          dd.span_id as top-level JSON keys on every request-scoped
+          log line
+      (b) DD APM trace -> Logs tab now populates with the matching
+          structured log lines (specifically: a request from /query
+          stream should show log lines for both
+          AgentService.RunAgentAsync entry and HandleUpdate stream
+          events on the same trace_id)
+      (c) Same end-to-end check for mcp-server-dotnet
+      (d) Logs emitted OUTSIDE a request scope (startup, kafka
+          consumer if any) correctly have no dd.trace_id field
+
 [2026-05-16] Eval pipeline diagnostics — admin UI panel + /eval/status endpoint
 
   Read-only diagnostic surface for the external-evals pipeline. Without
