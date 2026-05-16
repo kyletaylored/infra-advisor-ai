@@ -1,3 +1,129 @@
+[2026-05-15] Agent reliability bridge: enriched tool descriptions + grounded
+             suggestions + curated golden-path seed pool
+
+  Targets the most common agent failure mode in this project: the LLM
+  picks the wrong tool or sends malformed args because the per-tool
+  descriptions are too thin AND the suggestion-generation prompts don't
+  know what the tools can actually do. Three coordinated fixes:
+
+  (A) Enriched MCP tool descriptions. Each of the 11 tools now has a
+      structured description following the pattern:
+        - one-line WHAT
+        - data scope / coverage
+        - WHEN TO USE (concrete user-question patterns)
+        - WHEN NOT TO USE (steers to the alternative tool)
+        - constraints, gotchas, valid value ranges
+        - common AEC NAICS codes / FIPS codes / fuel codes etc.
+      Parameter [Description] strings also enriched with concrete
+      example values (FIPS '48' for TX, NAICS '237310' for highway,
+      common fuel codes, county names, etc.).
+
+      Highest-impact changes:
+        BridgeConditionTool: clarified state_code is 2-CHAR FIPS with
+          leading zero (TX=48, CA=06) not 2-letter abbrev. Listed common
+          state codes inline. Documented PAIRING with the rest of the
+          NBI fields.
+        ContractAwardsTool: added PAIRING RULE — call BEFORE
+          get_procurement_opportunities for BD research. Listed common
+          AEC NAICS codes inline so the model emits ['237310'] not
+          ['56' or worse]. Steers HISTORICAL→awards vs ACTIVE→
+          opportunities decision.
+        ProcurementOpportunitiesTool: complement of ContractAwards —
+          ACTIVE/OPEN only. NEVER asks for a date range (internal 90-day
+          default). Tolerates SAM.gov 429s with retriable:true.
+        WaterInfrastructureTool: 3 query_type dispatch (water_systems
+          / violations / water_plan_projects) made explicit with
+          PWSID format note + Texas-only constraint on TWDB path.
+        DisasterHistoryTool: previously 1-line description, now full
+          schema + common incident_types (Flood, Hurricane, Tornado,
+          Severe Storm, etc.).
+        ProjectKnowledgeTool: previously 1-line description, now spelt
+          out as the firm knowledge base + the "always call before
+          draft_document" pairing rule.
+        DraftDocumentTool: enumerated each of the 4 document_type
+          values with what they output + the call-search_project_
+          knowledge-first rule.
+        EnergyInfrastructureTool / ErcotEnergyTool: clarified the
+          multi-state EIA vs Texas-only ERCOT decision.
+        TxDotOpenDataTool: explicit Texas-only + 3 query_type dispatch.
+        WebProcurementSearchTool: already in good shape from the
+          recent Azure-search rewrite.
+
+  (B) Suggestion-generation prompts grounded in tool catalog. Added
+      a `ToolCatalog` constant in SuggestionService that mirrors each
+      MCP tool's purpose + capabilities + constraints. All 4 pool-batch
+      prompts (engineering / construction / operations / management)
+      now PREFIX the catalog before asking the LLM to generate
+      questions. Each batch prompt then steers the LLM toward
+      specific tool patterns ("map to get_contract_awards →
+      get_procurement_opportunities", "every question must name a
+      state / NAICS / time window"). Result: LLM-generated suggestions
+      are far more likely to map cleanly to a single working tool
+      invocation, instead of fishing for tools that don't exist.
+
+  (C) Curated golden-path SeedPool. 12 hand-verified queries pinned
+      into SuggestionService.SeedPool. Cover the eight tool families:
+        - 3 bridge queries (single-tool, fast)
+        - 2 water queries (SDWIS + TWDB)
+        - 1 FEMA disaster history
+        - 1 EIA renewable mix
+        - 1 TxDOT catalog
+        - 2 federal BD queries (the get_contract_awards →
+          get_procurement_opportunities chained pattern)
+        - 1 SOW drafting (chained: search_project_knowledge →
+          draft_document)
+        - 1 cross-domain (Harris County bridges + floods + water)
+      Loaded into Redis on first FillPoolAsync() when the LLM pool is
+      empty (cold start). After seeding, the LLM-batch continues to
+      add variety in the background. Net effect: user's first-touch
+      experience is always reliable, and the LLM-generated additions
+      are now grounded by the catalog so they typically work too.
+
+  Files changed:
+    services/mcp-server-dotnet/Tools/BridgeConditionTool.cs
+    services/mcp-server-dotnet/Tools/ContractAwardsTool.cs
+    services/mcp-server-dotnet/Tools/DisasterHistoryTool.cs
+    services/mcp-server-dotnet/Tools/DraftDocumentTool.cs
+    services/mcp-server-dotnet/Tools/EnergyInfrastructureTool.cs
+    services/mcp-server-dotnet/Tools/ErcotEnergyTool.cs
+    services/mcp-server-dotnet/Tools/ProcurementOpportunitiesTool.cs
+    services/mcp-server-dotnet/Tools/ProjectKnowledgeTool.cs
+    services/mcp-server-dotnet/Tools/TxDotOpenDataTool.cs
+    services/mcp-server-dotnet/Tools/WaterInfrastructureTool.cs
+    services/agent-api-dotnet/Services/SuggestionService.cs
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors on both projects
+  [x] SuggestionItem record signature matches the new SeedPool
+      constructor calls
+  [x] No regression in existing prompt structure — the catalog is
+      prefixed to existing prompts, not replacing them
+
+  Pending follow-up (lower-priority but valuable):
+  [ ] D. Add 3-4 few-shot worked examples to the agent system prompt
+      ("Q: low-rated TX bridges → call get_bridge_condition(state_code=
+      '48', max_lowest_rating=4)") for faster tool-args convergence
+  [ ] E. New IResponseEvaluator that asserts "for question pattern X,
+      tool Y must have been called" so we catch routing regressions
+      automatically via the existing external-evals pipeline
+  [ ] Python mcp-server tools — same enrichment in src/tools/*.py
+      (parallel codebase but currently the default for new conversations
+      according to BackendType="python")
+
+  [~] Live verification:
+      (a) Cold-start: fresh deploy with empty Redis → /suggestions/
+          initial returns 4 of the 12 SeedPool questions instead of
+          empty / LLM-generated junk
+      (b) Click a SeedPool suggestion → trace tree shows exactly the
+          expected tool sequence (e.g. "TX highway BD" → get_contract_
+          awards then get_procurement_opportunities, no other tools)
+      (c) New LLM-generated suggestions emitted by FillPoolAsync ARE
+          mappable to one or two tools; pre-change suggestions often
+          named non-existent capabilities
+      (d) When the agent runs a tool, args quality improves: state_
+          code='48' (correct FIPS) instead of state_code='TX' (wrong
+          format); NAICS ['237310'] (correct) instead of ['highway']
+
 [2026-05-15] Streaming agent UI: inline tool-call chips, drop CitationPanel
   Replaces the static "Thinking…" indicator with live agent reasoning —
   users see each tool call start, complete, and the response text stream
