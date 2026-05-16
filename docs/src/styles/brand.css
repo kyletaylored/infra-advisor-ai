@@ -1,0 +1,26 @@
+/* InfraAdvisor brand overrides for Starlight.
+   Brand color: rgb(29, 78, 216) / #1d4ed8 (Tailwind blue-700).
+   We override Starlight's accent ramp so links, the active sidebar item,
+   the search-result highlight, and the focused tab indicator all pick up
+   the brand blue. Everything else uses Starlight's defaults. */
+
+:root {
+    /* Dark theme (Starlight default). */
+    --sl-color-accent-low: #1e3a8a;
+    --sl-color-accent: #1d4ed8;
+    --sl-color-accent-high: #93c5fd;
+}
+
+:root[data-theme='light'] {
+    --sl-color-accent-low: #dbeafe;
+    --sl-color-accent: #1d4ed8;
+    --sl-color-accent-high: #1e3a8a;
+}
+
+/* Slightly tighter logo treatment in the top nav — the imported logo.svg
+   is square (32x32) so without this it sits a touch larger than the site
+   title text next to it. */
+.site-title img {
+    height: 1.5rem;
+    width: auto;
+}

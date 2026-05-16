@@ -10,6 +10,12 @@ export default defineConfig({
         starlight({
             title: 'InfraAdvisor AI',
             description: 'AI-powered infrastructure advisory platform for AEC/O&M consulting firms',
+            logo: {
+                src: './src/assets/logo.svg',
+                replacesTitle: false,
+            },
+            favicon: '/favicon.svg',
+            customCss: ['./src/styles/brand.css'],
             social: [
                 {
                     icon: 'github',
@@ -19,6 +25,27 @@ export default defineConfig({
             ],
             lastUpdated: true,
             head: [
+                // Browser chrome / mobile address-bar color matches the logo
+                // background. Render-blocking-tiny, no JS.
+                { tag: 'meta', attrs: { name: 'theme-color', content: '#1d4ed8' } },
+
+                // PNG favicon fallback for browsers that don't render SVG
+                // favicons (e.g. older Safari). Starlight's `favicon: ...`
+                // option only emits one <link>; add the PNG explicitly here.
+                {
+                    tag: 'link',
+                    attrs: { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/infra-advisor-ai/favicon.png' },
+                },
+
+                // Open Graph + Twitter Card meta — docs links unfurl with the
+                // InfraAdvisor banner in Slack, Twitter, GitHub previews, etc.
+                { tag: 'meta', attrs: { property: 'og:type', content: 'website' } },
+                { tag: 'meta', attrs: { property: 'og:image', content: 'https://kyletaylored.github.io/infra-advisor-ai/og-image.png' } },
+                { tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
+                { tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
+                { tag: 'meta', attrs: { name: 'twitter:card', content: 'summary_large_image' } },
+                { tag: 'meta', attrs: { name: 'twitter:image', content: 'https://kyletaylored.github.io/infra-advisor-ai/og-image.png' } },
+
                 {
                     // Mermaid v11 ESM — CDN, renders .mermaid blocks client-side.
                     // Reads Starlight's localStorage theme key to match dark/light mode.
