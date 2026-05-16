@@ -1,3 +1,76 @@
+[2026-05-15] Agent reliability bridge — second wave: few-shot examples,
+             routing-accuracy evaluator, MCP tool reference docs
+
+  Builds on 99b05d0 (enriched descriptions + grounded suggestions + seed
+  pool) with the remaining D + E from the original plan, plus a public-
+  facing tool reference page.
+
+  D. Few-shot examples in the agent system prompt.
+     services/agent-api-dotnet/Program.cs — AgentSystemPrompt const.
+     Appended 5 worked patterns covering the high-error decision points:
+       1. Bridge query → state_code FIPS '06' (not 'CA')
+       2. BD chained pattern → awards FIRST then opportunities
+       3. Water violations → query_type='violations' (not 'water_systems')
+       4. SOW drafting chain → search_project_knowledge → draft_document
+       5. Energy "renewable share" → data_series='fuel_mix'
+     Each example shows the exact arg shape so the model can copy the
+     pattern. Total prompt growth: ~600 chars; cost-per-request impact
+     negligible (and cached after first turn).
+
+  E. ToolRoutingAccuracyEvaluator.
+     services/agent-api-dotnet/Services/Evaluators/
+     ToolRoutingAccuracyEvaluator.cs [NEW]. Boolean IResponseEvaluator
+     that pattern-matches the user's query against 9 high-confidence
+     routing rules (regex per pattern → required tool name). Returns:
+       - pass when the matched rule's expected tool is in tools_called
+       - N/A (boolean true, "Rule N/A") when no rule matches the query
+       - fail with specific rule + tool diff when a routing miss happens
+     Registered in Program.cs DI alongside CitationPresentEvaluator and
+     BdToolOrderingEvaluator — automatically submitted at the existing
+     10% sample rate via DatadogEvalsClient. New eval label
+     'tool_routing_accuracy' appears in DD LLMObs per-trace evaluations
+     panel.
+
+     Rule list intentionally conservative — patterns are narrow so a
+     pass means "high confidence we got the routing right", not "passes
+     a fuzzy heuristic". Ambiguous queries naturally fall into the N/A
+     bucket to avoid false-positive failures.
+
+  Docs. docs/src/content/docs/services/mcp-tools.md [NEW, ~430 lines].
+     Single-page tool reference for AI engineers + on-call:
+       - Decision matrix (if user asks X → use tool Y)
+       - One section per tool covering purpose, coverage, when-to-use,
+         when-NOT-to-use, args with realistic example, gotchas
+       - Chained patterns (BD research chain, document drafting chain,
+         cross-domain risk audit)
+       - Reference data (FIPS state codes, AEC NAICS codes, EIA fuel
+         codes, FEMA incident types, EPA water system types)
+       - "Adding a new tool" callout listing the 3 files to update in
+         lockstep (tool [Description], ToolCatalog constant, this page)
+         to prevent drift.
+
+     The doc, the .NET tool [Description] attrs, and the SuggestionService
+     ToolCatalog all carry the same content — three faces of one tool
+     contract.
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors
+  [x] npx tsc --noEmit on services/ui: 0 errors (unchanged surface)
+  [x] ToolRoutingAccuracyEvaluator's 9 rules all compile and match
+      against the SeedPool entries we'd expect them to fire on
+
+  [~] Live verification:
+      (a) DD LLMObs → trace detail → Evaluations tab shows a new
+          'tool_routing_accuracy' row on ~10% of /query traces
+      (b) Click a SeedPool suggestion → trace shows the expected tool
+          sequence and the matching ToolRoutingAccuracyEvaluator rule
+          fires with pass=true
+      (c) Run a query that previously misrouted (eg "show me Texas
+          contract awards under 237310") → agent now emits
+          get_contract_awards with the right NAICS code on the first
+          attempt (no retry needed)
+      (d) docs site rebuild publishes /services/mcp-tools page
+
 [2026-05-15] Agent reliability bridge: enriched tool descriptions + grounded
              suggestions + curated golden-path seed pool
 
