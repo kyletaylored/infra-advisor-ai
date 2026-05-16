@@ -1,3 +1,111 @@
+[2026-05-16] Parity doc + M.E.AI Quality evaluators → DD External Evals API
+
+  Two pieces of work in one phase:
+
+  (1) .NET ↔ Python parity reference page.
+     docs/src/content/docs/development/dotnet-python-parity.md  [NEW ~190 lines]
+     Feature-matrix table covering every capability added since the MAF
+     migration, marked with .NET status + Python parity status
+     (✅ at-parity / ◐ partial / ❌ missing / 🔵 .NET-only by design).
+     Plus a "to bring Python to parity" prioritized checklist (Tier 1
+     quick wins → Tier 4 bigger lifts) and a cross-reference table of
+     "implementation references" pointing at the canonical .NET file
+     for each port. Page is the single source of truth for the Python
+     catch-up work when we get to it; current state shows ~15 capabilities
+     where .NET is ahead.
+
+  (2) M.E.AI Quality evaluators wrapped as IResponseEvaluator → DD evals.
+     Prerequisite refactor + two new evaluators:
+
+     services/agent-api-dotnet/Services/Evaluators/IResponseEvaluator.cs
+       IResponseEvaluator.Evaluate(input) → IResponseEvaluator
+         .EvaluateAsync(input, ct) returning Task<EvalResult>.
+       Existing deterministic evaluators (CitationPresent /
+       BdToolOrdering / ToolRoutingAccuracy) updated to async with
+       Task.FromResult wrappers. Cost-neutral; just permits LLM-judge
+       evaluators that await downstream model calls.
+
+       EvalInput record gains ToolResults: IReadOnlyList<string> — raw
+       text/JSON each MCP tool returned, capped at 4KB per result.
+       Groundedness needs this to verify answer claims against the
+       actual data the tools produced.
+
+     services/agent-api-dotnet/Services/Evaluators/MeaiQualityEvaluator.cs  [NEW]
+       Abstract base class MeaiQualityEvaluator wrapping an
+       M.E.AI.Evaluation.IEvaluator. Each concrete subclass:
+         - constructs its M.E.AI evaluator per call (cheap)
+         - constructs a ChatConfiguration from the IChatClient DI
+           singleton (re-uses the agent's gpt-4.1-mini deployment as
+           the judge model — see "Cost / quality note" comment in
+           the class)
+         - optionally builds EvaluationContext for evaluators that
+           need grounding data (Groundedness yes, Relevance no)
+         - awaits inner.EvaluateAsync, pulls the NumericMetric and
+           returns EvalResult(metricType="score", value=1-5,
+           reasoning="[Rating] reason text")
+         - swallows exceptions to score=0 with the exception type as
+           reasoning, so a flaky judge call doesn't crash the eval
+           pipeline
+
+       Concrete implementations shipped:
+         MeaiRelevanceEvaluator    → label "meai_relevance"
+         MeaiGroundednessEvaluator → label "meai_groundedness" with
+           GroundednessEvaluatorContext built from joined tool results
+
+     services/agent-api-dotnet/Services/AgentService.cs
+       + ExtractToolResultsFromResponse(response) — walks the
+         AgentResponse for FunctionResultContent items, returns capped
+         strings.
+       + Streaming HandleUpdate captures the same data into a
+         toolResults list passed into ScheduleEvaluations.
+       + ScheduleEvaluations signature gains toolResults; passes it to
+         each evaluator via EvalInput.
+       + Dispatch site now `await ev.EvaluateAsync(input, ct)`.
+
+     services/agent-api-dotnet/Program.cs
+       + AddSingleton<IResponseEvaluator, MeaiRelevanceEvaluator>
+       + AddSingleton<IResponseEvaluator, MeaiGroundednessEvaluator>
+
+     services/agent-api-dotnet/InfraAdvisor.AgentApi.csproj
+       + Microsoft.Extensions.AI.Evaluation 10.6.0
+       + Microsoft.Extensions.AI.Evaluation.Quality 10.6.0
+
+  Operational notes (worth knowing before this goes live):
+   - Each LLM-judge evaluator adds ONE inference call per evaluated
+     trace. With EVAL_SAMPLE_RATE=0.1 and two new evaluators, that's
+     +20% extra inference calls on the sampled 10% — net ~2% overhead
+     across all /query traffic. Adjust EVAL_SAMPLE_RATE if cost is a
+     concern.
+   - Judge model is the same gpt-4.1-mini we use for the agent. M.E.AI
+     Quality evaluator prompts are documented as "tuned best for GPT-4o
+     class". Scores from gpt-4.1-mini will be useful as a TREND signal
+     but absolute thresholds (e.g. "fail if score < 4") shouldn't be
+     used without recalibration.
+   - DD eval-metric API receives score_value (1-5) with reasoning
+     "[Rating] judge_explanation". Reasoning field is capped at ~500
+     chars; longer judge explanations get truncated with "…".
+
+  Verified:
+  [x] dotnet build -c Release: 0 warnings, 0 errors
+  [x] All 3 deterministic evaluators converted to async cleanly
+  [x] AgentResponse → ExtractToolResultsFromResponse round-trip captures
+      the FunctionResultContent strings that Groundedness needs
+
+  [~] Live verification:
+      (a) DD LLMObs → trace detail → Evaluations tab on sampled traces
+          now shows 5 eval rows: citation_present, bd_tool_ordering,
+          tool_routing_accuracy, meai_relevance, meai_groundedness
+      (b) meai_relevance score correlates with subjective answer
+          quality on the seed-pool queries (expect 4-5 for clean
+          answers, 2-3 for evasive ones)
+      (c) meai_groundedness fires only when toolResults is non-empty;
+          empty-context queries (chit-chat) get a "no toolResults"
+          skip with score=0 + reasoning explaining the skip
+      (d) Eval queue latency: total per-trace eval time still completes
+          before DD's eval-metric sample window closes (currently
+          generous, but watch for sustained judge call latency >5s
+          which would suggest gpt-4.1-mini is overloaded)
+
 [2026-05-15] Agent reliability bridge — second wave: few-shot examples,
              routing-accuracy evaluator, MCP tool reference docs
 
