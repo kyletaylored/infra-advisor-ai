@@ -36,10 +36,35 @@ os.environ.setdefault("AZURE_OPENAI_API_KEY", "mock-key")
 os.environ.setdefault("AZURE_OPENAI_DEPLOYMENT", "gpt-4.1-mini")
 os.environ.setdefault("MCP_SERVER_URL", "http://mock-mcp:8000/mcp")
 os.environ.setdefault("REDIS_HOST", "localhost")
+# Shared with auth-api in prod; any non-empty value works for unit tests.
+os.environ.setdefault("JWT_SECRET", "test-secret-for-agent-api-unit-tests")
 
 _SRC = os.path.join(os.path.dirname(__file__), "..", "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
+
+
+# ---------------------------------------------------------------------------
+# Test JWT — all protected endpoints require Authorization: Bearer <token>
+# ---------------------------------------------------------------------------
+
+def _make_test_token() -> str:
+    """Mint a JWT signed with the test JWT_SECRET so protected endpoints accept it."""
+    from datetime import datetime, timedelta, timezone
+
+    from jose import jwt
+    return jwt.encode(
+        {
+            "sub": "test-user-id",
+            "email": "tester@datadoghq.com",
+            "exp": datetime.now(timezone.utc) + timedelta(hours=1),
+        },
+        os.environ["JWT_SECRET"],
+        algorithm="HS256",
+    )
+
+
+_TEST_AUTH_HEADER = {"Authorization": f"Bearer {_make_test_token()}"}
 
 
 # ---------------------------------------------------------------------------
@@ -92,8 +117,14 @@ def client():
     ):
         from main import app
 
-        # Force lifespan to set up globals by calling with real TestClient
-        with TestClient(app, raise_server_exceptions=True) as c:
+        # Force lifespan to set up globals by calling with real TestClient.
+        # headers= sets default headers on every request — including the
+        # Authorization: Bearer <jwt> that the protected endpoints now require.
+        with TestClient(
+            app,
+            raise_server_exceptions=True,
+            headers=_TEST_AUTH_HEADER,
+        ) as c:
             # Manually inject the mocks since lifespan ran before patches in some envs
             import main as _main
 
@@ -215,7 +246,11 @@ def test_query_503_when_mcp_not_ready():
             del sys.modules["main"]
         from main import app
 
-        with TestClient(app, raise_server_exceptions=False) as c:
+        with TestClient(
+            app,
+            raise_server_exceptions=False,
+            headers=_TEST_AUTH_HEADER,
+        ) as c:
             import main as _main
 
             _main._mcp_client = None

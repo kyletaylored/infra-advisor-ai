@@ -47,6 +47,10 @@
     <PackageReference Include="Npgsql" Version="9.0.3" />
     <PackageReference Include="Npgsql.OpenTelemetry" Version="9.0.3" />
 
+    <!-- JWT bearer validation. Same JWT_SECRET as auth-api so tokens issued
+         by /auth/login validate on /query without a round-trip. -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" Version="10.0.0" />
+
     <!-- Serilog: structured JSON logs so the DD Agent's log collector parses
          them with dd.trace_id/dd.span_id properties injected by the DD .NET
          tracer (DD_LOGS_INJECTION=true). DD docs Serilog tab:

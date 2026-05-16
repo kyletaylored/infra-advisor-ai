@@ -23,7 +23,6 @@ from auth import (
 )
 from database import (
     clear_reset_token,
-    count_users,
     create_user,
     delete_user,
     get_user_by_email,
@@ -45,12 +44,21 @@ ALLOWED_DOMAIN = "@datadoghq.com"
 
 app = FastAPI(title="InfraAdvisor Auth API", version="1.0.0")
 
+# Env-driven CORS origins. Comma-separated list; falls back to a localhost-only
+# default so a misconfigured prod pod fails closed (no browser will accept the
+# response), not open. Set ALLOWED_ORIGINS to the public hostname in prod.
+_allowed_origins = [
+    o.strip()
+    for o in os.environ.get("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
+    if o.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # dev only
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 
@@ -58,7 +66,33 @@ app.add_middleware(
 def on_startup() -> None:
     logger.info("Initialising database schema...")
     init_db()
+
+    # Idempotent admin bootstrap. The first deploy needs an admin user that
+    # nobody else can race for. Operator sets BOOTSTRAP_ADMIN_EMAIL +
+    # BOOTSTRAP_ADMIN_PASSWORD in the auth-api secret, restarts the pod,
+    # then can remove the env vars (the bootstrap is a no-op once the
+    # account exists). Removes the historical first-user-becomes-admin
+    # race vulnerability — see security-audit-2026-05-16.md HIGH-2.
+    _bootstrap_admin()
+
     logger.info("auth-api ready")
+
+
+def _bootstrap_admin() -> None:
+    email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "").strip().lower()
+    password = os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "")
+    if not email or not password:
+        return
+    if get_user_by_email(email):
+        # Already exists. Don't overwrite or re-promote — idempotent.
+        return
+    create_user(
+        email=email,
+        password_hash=hash_password(password),
+        is_admin=True,
+        is_service_account=False,
+    )
+    logger.info("Bootstrap admin user created: %s", email)
 
 
 # ─── Request / response models ────────────────────────────────────────────────
@@ -184,13 +218,16 @@ def register(body: RegisterRequest):
     if get_user_by_email(email):
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # First user ever gets admin automatically
-    first_user = count_users() == 0
+    # Registered users are never admin. Admin is provisioned via the
+    # BOOTSTRAP_ADMIN_EMAIL/PASSWORD env vars at startup (see
+    # _bootstrap_admin) or by an existing admin via POST /admin/users.
+    # The historical "first user gets admin" path was a race window during
+    # any DB rotation — closed per security-audit-2026-05-16.md HIGH-2.
     password_hash = hash_password(body.password)
     user = create_user(
         email=email,
         password_hash=password_hash,
-        is_admin=first_user,
+        is_admin=False,
         is_service_account=False,
     )
 

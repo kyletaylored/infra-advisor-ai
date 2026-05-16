@@ -12,12 +12,15 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Body, FastAPI, Header, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
 from agent import build_llm, build_mcp_client, run_agent
+from auth import limiter, require_auth
 from conversations import (
     create_conversation,
     delete_conversation,
@@ -112,6 +115,19 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Rate limiter — must be attached to app.state before SlowAPIMiddleware
+# is added. Keyed by user ID (preferred) or client IP, per auth.py._rate_key.
+app.state.limiter = limiter
+app.add_middleware(SlowAPIMiddleware)
+
+
+@app.exception_handler(RateLimitExceeded)
+async def _ratelimit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"detail": f"Rate limit exceeded: {exc.detail}"},
+    )
 
 
 @app.exception_handler(Exception)
@@ -354,12 +370,15 @@ async def list_models() -> dict:
 
 
 @app.post("/query", response_model=QueryResponse)
+@limiter.limit("20/minute")
 async def query(
+    request: Request,
     body: QueryRequest,
     x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
     x_dd_rum_session_id: str | None = Header(default=None, alias="X-DD-RUM-Session-ID"),
     x_conversation_id: str | None = Header(default=None, alias="X-Conversation-ID"),
     x_user_id: str | None = Header(default=None, alias="X-User-ID"),
+    _user: dict = Depends(require_auth),
 ) -> QueryResponse:
     """Run the InfraAdvisor agent against a user query."""
     session_id = x_session_id or body.session_id or str(uuid.uuid4())
@@ -417,7 +436,12 @@ async def query(
 
 
 @app.post("/suggestions", response_model=SuggestionsResponse)
-async def suggestions(body: SuggestionsRequest) -> SuggestionsResponse:
+@limiter.limit("60/minute")
+async def suggestions(
+    request: Request,
+    body: SuggestionsRequest,
+    _user: dict = Depends(require_auth),
+) -> SuggestionsResponse:
     """Generate 4 LLM-powered follow-up question suggestions for the given conversation turn."""
     if not _llm:
         return SuggestionsResponse(suggestions=_FALLBACK_SUGGESTIONS)
@@ -445,7 +469,11 @@ async def suggestions(body: SuggestionsRequest) -> SuggestionsResponse:
 
 
 @app.get("/suggestions/initial", response_model=SuggestionsResponse)
-async def initial_suggestions() -> SuggestionsResponse:
+@limiter.limit("60/minute")
+async def initial_suggestions(
+    request: Request,
+    _user: dict = Depends(require_auth),
+) -> SuggestionsResponse:
     """Return 4 random suggestions from the Redis pool; fall back to LLM if pool is empty."""
     picked = _pool_get_random(4)
     if picked:
@@ -471,7 +499,7 @@ async def initial_suggestions() -> SuggestionsResponse:
 
 
 @app.get("/tools")
-async def list_tools() -> list[dict]:
+async def list_tools(_user: dict = Depends(require_auth)) -> list[dict]:
     """List all available MCP tools with their name, description, and parameter schema."""
     if not _mcp_client:
         raise HTTPException(status_code=503, detail="MCP client not available")
@@ -490,9 +518,12 @@ async def list_tools() -> list[dict]:
 
 
 @app.post("/tools/{tool_name}")
+@limiter.limit("30/minute")
 async def invoke_tool(
+    request: Request,
     tool_name: str,
     params: dict[str, Any] = Body(default={}),
+    _user: dict = Depends(require_auth),
 ) -> dict:
     """Directly invoke an MCP tool by name with the given parameters."""
     if not _mcp_client:
@@ -531,7 +562,10 @@ class FeedbackRequest(BaseModel):
 
 
 @app.post("/feedback", status_code=204)
-async def feedback(body: FeedbackRequest) -> None:
+async def feedback(
+    body: FeedbackRequest,
+    _user: dict = Depends(require_auth),
+) -> None:
     """Record user feedback for an agent response in Datadog LLM Observability."""
     if body.rating not in _VALID_RATINGS:
         raise HTTPException(
@@ -558,13 +592,11 @@ class ConversationCreateRequest(BaseModel):
 @app.post("/conversations", status_code=201)
 async def create_conv(
     body: ConversationCreateRequest,
-    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
+    _user: dict = Depends(require_auth),
 ) -> dict:
-    """Create a new conversation record for the given user."""
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="X-User-ID header required")
+    """Create a new conversation record for the authenticated user."""
     result = create_conversation(
-        user_id=x_user_id,
+        user_id=_user["sub"],
         title=body.title,
         model=body.model,
         backend=body.backend,
@@ -575,24 +607,18 @@ async def create_conv(
 
 
 @app.get("/conversations")
-async def list_convs(
-    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
-) -> dict:
+async def list_convs(_user: dict = Depends(require_auth)) -> dict:
     """List all conversations for the authenticated user."""
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="X-User-ID header required")
-    return {"conversations": list_conversations(x_user_id)}
+    return {"conversations": list_conversations(_user["sub"])}
 
 
 @app.get("/conversations/{conversation_id}")
 async def get_conv(
     conversation_id: str,
-    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
+    _user: dict = Depends(require_auth),
 ) -> dict:
     """Return a conversation and all its messages."""
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="X-User-ID header required")
-    result = get_conversation(conversation_id, x_user_id)
+    result = get_conversation(conversation_id, _user["sub"])
     if result is None:
         raise HTTPException(status_code=404, detail="Conversation not found")
     return result
@@ -601,12 +627,10 @@ async def get_conv(
 @app.delete("/conversations/{conversation_id}", status_code=204)
 async def delete_conv(
     conversation_id: str,
-    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
+    _user: dict = Depends(require_auth),
 ) -> None:
     """Delete a conversation and all its messages."""
-    if not x_user_id:
-        raise HTTPException(status_code=401, detail="X-User-ID header required")
-    deleted = delete_conversation(conversation_id, x_user_id)
+    deleted = delete_conversation(conversation_id, _user["sub"])
     if not deleted:
         raise HTTPException(status_code=404, detail="Conversation not found")
 
@@ -623,7 +647,10 @@ async def health() -> dict:
 
 
 @app.delete("/session/{session_id}")
-async def delete_session(session_id: str) -> dict:
+async def delete_session(
+    session_id: str,
+    _user: dict = Depends(require_auth),
+) -> dict:
     """Clear Redis session memory for the given session ID."""
     deleted = clear_session(session_id)
     return {"session_id": session_id, "cleared": deleted}

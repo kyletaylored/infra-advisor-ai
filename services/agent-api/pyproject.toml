@@ -18,6 +18,10 @@ dependencies = [
     "confluent-kafka>=2.14.0",
     "sqlalchemy>=2.0.0",
     "psycopg2-binary>=2.9.0",
+    # JWT validation (same JWT_SECRET as auth-api) for /query auth
+    "python-jose[cryptography]>=3.3.0",
+    # Per-IP + per-user rate limiting on expensive LLM endpoints
+    "slowapi>=0.1.9",
 ]
 
 [project.optional-dependencies]

@@ -1,7 +1,16 @@
 import { getRumSessionId } from "./datadog-rum";
+import { getToken } from "./auth";
 
 const BACKEND_KEY = "infra_advisor_backend";
 export type BackendType = "python" | "dotnet";
+
+// All agent-api endpoints now require Authorization: Bearer <jwt>. Use this
+// helper instead of writing the header inline so a forgotten call site
+// fails closed with a clear 401 rather than leaking an anonymous path.
+function authHeader(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 export function getBackend(): BackendType {
   return (localStorage.getItem(BACKEND_KEY) as BackendType) || "python";
@@ -147,6 +156,7 @@ export async function sendQuery(
       ...(conversationId ? { "X-Conversation-ID": conversationId } : {}),
       ...(userId ? { "X-User-ID": userId } : {}),
       ...rumHeaders(),
+      ...authHeader(),
     },
     // session_id in the body is the canonical source — headers can be stripped
     // by proxies but the POST body always reaches the backend.
@@ -222,6 +232,7 @@ export async function* sendQueryStream(
       ...(conversationId ? { "X-Conversation-ID": conversationId } : {}),
       ...(userId ? { "X-User-ID": userId } : {}),
       ...rumHeaders(),
+      ...authHeader(),
     },
     body: JSON.stringify({ query, session_id: sessionId, ...(model ? { model } : {}) }),
     signal,
@@ -307,6 +318,7 @@ export async function fetchSuggestions(
         "Content-Type": "application/json",
         "X-Session-ID": getSessionId(),
         ...rumHeaders(),
+        ...authHeader(),
       },
       body: JSON.stringify({ query, answer, sources }),
     });
@@ -321,7 +333,10 @@ export async function fetchSuggestions(
 
 export async function clearSession(): Promise<void> {
   if (!_sessionId) return;
-  await fetch(`${getApiBase()}/session/${_sessionId}`, { method: "DELETE" });
+  await fetch(`${getApiBase()}/session/${_sessionId}`, {
+    method: "DELETE",
+    headers: { ...authHeader() },
+  });
   _sessionId = null;
   localStorage.removeItem(SESSION_STORAGE_KEY);
 }
@@ -342,7 +357,9 @@ export interface ModelsResponse {
 
 export async function fetchInitialSuggestions(): Promise<SuggestionItem[]> {
   try {
-    const response = await fetch(`${getApiBase()}/suggestions/initial`);
+    const response = await fetch(`${getApiBase()}/suggestions/initial`, {
+      headers: { ...authHeader() },
+    });
     if (!response.ok) return [];
     const data: SuggestionsResponse = await response.json();
     return data.suggestions ?? [];
@@ -373,7 +390,7 @@ export async function submitFeedback(
   try {
     await fetch(`${getApiBase()}/feedback`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", ...authHeader() },
       body: JSON.stringify({
         trace_id: traceId,
         span_id: spanId,
@@ -415,7 +432,7 @@ export interface ConversationDetail extends ConversationSummary {
 }
 
 export async function createConversation(
-  userId: string,
+  _userId: string,  // identity now comes from the JWT sub claim server-side
   title: string,
   model?: string,
   backend?: string,
@@ -423,7 +440,7 @@ export async function createConversation(
   try {
     const res = await fetch(`${getApiBase()}/conversations`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-User-ID": userId },
+      headers: { "Content-Type": "application/json", ...authHeader() },
       body: JSON.stringify({ title, model, backend }),
     });
     if (!res.ok) {
@@ -438,10 +455,10 @@ export async function createConversation(
   }
 }
 
-export async function listConversations(userId: string): Promise<ConversationSummary[]> {
+export async function listConversations(_userId: string): Promise<ConversationSummary[]> {
   try {
     const res = await fetch(`${getApiBase()}/conversations`, {
-      headers: { "X-User-ID": userId },
+      headers: { ...authHeader() },
     });
     if (!res.ok) {
       const { detail } = await extractErrorDetail(res);
@@ -457,10 +474,10 @@ export async function listConversations(userId: string): Promise<ConversationSum
   }
 }
 
-export async function getConversation(id: string, userId: string): Promise<ConversationDetail | null> {
+export async function getConversation(id: string, _userId: string): Promise<ConversationDetail | null> {
   try {
     const res = await fetch(`${getApiBase()}/conversations/${id}`, {
-      headers: { "X-User-ID": userId },
+      headers: { ...authHeader() },
     });
     if (!res.ok) {
       const { detail } = await extractErrorDetail(res);
@@ -474,11 +491,11 @@ export async function getConversation(id: string, userId: string): Promise<Conve
   }
 }
 
-export async function deleteConversation(id: string, userId: string): Promise<boolean> {
+export async function deleteConversation(id: string, _userId: string): Promise<boolean> {
   try {
     const res = await fetch(`${getApiBase()}/conversations/${id}`, {
       method: "DELETE",
-      headers: { "X-User-ID": userId },
+      headers: { ...authHeader() },
     });
     if (!res.ok) {
       const { detail } = await extractErrorDetail(res);

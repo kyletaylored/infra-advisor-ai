@@ -3,13 +3,17 @@ using System.Diagnostics.Metrics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Threading.RateLimiting;
 using Azure;
 using Azure.AI.OpenAI;
 using InfraAdvisor.AgentApi.Models;
 using InfraAdvisor.AgentApi.Observability;
 using InfraAdvisor.AgentApi.Services;
 using InfraAdvisor.AgentApi.Services.Evaluators;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.AI;
+using Microsoft.IdentityModel.Tokens;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -295,7 +299,61 @@ builder.Services.ConfigureHttpJsonOptions(opts =>
     opts.SerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
 });
 
+// ── JWT auth (shared secret with auth-api) ────────────────────────────────────
+// Same JWT_SECRET / HS256 algorithm as services/auth-api/src/auth.py.
+// Tokens issued by /auth/login validate here without a round-trip.
+// Fails closed at startup if JWT_SECRET isn't set — better than running
+// with an empty key and silently accepting forged tokens.
+var jwtSecret = Environment.GetEnvironmentVariable("JWT_SECRET")
+    ?? throw new InvalidOperationException(
+        "JWT_SECRET env var is required — share the value with auth-api.");
+
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(opts =>
+    {
+        opts.RequireHttpsMetadata = false;  // TLS handled at the nginx ingress
+        opts.SaveToken = false;
+        opts.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuer = false,
+            ValidateAudience = false,
+            ValidateLifetime = true,
+            ValidateIssuerSigningKey = true,
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecret)),
+            ClockSkew = TimeSpan.FromMinutes(1),
+        };
+    });
+builder.Services.AddAuthorization();
+
+// ── Rate limiting ─────────────────────────────────────────────────────────────
+// Per-user (or per-IP for unauthenticated) sliding window on /query and
+// /query/stream. Keyed by JWT `sub` claim when available — same logic the
+// Python service uses, so a user can't multiply their quota by switching IPs.
+builder.Services.AddRateLimiter(opts =>
+{
+    opts.RejectionStatusCode = 429;
+    opts.AddPolicy("query", httpContext =>
+    {
+        var key = httpContext.User?.FindFirst("sub")?.Value
+                  ?? httpContext.Connection.RemoteIpAddress?.ToString()
+                  ?? "anon";
+        return RateLimitPartition.GetSlidingWindowLimiter(
+            partitionKey: key,
+            factory: _ => new SlidingWindowRateLimiterOptions
+            {
+                PermitLimit = 20,
+                Window = TimeSpan.FromMinutes(1),
+                SegmentsPerWindow = 4,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                QueueLimit = 0,
+            });
+    });
+});
+
 var app = builder.Build();
+app.UseAuthentication();
+app.UseAuthorization();
+app.UseRateLimiter();
 
 // ── Startup probes ────────────────────────────────────────────────────────────
 var appState = app.Services.GetRequiredService<AppState>();
@@ -406,7 +464,7 @@ app.MapPost("/query", async (
         SpanId: spanId,
         SessionId: sessionId,
         Model: deployment));
-});
+}).RequireAuthorization().RequireRateLimiting("query");
 
 // ── /query/stream — Server-Sent Events streaming variant ──────────────────────
 // Same agent pipeline as /query but yields one SSE block per StreamEvent so
@@ -503,7 +561,7 @@ app.MapPost("/query/stream", async (
     }
 
     return Results.Empty;
-});
+}).RequireAuthorization().RequireRateLimiting("query");
 
 app.MapPost("/suggestions", async (
     SuggestionsRequest body,
@@ -516,7 +574,7 @@ app.MapPost("/suggestions", async (
     var suggestions = await suggestionService.GetContextualSuggestionsAsync(
         body.Query, body.Answer, body.Sources ?? new List<string>());
     return Results.Ok(new SuggestionsResponse(suggestions));
-});
+}).RequireAuthorization();
 
 app.MapGet("/suggestions/initial", async (
     SuggestionService suggestionService,
@@ -546,7 +604,7 @@ app.MapGet("/suggestions/initial", async (
     }
 
     return Results.Ok(new SuggestionsResponse(SuggestionService.FallbackSuggestions));
-});
+}).RequireAuthorization();
 
 app.MapGet("/models", (AppState state) =>
     Results.Ok(new { models = state.AvailableModels, @default = state.DefaultModel }));
@@ -563,7 +621,7 @@ app.MapGet("/tools", async (McpClientHolder holder, AppState state, HttpContext 
         description = t.Description,
     });
     return Results.Ok(result);
-});
+}).RequireAuthorization();
 
 // ── /eval/status — read-only diagnostics for the admin UI ─────────────────────
 // Exposes the running eval pipeline state so admins can answer: "is the eval
@@ -658,7 +716,7 @@ app.MapPost("/feedback", (FeedbackRequest body) =>
     feedbackCounter.Add(1, new KeyValuePair<string, object?>("rating", body.Rating));
 
     return Results.StatusCode(204);
-});
+}).RequireAuthorization();
 
 app.MapGet("/health", (AppState state) =>
     Results.Ok(new
@@ -673,15 +731,20 @@ app.MapDelete("/session/{sessionId}", async (string sessionId, MemoryService mem
 {
     var cleared = await memoryService.ClearSessionAsync(sessionId);
     return Results.Ok(new { session_id = sessionId, cleared = cleared });
-});
+}).RequireAuthorization();
 
 // ── Conversations ─────────────────────────────────────────────────────────────
+// User identity is the JWT `sub` claim — the previous X-User-ID header was
+// spoofable. UseAuthentication() above populates HttpContext.User; the
+// RequireAuthorization() suffix below guarantees it's non-null.
+
+static string SubClaim(HttpContext ctx) =>
+    ctx.User?.FindFirst("sub")?.Value
+    ?? throw new InvalidOperationException("JWT sub claim missing — auth middleware misconfigured");
 
 app.MapPost("/conversations", async (HttpContext httpContext, ConversationService conversationSvc) =>
 {
-    var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
-    if (string.IsNullOrWhiteSpace(userId))
-        return Results.Problem(detail: "X-User-ID header required", statusCode: 400);
+    var userId = SubClaim(httpContext);
 
     string? title = null, model = null, backend = null;
     try
@@ -698,33 +761,24 @@ app.MapPost("/conversations", async (HttpContext httpContext, ConversationServic
     return conv is null
         ? Results.Problem(detail: "Conversation persistence not available", statusCode: 503)
         : Results.Ok(conv);
-});
+}).RequireAuthorization();
 
 app.MapGet("/conversations", async (HttpContext httpContext, ConversationService conversationSvc) =>
 {
-    var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
-    if (string.IsNullOrWhiteSpace(userId))
-        return Results.Problem(detail: "X-User-ID header required", statusCode: 400);
-    var list = await conversationSvc.ListConversationsAsync(userId);
+    var list = await conversationSvc.ListConversationsAsync(SubClaim(httpContext));
     return Results.Ok(list);
-});
+}).RequireAuthorization();
 
 app.MapGet("/conversations/{id}", async (string id, HttpContext httpContext, ConversationService conversationSvc) =>
 {
-    var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
-    if (string.IsNullOrWhiteSpace(userId))
-        return Results.Problem(detail: "X-User-ID header required", statusCode: 400);
-    var conv = await conversationSvc.GetConversationAsync(id, userId);
+    var conv = await conversationSvc.GetConversationAsync(id, SubClaim(httpContext));
     return conv is null ? Results.NotFound() : Results.Ok(conv);
-});
+}).RequireAuthorization();
 
 app.MapDelete("/conversations/{id}", async (string id, HttpContext httpContext, ConversationService conversationSvc) =>
 {
-    var userId = httpContext.Request.Headers["X-User-ID"].FirstOrDefault();
-    if (string.IsNullOrWhiteSpace(userId))
-        return Results.Problem(detail: "X-User-ID header required", statusCode: 400);
-    var deleted = await conversationSvc.DeleteConversationAsync(id, userId);
+    var deleted = await conversationSvc.DeleteConversationAsync(id, SubClaim(httpContext));
     return deleted ? Results.StatusCode(204) : Results.NotFound();
-});
+}).RequireAuthorization();
 
 app.Run();

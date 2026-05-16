@@ -23,7 +23,8 @@ check-env: ## Verify all required env vars are set before deploying
 		GHCR_PAT GITHUB_EMAIL \
 		POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB \
 		DD_POSTGRES_PASSWORD \
-		DATABASE_URL JWT_SECRET; do \
+		DATABASE_URL JWT_SECRET \
+		AIRFLOW_ADMIN_USERNAME AIRFLOW_ADMIN_PASSWORD; do \
 		if [ -z "$$(eval echo \$$$$var)" ]; then \
 			echo "  ERROR: $$var is not set"; \
 			MISSING=1; \
@@ -112,27 +113,31 @@ create-mcp-server-dotnet-secret: ## Create mcp-server-dotnet-secret K8s Secret (
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ mcp-server-dotnet-secret created in namespace $(NAMESPACE)"
 
-create-agent-api-secret: ## Create agent-api-secret K8s Secret (Azure OpenAI keys + DATABASE_URL)
+create-agent-api-secret: ## Create agent-api-secret K8s Secret (Azure OpenAI keys + DATABASE_URL + JWT_SECRET)
 	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ]; then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set"; exit 1; fi
 	@if [ -z "$(AZURE_OPENAI_API_KEY)" ];  then echo "ERROR: AZURE_OPENAI_API_KEY is not set";  exit 1; fi
+	@if [ -z "$(JWT_SECRET)" ]; then echo "ERROR: JWT_SECRET is not set (shared with auth-api for /query auth)"; exit 1; fi
 	@if [ -z "$(DATABASE_URL)" ]; then echo "WARN: DATABASE_URL not set — conversation persistence will be disabled"; fi
 	kubectl create secret generic agent-api-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
 		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
+		--from-literal=JWT_SECRET=$(JWT_SECRET) \
 		$(if $(DATABASE_URL),--from-literal=DATABASE_URL=$(DATABASE_URL),) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ agent-api-secret created in namespace $(NAMESPACE)"
 
-create-agent-api-dotnet-secret: ## Create agent-api-dotnet-secret K8s Secret (Azure OpenAI keys + DATABASE_URL + DD_API_KEY)
+create-agent-api-dotnet-secret: ## Create agent-api-dotnet-secret K8s Secret (Azure OpenAI keys + DATABASE_URL + DD_API_KEY + JWT_SECRET)
 	@if [ -z "$(AZURE_OPENAI_ENDPOINT)" ]; then echo "ERROR: AZURE_OPENAI_ENDPOINT is not set"; exit 1; fi
 	@if [ -z "$(AZURE_OPENAI_API_KEY)" ];  then echo "ERROR: AZURE_OPENAI_API_KEY is not set";  exit 1; fi
+	@if [ -z "$(JWT_SECRET)" ]; then echo "ERROR: JWT_SECRET is not set (shared with auth-api for /query auth)"; exit 1; fi
 	@if [ -z "$(DD_API_KEY)" ];            then echo "WARN: DD_API_KEY not set — LLM Observability OTLP export will be disabled"; fi
 	@if [ -z "$(DATABASE_URL)" ]; then echo "WARN: DATABASE_URL not set — conversation persistence will be disabled"; fi
 	kubectl create secret generic agent-api-dotnet-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=AZURE_OPENAI_ENDPOINT=$(AZURE_OPENAI_ENDPOINT) \
 		--from-literal=AZURE_OPENAI_API_KEY=$(AZURE_OPENAI_API_KEY) \
+		--from-literal=JWT_SECRET=$(JWT_SECRET) \
 		$(if $(DD_API_KEY),--from-literal=DD_API_KEY=$(DD_API_KEY),) \
 		$(if $(DATABASE_URL),--from-literal=DATABASE_URL=$(DATABASE_URL),) \
 		--dry-run=client -o yaml | kubectl apply -f -
@@ -158,13 +163,19 @@ create-postgres-secret: ## Create postgres-secret K8s Secret
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ postgres-secret created"
 
-create-auth-api-secret: ## Create auth-api-secret K8s Secret (DATABASE_URL, JWT_SECRET)
+create-auth-api-secret: ## Create auth-api-secret K8s Secret (DATABASE_URL, JWT_SECRET, optional bootstrap admin)
 	@if [ -z "$(DATABASE_URL)" ]; then echo "ERROR: DATABASE_URL is not set"; exit 1; fi
 	@if [ -z "$(JWT_SECRET)" ]; then echo "ERROR: JWT_SECRET is not set"; exit 1; fi
+	@if [ -z "$(BOOTSTRAP_ADMIN_EMAIL)" ] || [ -z "$(BOOTSTRAP_ADMIN_PASSWORD)" ]; then \
+		echo "WARN: BOOTSTRAP_ADMIN_EMAIL/PASSWORD not set — auth-api will start without a bootstrap admin"; \
+		echo "      (existing admin users keep working; only matters on a fresh DB)"; \
+	fi
 	kubectl create secret generic auth-api-secret \
 		--namespace $(NAMESPACE) \
 		--from-literal=DATABASE_URL=$(DATABASE_URL) \
 		--from-literal=JWT_SECRET=$(JWT_SECRET) \
+		$(if $(BOOTSTRAP_ADMIN_EMAIL),--from-literal=BOOTSTRAP_ADMIN_EMAIL=$(BOOTSTRAP_ADMIN_EMAIL),) \
+		$(if $(BOOTSTRAP_ADMIN_PASSWORD),--from-literal=BOOTSTRAP_ADMIN_PASSWORD=$(BOOTSTRAP_ADMIN_PASSWORD),) \
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ auth-api-secret created"
 
@@ -284,6 +295,8 @@ apply-datadog-agent: ## Apply DatadogAgent CR from datadog/datadog-agent.yaml
 	@echo "✓ DatadogAgent CR applied"
 
 install-airflow: ## Fresh install of Airflow (nukes existing release)
+	@if [ -z "$(AIRFLOW_ADMIN_USERNAME)" ]; then echo "ERROR: AIRFLOW_ADMIN_USERNAME is not set (override Airflow admin user)"; exit 1; fi
+	@if [ -z "$(AIRFLOW_ADMIN_PASSWORD)" ]; then echo "ERROR: AIRFLOW_ADMIN_PASSWORD is not set — generate one with: openssl rand -base64 32"; exit 1; fi
 	helm repo add apache-airflow https://airflow.apache.org || true
 	helm repo update
 	-helm uninstall airflow -n airflow --no-hooks 2>/dev/null || true
@@ -294,6 +307,8 @@ install-airflow: ## Fresh install of Airflow (nukes existing release)
 	helm install airflow apache-airflow/airflow \
 		--namespace airflow \
 		--values k8s/airflow/values.yaml \
+		--set createUserJob.defaultUser.username='$(AIRFLOW_ADMIN_USERNAME)' \
+		--set createUserJob.defaultUser.password='$(AIRFLOW_ADMIN_PASSWORD)' \
 		--timeout 20m
 	@echo "→ Waiting for PostgreSQL to be ready..."
 	kubectl wait --for=condition=ready pod \
@@ -335,9 +350,13 @@ upgrade-airflow: ## Upgrade Airflow Helm release from k8s/airflow/values.yaml
 		echo "Release in $$STATUS — rolling back to clear the lock"; \
 		helm rollback airflow 0 --namespace airflow 2>/dev/null || helm uninstall airflow -n airflow --no-hooks 2>/dev/null || true; \
 	fi
+	@if [ -z "$(AIRFLOW_ADMIN_USERNAME)" ]; then echo "ERROR: AIRFLOW_ADMIN_USERNAME is not set"; exit 1; fi
+	@if [ -z "$(AIRFLOW_ADMIN_PASSWORD)" ]; then echo "ERROR: AIRFLOW_ADMIN_PASSWORD is not set"; exit 1; fi
 	helm upgrade airflow apache-airflow/airflow \
 		--namespace airflow \
 		--values k8s/airflow/values.yaml \
+		--set createUserJob.defaultUser.username='$(AIRFLOW_ADMIN_USERNAME)' \
+		--set createUserJob.defaultUser.password='$(AIRFLOW_ADMIN_PASSWORD)' \
 		--timeout 20m \
 		--cleanup-on-fail
 	@echo "→ Waiting for migration job..."
