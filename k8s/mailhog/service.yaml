@@ -21,23 +21,8 @@ spec:
       port: 8025
       targetPort: http
       protocol: TCP
----
-# LoadBalancer for web UI access from local machine / demo laptop
-apiVersion: v1
-kind: Service
-metadata:
-  name: mailhog-ui
-  namespace: infra-advisor
-  labels:
-    app: mailhog
-    app.kubernetes.io/name: mailhog
-    app.kubernetes.io/part-of: infra-advisor-ai
-spec:
-  type: LoadBalancer
-  selector:
-    app: mailhog
-  ports:
-    - name: http
-      port: 8025
-      targetPort: http
-      protocol: TCP
+# mailhog-ui LoadBalancer Service intentionally removed — was exposing the
+# inbox UI on a public Azure IP with no auth, leaking every password-reset
+# token. For local inspection use:
+#   kubectl port-forward -n infra-advisor svc/mailhog 8025:8025
+# See security-audit-2026-05-16.md CRITICAL-2.

@@ -18,3 +18,6 @@ data:
   SMTP_FROM: "infra-advisor-ai@demo.local"
   SMTP_TLS: "false"
   APP_BASE_URL: "https://infra-advisor-ai.kyletaylor.dev"
+  # CORS allow-list. Comma-separated origins. Browser blocks any request from
+  # an origin not in this list.
+  ALLOWED_ORIGINS: "https://infra-advisor-ai.kyletaylor.dev"

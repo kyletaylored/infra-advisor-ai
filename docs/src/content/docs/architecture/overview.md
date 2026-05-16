@@ -117,7 +117,6 @@ A single nginx Deployment (in the `ui` pod) acts as the ingress reverse proxy fo
 | `/api/*`        | Agent API (Python) `:8001` | Strips `/api/` prefix        |
 | `/api-dotnet/*` | Agent API (.NET) `:8001`   | Strips `/api-dotnet/` prefix |
 | `/auth/*`       | Auth API `:8002`           | Strips `/auth/` prefix       |
-| `/airflow/*`    | Airflow API Server `:8080` | Preserves `/airflow/` prefix |
-| `/mailhog/*`    | MailHog `:8025`            | Dev SMTP capture UI          |
+| `/airflow/*`    | Airflow API Server `:8080` | Preserves `/airflow/` prefix; admin auth required |
 
 The UI service is exposed via a Kubernetes LoadBalancer with an Azure public IP. TLS termination and custom domain (`infra-advisor-ai.kyletaylor.dev`) are configured at the DNS/ingress level.

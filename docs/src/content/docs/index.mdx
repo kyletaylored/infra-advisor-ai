@@ -122,9 +122,10 @@ flowchart TD
 | Resource | URL |
 |---|---|
 | Application | `https://infra-advisor-ai.kyletaylor.dev` |
-| Airflow UI | `https://infra-advisor-ai.kyletaylor.dev/airflow` |
-| MailHog (dev) | `https://infra-advisor-ai.kyletaylor.dev/mailhog` |
-| Azure resource group | `rg-tola-infra-advisor-ai` |
 | Container registry | `ghcr.io/kyletaylored/infra-advisor-ai` |
+
+The Airflow UI and MailHog inbox are intentionally not listed here.
+Airflow is reachable at `/airflow` but requires admin credentials.
+MailHog has no public route; use `kubectl port-forward -n infra-advisor svc/mailhog 8025:8025` for local inspection.
 
 </ContainerSection>

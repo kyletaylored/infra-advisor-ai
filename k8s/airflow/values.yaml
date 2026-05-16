@@ -337,14 +337,19 @@ dagProcessor:
       value: "datadog-agent.datadog.svc.cluster.local"
 
 # ── User creation ─────────────────────────────────────────────────────────────
+# The username + password MUST be overridden at install time via Helm --set
+# because this values.yaml lives in a public repo. The placeholder below
+# fails the createUserJob if no override is provided, which is intentional.
+#   make install-airflow expects AIRFLOW_ADMIN_USERNAME + AIRFLOW_ADMIN_PASSWORD
+#   from your local .env and passes them via --set.
 createUserJob:
   defaultUser:
     role: Admin
-    username: admin
+    username: REPLACE_VIA_HELM_SET
     email: admin@infra-advisor.local
     firstName: Admin
     lastName: User
-    password: admin
+    password: REPLACE_VIA_HELM_SET
 
 # ── Resources ─────────────────────────────────────────────────────────────────
 # Conservative for Standard_D2s_v3 lab cluster (3 nodes, 24 GB total RAM)

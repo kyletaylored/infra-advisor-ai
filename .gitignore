@@ -76,3 +76,7 @@ kubeconfig
 *.crt
 *.p12
 *.pfx
+
+# Security audit reports — kept local so the public repo doesn't ship
+# a catalog of weaknesses until they're remediated.
+security-audit-*.md

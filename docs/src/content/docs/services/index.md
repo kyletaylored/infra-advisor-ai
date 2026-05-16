@@ -27,8 +27,7 @@ Browser
         │                       ├── PostgreSQL (conversation history)
         │                       └── MCP Server .NET (port 8000)
         │                             └── External APIs (same as Python MCP)
-        ├── /airflow/*     → Airflow API Server (airflow namespace)
-        └── /mailhog/*     → MailHog (dev SMTP capture)
+        └── /airflow/*     → Airflow API Server (airflow namespace, admin auth required)
 ```
 
 ## At a glance
