@@ -41,19 +41,32 @@ public sealed class BridgeConditionTool(IHttpClientFactory httpFactory, ILogger<
 
     [McpServerTool(Name = "get_bridge_condition")]
     [Description(
-        "Query the FHWA National Bridge Inventory for bridges matching specified criteria. " +
-        "state_code must be a 2-digit FIPS numeric code, NOT a 2-letter abbreviation: " +
-        "TX=48, CA=06, FL=12, NY=36, LA=22, OK=40, AZ=04, CO=08, NM=35, AR=05.")]
+        "FHWA National Bridge Inventory — every US public bridge over 20 ft (~617,000 " +
+        "records). Returns structure-level condition data: deck / superstructure / " +
+        "substructure ratings (0=failed → 9=excellent), overall BRIDGE_CONDITION " +
+        "(Good/Fair/Poor), LOWEST_RATING (worst of the three), scour-critical flag, " +
+        "ADT, location, year built. _source: 'FHWA NBI'.\n" +
+        "Coverage: all US states + DC + Puerto Rico. Refreshed annually by FHWA.\n" +
+        "Use when the user asks: structurally deficient bridges in <state/county>; " +
+        "bridges with sufficiency rating under N; high-traffic bridges needing inspection; " +
+        "scour-vulnerable bridges; oldest bridges in an area; bridge condition stats.\n" +
+        "Do NOT use for: rail bridges (NBI is highway only); culverts under 20 ft span; " +
+        "real-time inspection findings (data is annual); pedestrian-only bridges.\n" +
+        "state_code is 2-CHARACTER FIPS STATE CODE — note leading zero for single-digit " +
+        "states. Common values: AL=01, AZ=04, AR=05, CA=06, CO=08, FL=12, GA=13, IL=17, " +
+        "LA=22, MS=28, NM=35, NY=36, NC=37, OK=40, TX=48, VA=51, WA=53. county_code is " +
+        "the 3-character FIPS county code WITHIN that state (e.g. Harris County TX = 201)." +
+        " Returns up to 200 rows sorted by ascending LOWEST_RATING (worst first).")]
     public async Task<string> GetBridgeConditionAsync(
-        [Description("2-digit FIPS state code (TX=48)")] string state_code,
-        [Description("3-digit county FIPS code")] string? county_code = null,
-        [Description("Exact NBI structure number for a single-bridge lookup")] string? structure_number = null,
-        [Description("Minimum average daily traffic")] int? min_adt = null,
-        [Description("Upper bound on NBI lowest condition rating (0-9, where 0=failed, 9=excellent). Filters to bridges at or below this rating.")] int? max_lowest_rating = null,
-        [Description("When true, restricts results to structurally deficient bridges (BRIDGE_CONDITION='P')")] bool structurally_deficient_only = false,
-        [Description("ISO date string — informational only, not applied as server-side filter")] string? last_inspection_before = null,
-        [Description("ORDER BY clause for the ArcGIS query")] string order_by = "LOWEST_RATING ASC",
-        [Description("Maximum number of bridges to return (1-200)")] int limit = 50,
+        [Description("REQUIRED. 2-character FIPS state code with leading zero (e.g. '06' for CA, '48' for TX). NOT a 2-letter abbreviation.")] string state_code,
+        [Description("3-character FIPS county code within the state (e.g. Harris County TX = '201'). Omit to query the whole state.")] string? county_code = null,
+        [Description("Exact NBI structure number for a single-bridge lookup. Skip all other filters when set.")] string? structure_number = null,
+        [Description("Minimum average daily traffic. Use 10000+ for major-highway-only filtering.")] int? min_adt = null,
+        [Description("Upper bound on lowest NBI condition rating (0-9 scale). 4 = poor and below; 6 = fair and below. Returns bridges AT OR BELOW this rating.")] int? max_lowest_rating = null,
+        [Description("True restricts results to FHWA-classified structurally deficient bridges (BRIDGE_CONDITION='P'). The fast path for 'deficient bridges' questions.")] bool structurally_deficient_only = false,
+        [Description("ISO date string — informational only, not applied as a server-side filter on the upstream API.")] string? last_inspection_before = null,
+        [Description("ArcGIS ORDER BY clause. Default sorts worst bridges first ('LOWEST_RATING ASC').")] string order_by = "LOWEST_RATING ASC",
+        [Description("Max bridges to return (1-200). Default 50.")] int limit = 50,
         CancellationToken cancellationToken = default)
     {
         var retrievedAt = DateTime.UtcNow.ToString("o");

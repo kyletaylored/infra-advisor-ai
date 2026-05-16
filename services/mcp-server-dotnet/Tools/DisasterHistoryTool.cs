@@ -11,14 +11,29 @@ public sealed class DisasterHistoryTool(IHttpClientFactory httpFactory, ILogger<
     private const int FemaPageSize = 1000;
 
     [McpServerTool(Name = "get_disaster_history")]
-    [Description("Query OpenFEMA for disaster declarations and public assistance data.")]
+    [Description(
+        "Federal disaster declaration history from OpenFEMA. Returns the official FEMA " +
+        "record of major-disaster, emergency, and fire-management declarations: declaration " +
+        "ID, incident type, declared date, affected counties, and program activations. " +
+        "_source: 'OpenFEMA'.\n" +
+        "Coverage: every US state + territory, 1953 to present. No API key required.\n" +
+        "Use when the user asks: how often does an area get hurricanes / floods / wildfires; " +
+        "what disasters affected the project area in the last N years; which counties have " +
+        "repeat flood declarations; FEMA Public Assistance funding history; multi-hazard " +
+        "exposure assessment for resilience planning.\n" +
+        "Do NOT use for: real-time / active disasters (this is historical); individual " +
+        "property damage data; FEMA flood-zone maps (different source); state/local " +
+        "emergency declarations not in the federal record.\n" +
+        "Returns up to 1000 records sorted by declarationDate desc. Fields include " +
+        "declarationDate, incidentBeginDate, incidentEndDate, incidentType, designatedArea " +
+        "(county name), and program flags (iaProgramDeclared, paProgramDeclared, etc.).")]
     public async Task<string> GetDisasterHistoryAsync(
-        [Description("List of 2-letter state codes, e.g. ['TX', 'LA', 'MS']")] List<string>? states = null,
-        [Description("FEMA incident type names, e.g. ['Flood', 'Hurricane']")] List<string>? incident_types = null,
-        [Description("ISO date string — return declarations on or after this date")] string? date_from = null,
-        [Description("ISO date string — return declarations on or before this date")] string? date_to = null,
-        [Description("Client-side keyword filter applied to declarationTitle (case-insensitive, any match)")] List<string>? infrastructure_keywords = null,
-        [Description("Maximum number of declarations to return (1-1000)")] int limit = 100,
+        [Description("2-letter state codes, e.g. ['TX', 'LA', 'MS']. Omit for nationwide.")] List<string>? states = null,
+        [Description("FEMA incident type names. Common values: 'Flood', 'Hurricane', 'Severe Storm', 'Tornado', 'Fire', 'Earthquake', 'Drought', 'Severe Ice Storm', 'Winter Storm', 'Coastal Storm', 'Snow', 'Tropical Storm'.")] List<string>? incident_types = null,
+        [Description("ISO date 'YYYY-MM-DD' — declarations on or after this date. Default: no lower bound.")] string? date_from = null,
+        [Description("ISO date 'YYYY-MM-DD' — declarations on or before this date. Default: today.")] string? date_to = null,
+        [Description("Client-side keyword filter on declarationTitle (case-insensitive, OR-match). Useful for narrowing to infrastructure-relevant declarations.")] List<string>? infrastructure_keywords = null,
+        [Description("Max declarations to return (1-1000). Default 100.")] int limit = 100,
         CancellationToken cancellationToken = default)
     {
         var retrievedAt = DateTime.UtcNow.ToString("o");

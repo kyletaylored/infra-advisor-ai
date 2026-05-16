@@ -37,19 +37,32 @@ public sealed class ContractAwardsTool(IHttpClientFactory httpFactory, ILogger<C
 
     [McpServerTool(Name = "get_contract_awards")]
     [Description(
-        "Search USASpending.gov for historical federal contract awards. " +
-        "Returns competitive intelligence: who won similar work, at what price, and for which agencies. " +
-        "Each result tagged _source: 'USASpending.gov'. No API key required. " +
-        "date_from / date_to: ISO date strings (default: past 2 years through today).")]
+        "USASpending.gov — HISTORICAL federal contract awards. Who won similar work, " +
+        "at what price, and for which agencies. _source: 'USASpending.gov'. No API key.\n" +
+        "Coverage: all federal contracts/grants ever recorded by USASpending. Default " +
+        "window: past 2 years.\n" +
+        "Use when the user asks: who won contracts for <work type>; typical award " +
+        "amounts for <NAICS> in <state>; incumbent contractors for <agency>; competitive " +
+        "intel before bidding; spending patterns by NAICS or agency; pricing benchmarks " +
+        "for SOW drafts.\n" +
+        "PAIRING RULE: For business-development queries, ALWAYS call this BEFORE " +
+        "get_procurement_opportunities — understanding who won similar work informs " +
+        "positioning for open opportunities.\n" +
+        "Do NOT use for: ACTIVE / open solicitations (use get_procurement_opportunities); " +
+        "state or local awards (this is federal only); contracts under $25K (USASpending " +
+        "threshold).\n" +
+        "Common AEC NAICS codes: 237310 (highway/road), 237110 (water/sewer line), " +
+        "237990 (other heavy civil — bridges, dams), 541330 (engineering services), " +
+        "541310 (architecture services).")]
     public async Task<string> GetContractAwardsAsync(
-        [Description("Search query")] string query,
-        [Description("State abbreviation or city, e.g. 'TX' or 'Austin TX'")] string? geography = null,
-        [Description("NAICS codes to filter by")] List<string>? naics_codes = null,
-        [Description("Agency names to filter by (case-insensitive substring match)")] List<string>? agency_names = null,
-        [Description("Start date (ISO format, default: 2 years ago)")] string? date_from = null,
-        [Description("End date (ISO format, default: today)")] string? date_to = null,
-        [Description("Minimum award amount in USD")] int? min_award_usd = null,
-        [Description("Maximum number of results to return")] int limit = 25,
+        [Description("Natural-language search query, e.g. 'bridge rehabilitation', 'water treatment plant', 'highway expansion'. Drives recipient/description keyword match.")] string query,
+        [Description("State 2-letter abbreviation 'TX', or 'state + city' like 'Austin TX'. Omit for nationwide.")] string? geography = null,
+        [Description("NAICS codes to filter by. AEC examples: ['237310'] highway, ['237110'] water/sewer, ['237990'] heavy civil, ['541330'] engineering services.")] List<string>? naics_codes = null,
+        [Description("Agency names (case-insensitive substring). Examples: ['Department of Transportation'], ['Army Corps of Engineers'], ['Bureau of Reclamation'].")] List<string>? agency_names = null,
+        [Description("Start date ISO 'YYYY-MM-DD'. Default: 2 years ago.")] string? date_from = null,
+        [Description("End date ISO 'YYYY-MM-DD'. Default: today.")] string? date_to = null,
+        [Description("Minimum award amount in USD. Use 500000 for headline awards only.")] int? min_award_usd = null,
+        [Description("Max results to return (1-100). Default 25.")] int limit = 25,
         CancellationToken cancellationToken = default)
     {
         var today = DateTime.UtcNow.Date;

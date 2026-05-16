@@ -20,14 +20,32 @@ public sealed class DraftDocumentTool(ILogger<DraftDocumentTool> logger)
 
     [McpServerTool(Name = "draft_document")]
     [Description(
-        "Generate a structured document scaffold (SOW, risk summary, cost estimate, or funding memo). " +
-        "document_type must be one of: 'scope_of_work', 'risk_summary', 'cost_estimate_scaffold', 'funding_positioning_memo'.")]
+        "Render a structured consulting deliverable from a Scriban template + the " +
+        "supplied context dictionary. Returns Markdown ready for client review. " +
+        "DETERMINISTIC — no LLM invoked inside the tool.\n" +
+        "ALWAYS call search_project_knowledge FIRST to pull relevant templates and " +
+        "prior-project context, then pass the retrieved snippets into context here " +
+        "so the draft is grounded.\n" +
+        "Use when the user asks: draft an SOW for <project>; produce a risk summary; " +
+        "create a cost-estimate scaffold; write a funding-positioning memo.\n" +
+        "Do NOT use for: free-form text generation (just answer directly — the agent " +
+        "LLM is the right tool); detailed cost models (this is a scaffold only); " +
+        "documents outside the 4 supported types.\n" +
+        "document_type semantics:\n" +
+        "  'scope_of_work' → SOW with sections: scope, deliverables, schedule, " +
+        "exclusions, assumptions\n" +
+        "  'risk_summary' → Top-5 risks ranked by likelihood × impact with mitigation " +
+        "language\n" +
+        "  'cost_estimate_scaffold' → line-item table with placeholder costs the " +
+        "analyst fills in\n" +
+        "  'funding_positioning_memo' → grant / funding pursuit memo with eligibility, " +
+        "match requirements, key differentiators")]
     public async Task<string> DraftDocumentAsync(
-        [Description("Document type: 'scope_of_work', 'risk_summary', 'cost_estimate_scaffold', or 'funding_positioning_memo'")] string document_type,
-        [Description("Context dictionary from previous tool calls (bridges, water_systems, etc.)")] JsonElement context,
-        [Description("Project name")] string? project_name = null,
-        [Description("Client name")] string? client_name = null,
-        [Description("Additional analyst notes")] string? notes = null,
+        [Description("REQUIRED. 'scope_of_work' | 'risk_summary' | 'cost_estimate_scaffold' | 'funding_positioning_memo'.")] string document_type,
+        [Description("Context object from prior tool calls — e.g. {bridges:[...], water_systems:[...], contract_awards:[...], best_practices:[...]}. Template fields reference keys in this object.")] JsonElement context,
+        [Description("Project name — e.g. 'IH-35 Bridge Rehabilitation Phase II'. Renders into document header.")] string? project_name = null,
+        [Description("Client name — e.g. 'TxDOT Austin District'. Renders into document header.")] string? client_name = null,
+        [Description("Analyst notes — free text appended to relevant sections. Use for caveats, assumptions, or client-specific context.")] string? notes = null,
         CancellationToken cancellationToken = default)
     {
         if (!TemplateMap.TryGetValue(document_type, out var resourceName))

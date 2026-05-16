@@ -20,19 +20,28 @@ public sealed class TxDotOpenDataTool(IHttpClientFactory httpFactory, ILogger<Tx
 
     [McpServerTool(Name = "search_txdot_open_data")]
     [Description(
-        "Search the TxDOT Open Data portal (ArcGIS Hub) for Texas transportation datasets. " +
-        "query_type must be exactly one of: " +
-        "'catalog_search' (free-text search across all TxDOT datasets, requires query), " +
-        "'traffic_counts' (Annual Average Daily Traffic AADT count datasets), " +
-        "'construction_projects' (TxDOT highway construction and maintenance project datasets). " +
-        "county: optional Texas county name to narrow results (e.g. 'Harris', 'Travis'). " +
-        "Texas-specific — all data is from the TxDOT Open Data portal.")]
+        "TxDOT Open Data portal (ArcGIS Hub) — Texas transportation datasets. " +
+        "_source: 'TxDOT'. No API key required.\n" +
+        "Coverage: Texas only. Datasets include AADT (annual average daily traffic) " +
+        "counts, active / completed highway construction projects, highway geometry, " +
+        "district-level GIS layers.\n" +
+        "Use when the user asks: AADT for a specific Texas highway / road; active or " +
+        "planned TxDOT construction projects; traffic-count history; TxDOT GIS dataset " +
+        "discovery; Texas roadway data.\n" +
+        "Do NOT use for: federal highway data outside Texas (use get_bridge_condition " +
+        "for NBI bridge data or local-state DOT portals); non-roadway Texas data " +
+        "(TxDOT only — DPS, RRC, TWDB are separate); real-time traffic.\n" +
+        "query_type semantics:\n" +
+        "  'catalog_search' (default) → free-text search across the entire TxDOT " +
+        "catalog; requires `query`\n" +
+        "  'traffic_counts' → AADT-specific datasets (ignore `query`)\n" +
+        "  'construction_projects' → project-tracker datasets (ignore `query`)")]
     public async Task<string> SearchTxDotOpenDataAsync(
-        [Description("Query type: 'catalog_search', 'traffic_counts', or 'construction_projects'")] string query_type = "catalog_search",
-        [Description("Free-text search query (required for catalog_search)")] string query = "",
-        [Description("Optional Texas county name to narrow results")] string? county = null,
-        [Description("Maximum number of results to return")] int limit = 20,
-        [Description("Page number (1-based)")] int page = 1,
+        [Description("'catalog_search' (default; needs query) | 'traffic_counts' (AADT) | 'construction_projects'.")] string query_type = "catalog_search",
+        [Description("Free-text search query — REQUIRED for catalog_search. Examples: 'pavement condition', 'pedestrian crashes', 'bridge inspection'.")] string query = "",
+        [Description("Texas county name to narrow results. Examples: 'Harris', 'Travis', 'Bexar', 'Dallas', 'Tarrant'.")] string? county = null,
+        [Description("Max results (1-50). Default 20.")] int limit = 20,
+        [Description("Page (1-based).")] int page = 1,
         CancellationToken cancellationToken = default)
     {
         var q = BuildSearchQuery(query_type, query, county);

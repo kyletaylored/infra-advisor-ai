@@ -15,21 +15,27 @@ public sealed class ErcotEnergyTool(IHttpClientFactory httpFactory, ILogger<Erco
 
     [McpServerTool(Name = "get_ercot_energy_storage")]
     [Description(
-        "Query ERCOT's public data API for Energy Storage Resource (ESR) data. " +
-        "query_type must be exactly one of: " +
-        "'charging_data' (4-second ESR charging MW time-series, default), " +
-        "'products' (list available ERCOT public data product IDs). " +
-        "time_from / time_to accept ISO-8601 strings e.g. '2024-06-01T00:00:00'. " +
-        "This tool is Texas-specific — ERCOT covers ~90% of the Texas grid. " +
-        "Use get_energy_infrastructure for multi-state EIA data.")]
+        "ERCOT public data API — battery / Energy Storage Resource (ESR) charging " +
+        "operations on the Texas grid. _source: 'ERCOT'. Requires ERCOT_API_KEY.\n" +
+        "Coverage: Texas ERCOT footprint only (~90% of Texas — excludes El Paso area, " +
+        "the Panhandle SPP region, parts of East TX). 4-second-interval data.\n" +
+        "Use when the user asks: how is battery storage performing on the ERCOT grid; " +
+        "ESR discharge during peak-demand windows; grid-scale storage MW available; " +
+        "real-time charging behaviour during stress events.\n" +
+        "Do NOT use for: states outside Texas (use get_energy_infrastructure); the " +
+        "Texas Panhandle / SPP region; individual battery sites (use EIA-860 directly); " +
+        "ERCOT load forecasts or LMPs (different ERCOT products not exposed here).\n" +
+        "query_type semantics:\n" +
+        "  'charging_data' (default) → time-series MW per ESR\n" +
+        "  'products' → catalog of ERCOT public-data product IDs (debug only)")]
     public async Task<string> GetErcotEnergyStorageAsync(
-        [Description("Query type: 'charging_data' or 'products'")] string query_type = "charging_data",
-        [Description("Start time ISO-8601 e.g. '2024-06-01T00:00:00'")] string? time_from = null,
-        [Description("End time ISO-8601 e.g. '2024-06-01T01:00:00'")] string? time_to = null,
-        [Description("Filter: minimum ESR charging MW")] double? min_charging_mw = null,
-        [Description("Filter: maximum ESR charging MW")] double? max_charging_mw = null,
-        [Description("Page number (1-based)")] int page = 1,
-        [Description("Page size")] int size = 100,
+        [Description("'charging_data' (default) | 'products'.")] string query_type = "charging_data",
+        [Description("Start time ISO-8601 e.g. '2024-06-01T00:00:00'. Default: 24 hours ago.")] string? time_from = null,
+        [Description("End time ISO-8601 e.g. '2024-06-01T01:00:00'. Default: now.")] string? time_to = null,
+        [Description("Filter: minimum ESR charging MW (positive). Use 50+ for grid-scale only.")] double? min_charging_mw = null,
+        [Description("Filter: maximum ESR charging MW.")] double? max_charging_mw = null,
+        [Description("Page (1-based). ERCOT paginates at 100/page by default.")] int page = 1,
+        [Description("Page size (1-1000). Default 100.")] int size = 100,
         CancellationToken cancellationToken = default)
     {
         var apiKey = Environment.GetEnvironmentVariable("ERCOT_API_KEY") ?? "";

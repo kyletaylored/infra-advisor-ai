@@ -18,23 +18,33 @@ public sealed class WaterInfrastructureTool(IHttpClientFactory httpFactory, ILog
 
     [McpServerTool(Name = "get_water_infrastructure")]
     [Description(
-        "Query water infrastructure data. " +
-        "query_type must be exactly one of: " +
-        "'water_systems' (EPA SDWIS public water system inventory), " +
-        "'water_plan_projects' (TWDB 2026 State Water Plan recommended projects), " +
-        "'violations' (EPA SDWIS health-based SDWA violations). " +
-        "Use 'water_plan_projects' for TWDB plans, recommended projects, supply strategies, or regional water planning. " +
-        "Use 'water_systems' or 'violations' for EPA compliance questions.")]
+        "Three water datasets behind one tool — dispatched by query_type. _source: " +
+        "'EPA SDWIS' or 'TWDB'.\n" +
+        "Coverage:\n" +
+        "  - water_systems / violations → all US public water systems (EPA SDWIS)\n" +
+        "  - water_plan_projects → Texas only (TWDB 2026 State Water Plan)\n" +
+        "Use when the user asks:\n" +
+        "  water_systems: public water system inventory; population served; system type " +
+        "counts; CWS / NTNCWS / TNCWS breakdown.\n" +
+        "  violations: open SDWA violations; Tier 1 / 2 / 3 violations; PWSIDs with " +
+        "compliance problems; remediation candidates.\n" +
+        "  water_plan_projects: TWDB recommended projects; desalination / aquifer / " +
+        "reuse strategies; Texas regional water plans (regions A-P).\n" +
+        "Do NOT use for: stormwater / wastewater treatment plants (use search_project_" +
+        "knowledge or web search); individual water-quality test results; non-Texas " +
+        "state water plans.\n" +
+        "PWSID = Public Water System ID — 9-character identifier. Always cite PWSID " +
+        "for individual systems.")]
     public async Task<string> GetWaterInfrastructureAsync(
-        [Description("Query type: 'water_systems', 'water_plan_projects', or 'violations'")] string query_type,
-        [Description("List of 2-letter state codes")] List<string>? states = null,
-        [Description("List of county names to filter results")] List<string>? counties = null,
-        [Description("TWDB region codes A-P")] List<string>? planning_regions = null,
-        [Description("Project types, e.g. 'desalination', 'aquifer_storage'")] List<string>? project_types = null,
-        [Description("EPA system types: 'CWS', 'NTNCWS', 'TNCWS'")] List<string>? system_types = null,
-        [Description("Filter by violation status: true=has violations, false=no violations")] bool? has_violations = null,
-        [Description("Minimum population served")] int? min_population_served = null,
-        [Description("Maximum number of results to return")] int limit = 50,
+        [Description("REQUIRED. 'water_systems' (EPA SDWIS inventory) | 'violations' (EPA SDWA violations) | 'water_plan_projects' (TWDB Texas projects).")] string query_type,
+        [Description("2-letter state codes. Applies to water_systems/violations. For water_plan_projects use ['TX'] only — TWDB is Texas-specific.")] List<string>? states = null,
+        [Description("County names (case-insensitive). E.g. ['Harris', 'Dallas', 'Travis'].")] List<string>? counties = null,
+        [Description("TWDB planning region codes A-P (water_plan_projects only). Region H = Houston area; L = Llano Estacado; etc.")] List<string>? planning_regions = null,
+        [Description("Project type filter for water_plan_projects. Common: 'desalination', 'aquifer_storage', 'reuse', 'new_supply', 'conservation'.")] List<string>? project_types = null,
+        [Description("EPA system types: 'CWS' (community water system — residential), 'NTNCWS' (non-transient non-community — schools/factories), 'TNCWS' (transient — rest stops, parks).")] List<string>? system_types = null,
+        [Description("water_systems / violations only. true = only systems with active violations; false = compliant only; omit = all.")] bool? has_violations = null,
+        [Description("Minimum population served. Use 10000 to focus on systems serving major populations.")] int? min_population_served = null,
+        [Description("Max results (1-200). Default 50.")] int limit = 50,
         CancellationToken cancellationToken = default)
     {
         if (query_type is "water_systems" or "violations")

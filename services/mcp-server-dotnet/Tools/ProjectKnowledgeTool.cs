@@ -16,12 +16,28 @@ public sealed class ProjectKnowledgeTool(ILogger<ProjectKnowledgeTool> logger)
     private const int MaxTopK = 20;
 
     [McpServerTool(Name = "search_project_knowledge")]
-    [Description("Hybrid semantic + keyword search against the firm's internal knowledge base.")]
+    [Description(
+        "Hybrid semantic + keyword search against the firm's internal Azure AI Search " +
+        "knowledge base — case studies, prior project SOWs, risk frameworks, document " +
+        "templates, vetted best practices. _source: 'firm knowledge base'.\n" +
+        "Coverage depends on what the ingestion pipeline has indexed. The base index " +
+        "ships with TWDB state water plan projects + a small set of curated templates. " +
+        "Production deployments add their own indexed content.\n" +
+        "Use when the user asks: similar projects we've done; SOW / risk-summary / cost-" +
+        "estimate templates; firm precedent for a specific project type; vetted " +
+        "infrastructure best practices not in the live data APIs.\n" +
+        "ALWAYS call this BEFORE draft_document — pulls relevant templates and prior " +
+        "project context the draft tool needs.\n" +
+        "Do NOT use for: live external data (use the domain-specific tools for that); " +
+        "internet search (use search_web_procurement); current procurement opportunities " +
+        "(use get_procurement_opportunities).\n" +
+        "Returns ranked document chunks with content, document_type, domain, and " +
+        "relevance score. Higher score = closer semantic match.")]
     public async Task<string> SearchProjectKnowledgeAsync(
-        [Description("Search query")] string query,
-        [Description("Filter by document types, e.g. ['water_plan_project', 'sow']")] List<string>? document_types = null,
-        [Description("Filter by domains, e.g. ['water', 'transportation']")] List<string>? domains = null,
-        [Description("Number of results to return (1-20, default 6)")] int top_k = 6,
+        [Description("Natural-language search query — e.g. 'desalination project SOW', 'bridge scour risk framework', 'Houston flood mitigation precedent'.")] string query,
+        [Description("Filter by document_type. Common values: 'water_plan_project', 'sow', 'risk_summary', 'case_study', 'best_practice'. Omit to search all types.")] List<string>? document_types = null,
+        [Description("Filter by domain. Common values: 'water', 'transportation', 'energy', 'environmental', 'business_development', 'general'. Omit to search all domains.")] List<string>? domains = null,
+        [Description("Number of results (1-20, default 6). Use 3-6 for focused lookup, 10-20 for broad exploration.")] int top_k = 6,
         CancellationToken cancellationToken = default)
     {
         top_k = Math.Clamp(top_k, 1, MaxTopK);

@@ -33,19 +33,29 @@ public sealed class ProcurementOpportunitiesTool(IHttpClientFactory httpFactory,
 
     [McpServerTool(Name = "get_procurement_opportunities")]
     [Description(
-        "Search SAM.gov and grants.gov for active federal contract opportunities and grants. " +
-        "Merges results from both sources sorted by deadline (soonest first). " +
-        "Each result is tagged with _source: 'SAM.gov' or 'grants.gov'. " +
-        "Requires SAMGOV_API_KEY env var. " +
-        "opportunity_types: filter to 'contract', 'grant', or omit for both.")]
+        "SAM.gov + grants.gov — ACTIVE / OPEN federal opportunities (contracts and " +
+        "grants). Merged list sorted by deadline (soonest first). _source: 'SAM.gov' " +
+        "or 'grants.gov'. Requires SAMGOV_API_KEY env var.\n" +
+        "Coverage: every currently-open federal solicitation + open grant program.\n" +
+        "Use when the user asks: open RFPs for <work type>; upcoming bid deadlines; " +
+        "active federal grant programs; what's on SAM.gov right now for <NAICS>; " +
+        "opportunities matching firm capabilities.\n" +
+        "PAIRING RULE: Call get_contract_awards FIRST when the user is doing BD " +
+        "research — knowing past winners + pricing informs which open opportunities " +
+        "are worth pursuing.\n" +
+        "Do NOT use for: HISTORICAL awards (use get_contract_awards); state / local " +
+        "RFPs (use search_web_procurement); web search beyond .gov.\n" +
+        "Date range: tool internally defaults to the next 90 days — NEVER ask the " +
+        "user for a date range. Tool tolerates SAM.gov rate-limit errors (429) and " +
+        "returns retriable:true.")]
     public async Task<string> GetProcurementOpportunitiesAsync(
-        [Description("Search query")] string query,
-        [Description("State abbreviation or geography filter, e.g. 'TX'")] string? geography = null,
-        [Description("NAICS codes to filter by, e.g. ['237310', '237110']")] List<string>? naics_codes = null,
-        [Description("Minimum contract/grant value in USD")] int? min_value_usd = null,
-        [Description("Maximum contract/grant value in USD")] int? max_value_usd = null,
-        [Description("Filter to 'contract', 'grant', or omit for both")] List<string>? opportunity_types = null,
-        [Description("Maximum number of results to return")] int limit = 20,
+        [Description("Natural-language search query — e.g. 'civil engineering', 'bridge inspection', 'water treatment'.")] string query,
+        [Description("State 2-letter abbreviation 'TX' or 'state + city'. Omit for nationwide.")] string? geography = null,
+        [Description("NAICS codes. AEC examples: ['237310'] highway, ['237110'] water/sewer, ['237990'] heavy civil, ['541330'] engineering services.")] List<string>? naics_codes = null,
+        [Description("Minimum contract / grant value in USD. Use 1000000 for major-only filtering.")] int? min_value_usd = null,
+        [Description("Maximum contract / grant value in USD.")] int? max_value_usd = null,
+        [Description("Filter source: ['contract'] for SAM.gov only, ['grant'] for grants.gov only. Omit for merged results from both.")] List<string>? opportunity_types = null,
+        [Description("Max results (1-100). Default 20.")] int limit = 20,
         CancellationToken cancellationToken = default)
     {
         var derivedNaics = naics_codes ?? DeriveNaics(query);

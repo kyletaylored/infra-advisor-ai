@@ -61,46 +61,158 @@ public class SuggestionService
         "Return ONLY valid JSON, no markdown fences, no explanation:\n" +
         "{\"suggestions\": [{\"label\": \"...\", \"query\": \"...\"}, {\"label\": \"...\", \"query\": \"...\"}, {\"label\": \"...\", \"query\": \"...\"}, {\"label\": \"...\", \"query\": \"...\"}]}";
 
+    // ── Tool catalog — keep IN SYNC with the MCP server [Description(...)] attrs.
+    // Suggestion-pool prompts inject this string so the LLM generates questions
+    // that map cleanly to a single tool call with realistic args, instead of
+    // questions that no tool can actually answer.
+    private const string ToolCatalog = """
+        Available MCP tools and what they can answer (use this list to ground
+        every suggestion in something the system can actually look up):
+
+        1. get_bridge_condition — FHWA National Bridge Inventory. All US bridges over 20 ft. Fields: condition ratings (0-9), BRIDGE_CONDITION Good/Fair/Poor, scour-critical flag, ADT, year built, location. Input: 2-char FIPS state code (e.g. '48' = TX, '06' = CA). Works nationwide.
+
+        2. get_disaster_history — OpenFEMA major-disaster + emergency declarations 1953-present. Nationwide. Filter by states (2-letter abbrev), incident_types (Flood, Hurricane, Tornado, etc.), date range.
+
+        3. get_energy_infrastructure — EIA state-level annual electricity statistics. All 50 states. data_series: 'generation' | 'capacity' | 'fuel_mix'. Fuel codes: SUN, WND, NG, COL, NUC, HYC, BIO, GEO, PET.
+
+        4. get_ercot_energy_storage — ERCOT public data API. TEXAS ONLY (~90% of TX, excludes El Paso and SPP regions). Battery storage 4-second charging data. Use for ERCOT-specific grid questions only.
+
+        5. get_water_infrastructure — Dispatched by query_type:
+           - 'water_systems' (EPA SDWIS) → all US public water systems inventory
+           - 'violations' (EPA SDWIS) → SDWA violations nationwide
+           - 'water_plan_projects' (TWDB) → TEXAS ONLY recommended water projects, regions A-P
+           Always cite PWSID for individual systems.
+
+        6. search_txdot_open_data — TxDOT Open Data portal (ArcGIS). TEXAS ONLY. AADT counts, construction projects, highway geometry. query_type: 'catalog_search' | 'traffic_counts' | 'construction_projects'.
+
+        7. search_project_knowledge — Azure AI Search index of internal firm content (case studies, prior SOWs, templates, best practices). Call BEFORE draft_document.
+
+        8. draft_document — Renders one of 4 Scriban templates: 'scope_of_work' | 'risk_summary' | 'cost_estimate_scaffold' | 'funding_positioning_memo'. Always call search_project_knowledge first.
+
+        9. get_procurement_opportunities — SAM.gov + grants.gov. ACTIVE/OPEN federal solicitations and grants. NEVER asks for a date range. AEC NAICS: 237310 (highway), 237110 (water/sewer), 237990 (heavy civil), 541330 (engineering services).
+
+        10. get_contract_awards — USASpending.gov. HISTORICAL federal contract awards. Default window: past 2 years. CALL THIS BEFORE get_procurement_opportunities for BD research — know past winners before pursuing open opportunities.
+
+        11. search_web_procurement — Azure OpenAI web_search_preview. State/local RFPs, bond elections, budget announcements on .gov / .us / DemandStar / BidNet / BonfireHub. Use ONLY for non-federal procurement.
+
+        Hard constraints:
+        - For Texas-specific tools (ERCOT, TxDOT, TWDB), only use Texas in the question.
+        - For NAICS codes, prefer ['237310', '237110', '237990', '541330'].
+        - For federal BD questions, suggest the get_contract_awards → get_procurement_opportunities sequence.
+        - For 'recent disaster' questions, name an incident_type and a state.
+        - For energy questions outside Texas grid, use get_energy_infrastructure (not ERCOT).
+        """;
+
     private static readonly string[] PoolBatchPrompts =
     {
         // Engineering: structural, civil, environmental
-        "Generate exactly 10 specific opening questions an infrastructure engineer at an infrastructure consulting " +
-        "firm would ask an AI assistant backed by FHWA NBI, EPA SDWIS, EIA, ERCOT, TxDOT, and FEMA data.\n" +
-        "Focus on: structural condition rankings, sufficiency ratings, scour risk, water system violations, " +
-        "energy grid capacity by fuel type, traffic volume thresholds, and cross-hazard exposure.\n" +
-        "Every question must cite a specific threshold, data field, geography, or time window. No generic questions. " +
+        ToolCatalog + "\n\n" +
+        "Generate exactly 10 opening questions an infrastructure engineer at a consulting " +
+        "firm would ask. Each question must map cleanly to ONE of the tools above with " +
+        "REALISTIC arguments. Cover: bridge condition (get_bridge_condition with state " +
+        "FIPS), water system violations (get_water_infrastructure violations), energy mix " +
+        "(get_energy_infrastructure with state list), TxDOT AADT, FEMA disaster patterns.\n" +
+        "Every question must name a specific state / county / threshold / time window. " +
+        "Avoid 'how do I' or 'what is' phrasings — these are data-lookup questions. " +
         "No emojis in labels. Labels 2-5 words.\n" +
         "Return ONLY valid JSON, no markdown:\n" +
         "{\"suggestions\": [{\"label\": \"...\", \"query\": \"...\"}, ... 10 items ...]}",
 
         // Construction: procurement, delivery, project data
-        "Generate exactly 10 specific opening questions a construction project manager or BD director at an " +
-        "infrastructure consulting firm would ask an AI assistant backed by SAM.gov, USASpending.gov, and state " +
-        "procurement portals.\n" +
-        "Focus on: active federal solicitations, contract award benchmarks by NAICS code, incumbent contractor " +
-        "analysis, grant program deadlines, bond election schedules, and price-per-unit benchmarks.\n" +
-        "Every question must reference a specific NAICS code, agency, dollar threshold, or geography. No emojis in labels. Labels 2-5 words.\n" +
+        ToolCatalog + "\n\n" +
+        "Generate exactly 10 opening questions a construction project manager or BD " +
+        "director would ask. Each question maps to get_contract_awards, get_procurement_" +
+        "opportunities, or search_web_procurement. Many BD questions are best as the " +
+        "PAIR get_contract_awards → get_procurement_opportunities — phrase the suggestion " +
+        "so it naturally invokes both ('find historical TxDOT bridge awards and current " +
+        "open opportunities under NAICS 237310').\n" +
+        "Every question must reference a specific NAICS code, agency, dollar threshold, " +
+        "or geography. No emojis in labels. Labels 2-5 words.\n" +
         "Return ONLY valid JSON, no markdown:\n" +
         "{\"suggestions\": [{\"label\": \"...\", \"query\": \"...\"}, ... 10 items ...]}",
 
         // Operations: resilience, risk, asset lifecycle
-        "Generate exactly 10 specific opening questions an asset manager or resilience planner at an infrastructure " +
-        "consulting firm would ask an AI assistant backed by FEMA OpenFEMA, FHWA NBI, EPA SDWIS, and EIA data.\n" +
-        "Focus on: repeat disaster declarations by county and hazard type, flood and scour risk to bridge assets, " +
-        "water system outage history, grid stress events, multi-hazard exposure scoring, and infrastructure age profiles.\n" +
-        "Every question must reference a specific hazard type, county, time range, or asset class. No emojis in labels. Labels 2-5 words.\n" +
+        ToolCatalog + "\n\n" +
+        "Generate exactly 10 opening questions an asset manager or resilience planner " +
+        "would ask. Map cleanly to: get_disaster_history (cite specific incident_types " +
+        "and state list), get_bridge_condition (cite max_lowest_rating or structurally_" +
+        "deficient_only=true), get_water_infrastructure violations, get_ercot_energy_" +
+        "storage (Texas only).\n" +
+        "Every question must reference a specific hazard type, county, time range, or " +
+        "asset class. No emojis in labels. Labels 2-5 words.\n" +
         "Return ONLY valid JSON, no markdown:\n" +
         "{\"suggestions\": [{\"label\": \"...\", \"query\": \"...\"}, ... 10 items ...]}",
 
-        // Management/Advisory: documents, BD, firm knowledge
-        "Generate exactly 10 specific opening questions a program manager or practice leader at an infrastructure " +
-        "consulting firm would ask an AI assistant with access to a firm knowledge base, document drafting tools, " +
-        "and procurement intelligence.\n" +
-        "Focus on: SOW scaffolds for specific project types, risk framework selection, funding memo positioning, " +
-        "order-of-magnitude cost estimates, competitive intelligence summaries, and similar prior project retrieval.\n" +
-        "Every question must describe a concrete deliverable, project type, or decision context. No emojis in labels. Labels 2-5 words.\n" +
+        // Management / Advisory: documents, BD, firm knowledge
+        ToolCatalog + "\n\n" +
+        "Generate exactly 10 opening questions a program manager or practice leader would " +
+        "ask. Each one should require search_project_knowledge (to pull templates / " +
+        "precedent) and may chain into draft_document. Document types available: " +
+        "scope_of_work, risk_summary, cost_estimate_scaffold, funding_positioning_memo.\n" +
+        "Every question must describe a concrete deliverable, project type, or decision " +
+        "context. No emojis in labels. Labels 2-5 words.\n" +
         "Return ONLY valid JSON, no markdown:\n" +
         "{\"suggestions\": [{\"label\": \"...\", \"query\": \"...\"}, ... 10 items ...]}",
+    };
+
+    // Curated golden-path seed pool — hand-verified to work end-to-end against
+    // the current tool set. Loaded into Redis on cold start (when the LLM-
+    // generated pool is empty) so the user's first-touch experience is always
+    // reliable. Each query is short, names the exact data domain, and has a
+    // clear single-tool or sequenced-tool path through the agent.
+    public static readonly IReadOnlyList<SuggestionItem> SeedPool = new[]
+    {
+        // Bridges — single tool, fast
+        new SuggestionItem(
+            "Worst Texas bridges",
+            "List the 25 worst-rated bridges in Texas by lowest condition rating."),
+        new SuggestionItem(
+            "California scour bridges",
+            "Find structurally deficient bridges in California with scour-critical flags set."),
+        new SuggestionItem(
+            "Harris County deficient",
+            "Show structurally deficient bridges in Harris County, Texas with ADT over 10,000."),
+
+        // Water — single tool, three datasets
+        new SuggestionItem(
+            "Texas SDWA violations",
+            "Which Texas community water systems have open Safe Drinking Water Act violations serving more than 10,000 people?"),
+        new SuggestionItem(
+            "Texas desalination plans",
+            "List recommended desalination projects from the TWDB 2026 State Water Plan."),
+
+        // FEMA disasters — single tool
+        new SuggestionItem(
+            "Recent Texas hurricanes",
+            "How many hurricane disaster declarations has Texas had in the last 10 years?"),
+
+        // Energy — single tool
+        new SuggestionItem(
+            "Texas renewable mix",
+            "What's the renewable energy generation share for Texas in the last 5 years?"),
+
+        // TxDOT — single tool, Texas-only
+        new SuggestionItem(
+            "TxDOT pavement data",
+            "Find TxDOT Open Data datasets related to pavement condition."),
+
+        // Federal procurement — chained tools (the BD golden path)
+        new SuggestionItem(
+            "TX highway BD",
+            "Find recent federal contract awards for highway construction in Texas under NAICS 237310, then list open opportunities matching the same NAICS."),
+        new SuggestionItem(
+            "Water engineering RFPs",
+            "Show active federal solicitations for water engineering services (NAICS 541330 or 237110) with bid deadlines in the next 60 days."),
+
+        // Document drafting — chained: knowledge → draft
+        new SuggestionItem(
+            "SOW for bridge rehab",
+            "Pull templates and prior projects for bridge rehabilitation, then draft a scope_of_work for an IH-35 bridge corridor project."),
+
+        // Cross-domain — exercises 2-3 tools
+        new SuggestionItem(
+            "Flood-risk bridge audit",
+            "For Harris County, Texas: list structurally deficient bridges, recent flood declarations in the last 5 years, and water systems with violations."),
     };
 
     public SuggestionService(
@@ -191,6 +303,24 @@ public class SuggestionService
 
     public async Task FillPoolAsync()
     {
+        // Cold-start seed: if the pool is empty (fresh Redis, first deploy),
+        // populate the curated golden-path SeedPool first so the user's
+        // first-touch experience surfaces hand-verified queries. The LLM
+        // batch below then runs concurrently to add variety.
+        try
+        {
+            var poolSize = await GetPoolSizeAsync();
+            if (poolSize == 0)
+            {
+                await AddToPoolAsync(SeedPool.ToList());
+                _logger.LogInformation("Suggestion pool seeded with {Count} curated golden-path queries", SeedPool.Count);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("Seed-pool initialization failed: {Error}", ex.Message);
+        }
+
         var prompt = PoolBatchPrompts[Random.Shared.Next(PoolBatchPrompts.Length)];
         try
         {

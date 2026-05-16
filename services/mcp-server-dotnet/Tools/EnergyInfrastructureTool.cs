@@ -20,15 +20,27 @@ public sealed class EnergyInfrastructureTool(IHttpClientFactory httpFactory, ILo
 
     [McpServerTool(Name = "get_energy_infrastructure")]
     [Description(
-        "Query EIA for state-level energy generation and infrastructure data. " +
-        "data_series must be exactly one of: 'generation' (electricity generated per state/fuel type, default), " +
-        "'capacity' (installed generating capacity), 'fuel_mix' (share of generation by fuel type).")]
+        "EIA — state-level annual electricity statistics. _source: 'EIA'. Requires " +
+        "EIA_API_KEY.\n" +
+        "Coverage: all 50 US states + DC. Annual data, multi-year history available.\n" +
+        "Use when the user asks: how much electricity does <state> generate by fuel; " +
+        "renewable energy share by state; installed capacity for solar / wind / gas; " +
+        "energy mix trends over time; state-level resource planning context.\n" +
+        "Do NOT use for: Texas ERCOT real-time grid data (use get_ercot_energy_storage); " +
+        "individual power plants (EIA-860 plant-level not exposed here); transmission or " +
+        "distribution data; ENERGY STAR or efficiency programs.\n" +
+        "data_series semantics:\n" +
+        "  'generation' (default) → MWh actually generated, broken out by fuel type\n" +
+        "  'capacity' → MW of nameplate generating capacity installed\n" +
+        "  'fuel_mix' → percentage share of generation by fuel\n" +
+        "Common fuel codes: SUN=solar, WND=wind, NG=natural gas, COL=coal, NUC=nuclear, " +
+        "HYC=conventional hydro, BIO=biomass, GEO=geothermal, PET=petroleum.")]
     public async Task<string> GetEnergyInfrastructureAsync(
-        [Description("List of 2-letter state codes (required), e.g. ['TX', 'CA']")] List<string> states,
-        [Description("Data series to retrieve: 'generation', 'capacity', or 'fuel_mix'")] string data_series = "generation",
-        [Description("Start year (inclusive)")] int? year_from = null,
-        [Description("End year (inclusive)")] int? year_to = null,
-        [Description("Fuel type codes, e.g. ['SUN', 'WND', 'NG', 'COL']")] List<string>? fuel_types = null,
+        [Description("REQUIRED. 2-letter state codes, e.g. ['TX', 'CA']. Multiple states allowed.")] List<string> states,
+        [Description("'generation' (MWh per fuel, default) | 'capacity' (MW installed) | 'fuel_mix' (% share).")] string data_series = "generation",
+        [Description("Start year inclusive. Default: 5 years ago.")] int? year_from = null,
+        [Description("End year inclusive. Default: latest available (~ current year minus 1).")] int? year_to = null,
+        [Description("Fuel type codes filter. Common: ['SUN','WND','NG','COL','NUC','HYC']. Omit for all fuels.")] List<string>? fuel_types = null,
         CancellationToken cancellationToken = default)
     {
         if (!ValidDataSeries.Contains(data_series))
