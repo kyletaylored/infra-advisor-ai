@@ -43,6 +43,7 @@ Global infrastructure consulting firm AI assistant. Refer to `@docs/agent-guides
 - **Orchestration:** \* Namespace: `infra-advisor` (Exceptions: `kafka`, `airflow`, `datadog`).
   - Manifests: Must include `imagePullSecrets: [{name: ghcr-pull-secret}]`.
   - Registry: `ghcr.io/kyletaylored/infra-advisor-ai/<service>:latest`.
+- **Public ingress:** The UI pod's nginx is the only LoadBalancer. Adding a service with a public subpath requires (1) a `location ^~ /<subpath>/` block in `services/ui/nginx.conf`, (2) the upstream configured with its subpath (e.g. `MP_WEBROOT`, `AIRFLOW__API__BASE_URL`, `--root-path`), and (3) a UI image rebuild (nginx.conf is `COPY`'d at build time). Full rules in `@docs/agent-guides/core-conventions.md` § Public ingress routing.
 
 ---
 

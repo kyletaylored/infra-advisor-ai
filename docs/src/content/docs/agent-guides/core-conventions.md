@@ -204,6 +204,50 @@ spec:
               cpu: "<cpu-limit>"
 ```
 
+## Public ingress routing (subpath services)
+
+The UI pod's nginx is the **only LoadBalancer** in the cluster — every public URL on `infra-advisor-ai.kyletaylor.dev` is routed through `services/ui/nginx.conf`. Cluster-internal services (mcp-server, redis, postgres, mailpit, etc.) sit on ClusterIP Services and reach the internet only by being proxied from this one nginx.
+
+**When you add a new service that needs a public subpath**, all of the following must happen in the same PR or it won't work end-to-end:
+
+1. **Add a `location ^~ /<subpath>/` block to `services/ui/nginx.conf`** pointing at the new service's ClusterIP. Use `^~` to lock the prefix match (otherwise the SPA fallback can swallow the route). Example shape:
+
+   ```nginx
+   location ^~ /<subpath>/ {
+       set $<subpath>_upstream http://<service>.<namespace>.svc.cluster.local:<port>;
+       proxy_pass $<subpath>_upstream;
+       proxy_http_version 1.1;
+       proxy_set_header Upgrade $http_upgrade;
+       proxy_set_header Connection "upgrade";
+       proxy_set_header Host $host;
+       proxy_set_header X-Real-IP $remote_addr;
+       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+       proxy_set_header X-Forwarded-Proto $scheme;
+       # If the upstream has its own auth, pass Authorization through:
+       proxy_pass_request_headers on;
+       proxy_read_timeout 60s;
+   }
+   ```
+
+2. **Configure the upstream to know its subpath.** Most apps default to root-relative URLs and break when proxied. Examples:
+   - Mailpit: `MP_WEBROOT=/mailpit`
+   - Airflow: `AIRFLOW__API__BASE_URL=https://.../airflow`
+   - Most Python apps: `--root-path /<subpath>` (uvicorn) or `RootPath` (FastAPI)
+
+   Without this, the upstream emits absolute links/redirects to `/` that escape the nginx prefix.
+
+3. **Rebuild the UI image and roll out.** `services/ui/nginx.conf` is `COPY`'d into the UI image at build time — runtime changes have no effect. CI rebuilds the UI on any `services/ui/**` change and `kubectl set image`s the new SHA. To force locally: `kubectl rollout restart deploy/ui -n infra-advisor` after the new image lands on GHCR.
+
+4. **Choose whether to strip the prefix in the upstream rewrite.** Two patterns in use:
+   - **Preserve the prefix** (`/airflow/foo` → upstream sees `/airflow/foo`). Right when the upstream handles its own sub-path (Airflow, Mailpit).
+   - **Strip the prefix** (`/api/foo` → upstream sees `/foo`). Right when the upstream is path-naive. Use `rewrite ^/<subpath>/(.*) /$1 break;` inside the location block.
+
+5. **Layer Cloudflare Access in front of admin/sensitive subpaths.** nginx-level auth (basic auth, JWT) is necessary but not sufficient for paths like `/airflow` or `/mailpit` whose contents enable account takeover or full credential exfiltration. Add a Cloudflare Access (Zero Trust) application policy requiring SSO before the request even hits our nginx.
+
+6. **Stream-aware subpaths need bigger timeouts and `proxy_buffering off`.** SSE / WebSocket / long-running responses (e.g. `/api-dotnet/query/stream`) hang when buffered. Put the specific stream path **above** the generic prefix block so longer-prefix matching wins.
+
+**The cheap mistake**: forgetting step 2 (subpath config) or step 3 (UI rebuild). Symptoms: a 200 that returns HTML for `/` instead of the subpath content, or links inside the subpath UI that escape to `/`. If you see either, walk the steps above.
+
 ## Airflow DAG conventions
 
 ```python
