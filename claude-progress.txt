@@ -1,3 +1,92 @@
+[2026-05-17] Replace MailHog with Mailpit + subpath-routing convention
+
+  MailHog (unmaintained, no UI auth) swapped for axllent/mailpit:v1.21
+  (active fork, bcrypt MP_UI_AUTH, MP_WEBROOT for sub-path proxying).
+  Same SMTP + HTTP ports (1025/8025) so auth-api's SMTP client is a
+  one-line config change. The /mailpit/ inbox is re-exposed through
+  the UI nginx with Mailpit's own basic auth as the gate (Cloudflare
+  Access still needed as defense-in-depth — see operator actions).
+
+  Commit 1eb1274 — Mailpit drop-in:
+    k8s/mailhog/                              [DELETED]
+    k8s/mailpit/deployment.yaml               [NEW]
+    k8s/mailpit/service.yaml                  [NEW]  ClusterIP only
+    k8s/mailpit/configmap.yaml                [NEW]  MP_WEBROOT=/mailpit
+    Makefile
+      + create-mailpit-secret target (htpasswd -nbB hashes
+        MAILPIT_UI_PASSWORD into MP_UI_AUTH; Mailpit accepts $2a/$2b/$2y
+        prefixes so htpasswd output works unchanged)
+      check-env requires MAILPIT_UI_USERNAME + MAILPIT_UI_PASSWORD
+      deploy-k8s runs create-mailpit-secret before applying manifests
+    k8s/auth-api/configmap.yaml
+      SMTP_HOST: mailpit.infra-advisor.svc.cluster.local (was mailhog)
+    services/ui/nginx.conf
+      /mailpit/ location block re-added (basic-auth via MP_UI_AUTH
+      gates it). Pass-through Authorization header preserved.
+    Docs scrubbed of MailHog references — README, architecture,
+    deployment/{index,kubernetes,quickstart}, development, services
+    indexes, ui.md, auth-api.md.
+
+  Commit 97d26ac — subpath-routing convention documented:
+    docs/agent-guides/core-conventions.md — new "Public ingress
+    routing (subpath services)" section. Captures the three-step
+    rule I forgot when adding Mailpit:
+      1. location ^~ /<subpath>/ block in services/ui/nginx.conf
+      2. Upstream told its subpath (MP_WEBROOT, AIRFLOW__API__BASE_URL,
+         uvicorn --root-path, etc.)
+      3. UI image rebuild — nginx.conf is COPY'd at build time
+    Plus prefix-preserve vs strip patterns, SSE/buffering caveat,
+    Cloudflare Access defense-in-depth recommendation.
+    CLAUDE.md gets a one-line pointer so the rule loads into every
+    agent session by default.
+
+  Commits c636f70 + 3f6fcb9 — probe iteration:
+    First attempt (c636f70) used Mailpit's documented /livez + /readyz
+    HTTP endpoints, but v1.21 returns non-2xx for those when MP_UI_AUTH
+    is set (despite docs saying they're auth-exempt). Pod went into
+    CrashLoopBackOff: ~40-second cycles of clean startup followed by
+    kubelet kill. Confirmed via DD US3 logs showing the consistent
+    "[smtpd] starting" → "[http] enabling basic authentication" →
+    "[http] starting on 0.0.0.0:8025" → ~40s later → "[db] got
+    terminated signal, shutting down" pattern.
+
+    Second attempt (3f6fcb9) switches to tcpSocket probes against
+    port 8025. TCP probes don't traverse Mailpit's auth middleware
+    at all — successful TCP accept is sufficient proof the HTTP
+    listener is up. Added a startupProbe on the SMTP port so the
+    readiness window doesn't flip-flop while the HTTP listener is
+    still binding.
+
+  Verified:
+  [x] dotnet build / pytest / npm build remain clean (no service
+      code changed)
+  [x] docs site builds 58 pages, 0 errors
+
+  [~] Live-deployment verification (operator actions required):
+      (a) Apply commit 1eb1274's manifest + secret one-time setup:
+            kubectl apply -f k8s/mailpit/
+            make create-mailpit-secret    (needs MAILPIT_UI_USERNAME
+                                           + MAILPIT_UI_PASSWORD in .env)
+          (a) is DONE per operator output: secret + configmap + svc
+          + deploy all created; old mailhog deployment + svc removed.
+      (b) Apply commit 3f6fcb9's deployment update (TCP probes) —
+          currently still NOT APPLIED. Operator must run:
+            git pull
+            kubectl apply -f k8s/mailpit/deployment.yaml
+            kubectl rollout status deploy/mailpit -n infra-advisor
+          Without this, mailpit-6595dd9857-* keeps cycling in
+          CrashLoopBackOff because the /livez HTTP probe from c636f70
+          fails (Mailpit gates it behind MP_UI_AUTH in v1.21).
+      (c) After (b), kubectl get endpoints mailpit shows an IP and
+          https://infra-advisor-ai.kyletaylor.dev/mailpit/ serves the
+          basic-auth prompt.
+      (d) Cloudflare Access policy in front of /mailpit/* — inbox
+          holds password-reset tokens, so basic auth alone is not
+          sufficient.
+      (e) UI image rebuild already triggered by CI when 1eb1274
+          landed on main; if /mailpit/ still 404s after (b), force
+          with: kubectl rollout restart deploy/ui -n infra-advisor.
+
 [2026-05-16] Security hardening — close CRITICAL + HIGH from public-repo audit
 
   Read-only audit by general-purpose subagent (.claude/agents/security-
