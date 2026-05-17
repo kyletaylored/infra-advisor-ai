@@ -23,7 +23,7 @@ infra-advisor-ai/
     agent-api-dotnet/      Deployment, Service, HPA, ConfigMap (.NET)
     auth-api/              Deployment, Service, ConfigMap
     kafka/                 Strimzi KafkaCluster + KafkaTopics
-    mailhog/               Deployment, Service
+    mailpit/               Deployment, Service, ConfigMap (bcrypt auth via secret)
     mcp-server/            Deployment, Service, ConfigMap
     mcp-server-dotnet/     Deployment, Service, ConfigMap (.NET)
     postgres/              StatefulSet, Service, PVC

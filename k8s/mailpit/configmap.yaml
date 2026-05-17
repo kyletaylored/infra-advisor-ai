@@ -1,0 +1,31 @@
+---
+# Mailpit runtime config. Auth credentials (MP_UI_AUTH) live in
+# mailpit-secret because htpasswd hashes — while bcrypt — still grant
+# UI access if leaked, so they get the secret-mount path. Everything
+# else here is fine as plain config.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mailpit-config
+  namespace: infra-advisor
+data:
+  # UI sub-path. The nginx ingress proxies /mailpit/* through to this pod
+  # at port 8025. Setting MP_WEBROOT here makes Mailpit's links/assets
+  # all root under /mailpit/ so the proxy doesn't have to rewrite HTML.
+  MP_WEBROOT: "/mailpit"
+
+  # In-memory store. Sufficient for dev SMTP capture; survives pod
+  # lifetime but not restart. Switch to a PVC + MP_DATABASE if persistence
+  # matters.
+  MP_DATABASE: ""
+
+  # Cap the inbox so a runaway test loop can't fill memory.
+  MP_MAX_MESSAGES: "1000"
+
+  # The SMTP listener is ClusterIP-only and only auth-api talks to it,
+  # so AUTH is unnecessary on the SMTP side. Leave SMTP open in-cluster.
+
+  # Bind explicit interfaces. SMTP 0.0.0.0:1025 (ClusterIP only).
+  # HTTP 0.0.0.0:8025 (ClusterIP only — nginx in front).
+  MP_SMTP_BIND_ADDR: "0.0.0.0:1025"
+  MP_UI_BIND_ADDR: "0.0.0.0:8025"

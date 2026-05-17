@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector help
+.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector help
 
 # Load .env if present (for local dev)
 -include .env
@@ -24,7 +24,8 @@ check-env: ## Verify all required env vars are set before deploying
 		POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB \
 		DD_POSTGRES_PASSWORD \
 		DATABASE_URL JWT_SECRET \
-		AIRFLOW_ADMIN_USERNAME AIRFLOW_ADMIN_PASSWORD; do \
+		AIRFLOW_ADMIN_USERNAME AIRFLOW_ADMIN_PASSWORD \
+		MAILPIT_UI_USERNAME MAILPIT_UI_PASSWORD; do \
 		if [ -z "$$(eval echo \$$$$var)" ]; then \
 			echo "  ERROR: $$var is not set"; \
 			MISSING=1; \
@@ -187,7 +188,20 @@ create-dd-postgres-secret: ## Create dd-postgres-secret K8s Secret in datadog na
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ dd-postgres-secret created in namespace datadog"
 
-create-secrets: create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-airflow-secret ## Create all application K8s secrets
+create-mailpit-secret: ## Create mailpit-secret with bcrypt-hashed MP_UI_AUTH for the inbox web UI
+	@if [ -z "$(MAILPIT_UI_USERNAME)" ]; then echo "ERROR: MAILPIT_UI_USERNAME is not set"; exit 1; fi
+	@if [ -z "$(MAILPIT_UI_PASSWORD)" ]; then echo "ERROR: MAILPIT_UI_PASSWORD is not set — generate one with: openssl rand -base64 24"; exit 1; fi
+	@command -v htpasswd >/dev/null 2>&1 || { echo "ERROR: htpasswd not found — install apache2-utils (Debian) or httpd (macOS)"; exit 1; }
+	@# `htpasswd -nbB` emits user:$2y$10$... — Mailpit's MP_UI_AUTH accepts the
+	@# same bcrypt prefix variants ($2a / $2b / $2y), so no rewriting needed.
+	@AUTH="$$(htpasswd -nbB -C 10 "$(MAILPIT_UI_USERNAME)" "$(MAILPIT_UI_PASSWORD)")"; \
+	kubectl create secret generic mailpit-secret \
+		--namespace $(NAMESPACE) \
+		--from-literal=MP_UI_AUTH="$$AUTH" \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "✓ mailpit-secret created (user: $(MAILPIT_UI_USERNAME))"
+
+create-secrets: create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-airflow-secret create-mailpit-secret ## Create all application K8s secrets
 
 setup-postgres-dbm: ## Create Datadog monitoring user + grants in Postgres (run once after deploy; requires authuser superuser)
 	@if [ -z "$(DD_POSTGRES_PASSWORD)" ]; then echo "ERROR: DD_POSTGRES_PASSWORD is not set"; exit 1; fi
@@ -228,8 +242,9 @@ deploy-k8s: check-env ## Apply all Kubernetes manifests
 	@echo "→ Deploying Redis..."
 	kubectl apply -f k8s/redis/
 
-	@echo "→ Deploying MailHog (SMTP capture for dev)..."
-	kubectl apply -f k8s/mailhog/
+	@echo "→ Deploying Mailpit (SMTP capture for dev)..."
+	$(MAKE) create-mailpit-secret
+	kubectl apply -f k8s/mailpit/
 
 	@echo "→ Creating Airflow Azure secret..."
 	$(MAKE) create-airflow-secret

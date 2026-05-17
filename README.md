@@ -159,7 +159,7 @@ Managed by a single `DatadogAgent` custom resource via the Datadog Operator.
 | Message bus | Kafka via Strimzi Operator | `kafka` |
 | Ingestion orchestration | Apache Airflow 3.x (LocalExecutor) | `airflow` |
 | Feature engineering | PySpark local mode (inside Airflow scheduler) | `airflow` |
-| Dev email capture | MailHog — SMTP + Web UI | `infra-advisor` |
+| Dev email capture | Mailpit — SMTP + Web UI (bcrypt basic auth) | `infra-advisor` |
 | Observability | Datadog Operator — Agent DaemonSet + Cluster Agent | `datadog` |
 | IaC | Azure Bicep — subscription-scoped | — |
 

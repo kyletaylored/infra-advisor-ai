@@ -67,7 +67,7 @@ All workloads are organized into four Kubernetes namespaces:
 
 | Namespace       | Contents                                                                                                           |
 | --------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `infra-advisor` | mcp-server, mcp-server-dotnet, agent-api, agent-api-dotnet, auth-api, ui, redis, postgres, mailhog, load-generator |
+| `infra-advisor` | mcp-server, mcp-server-dotnet, agent-api, agent-api-dotnet, auth-api, ui, redis, postgres, mailpit, load-generator |
 | `airflow`       | Airflow scheduler, API server, dag-processor, triggerer, PostgreSQL                                                |
 | `kafka`         | Strimzi Operator, Kafka cluster, topics                                                                            |
 | `datadog`       | Datadog Agent DaemonSet, Cluster Agent                                                                             |

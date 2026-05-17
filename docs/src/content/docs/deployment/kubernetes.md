@@ -23,7 +23,7 @@ datadog          Datadog Agent DaemonSet
 | `auth-api` | 2 | `ghcr.io/.../auth-api:latest` | 8002 | 128Mi/256Mi RAM, 100m/500m CPU |
 | `ui` | 2 | `ghcr.io/.../ui:latest` | 80 | 64Mi/128Mi RAM, 50m/100m CPU |
 | `redis` | 1 | `redis:7.4-alpine` | 6379 | 128Mi/256Mi RAM, 100m/200m CPU |
-| `mailhog` | 1 | `mailhog/mailhog:v1.0.1` | 1025/8025 | 64Mi/128Mi RAM |
+| `mailpit` | 1 | `axllent/mailpit:v1.21` | 1025/8025 | 64Mi/256Mi RAM |
 
 ### StatefulSet
 
@@ -47,7 +47,7 @@ datadog          Datadog Agent DaemonSet
 | `ui` | LoadBalancer | 80 → 80 |
 | `redis` | ClusterIP | 6379 |
 | `postgres` | ClusterIP | 5432 |
-| `mailhog` | ClusterIP | 1025 (SMTP), 8025 (HTTP) |
+| `mailpit` | ClusterIP | 1025 (SMTP), 8025 (HTTP) |
 
 ### Secrets
 

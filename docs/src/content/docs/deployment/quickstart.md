@@ -81,7 +81,7 @@ This applies in order:
 4. Redis
 5. PostgreSQL
 6. Datadog Agent (DatadogAgent CR)
-7. MailHog
+7. Mailpit (bcrypt basic auth)
 8. MCP Server
 9. Agent API
 10. Auth API

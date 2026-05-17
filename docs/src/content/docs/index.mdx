@@ -124,8 +124,7 @@ flowchart TD
 | Application | `https://infra-advisor-ai.kyletaylor.dev` |
 | Container registry | `ghcr.io/kyletaylored/infra-advisor-ai` |
 
-The Airflow UI and MailHog inbox are intentionally not listed here.
-Airflow is reachable at `/airflow` but requires admin credentials.
-MailHog has no public route; use `kubectl port-forward -n infra-advisor svc/mailhog 8025:8025` for local inspection.
+The Airflow UI and Mailpit inbox are intentionally not listed here.
+Both sit at protected paths (`/airflow`, `/mailpit`) with credentials required, and you should put Cloudflare Access in front of each for defense-in-depth before sharing the URLs.
 
 </ContainerSection>

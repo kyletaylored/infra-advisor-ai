@@ -1,0 +1,29 @@
+---
+# ClusterIP only. The HTTP UI is reachable through the nginx ingress at
+# /mailpit/* with Mailpit's MP_UI_AUTH basic-auth in front. The previous
+# MailHog LoadBalancer service was removed in CRITICAL-2 remediation —
+# nothing about Mailpit changes that decision; basic auth is defense-in-
+# depth, not a public-exposure license. Layer Cloudflare Access (or
+# zone-level WAF rule restricting /mailpit/*) for the actual public gate.
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit
+  namespace: infra-advisor
+  labels:
+    app: mailpit
+    app.kubernetes.io/name: mailpit
+    app.kubernetes.io/part-of: infra-advisor-ai
+spec:
+  type: ClusterIP
+  selector:
+    app: mailpit
+  ports:
+    - name: smtp
+      port: 1025
+      targetPort: smtp
+      protocol: TCP
+    - name: http
+      port: 8025
+      targetPort: http
+      protocol: TCP

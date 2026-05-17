@@ -206,7 +206,7 @@ The production Docker image uses nginx to:
 3. Proxy `/api-dotnet/*` to `agent-api-dotnet.infra-advisor.svc.cluster.local:8001` (.NET backend)
 4. Proxy `/auth/*` to `auth-api.infra-advisor.svc.cluster.local:8002`
 5. Proxy `/airflow/*` to `airflow-api-server.airflow.svc.cluster.local:8080`
-6. Proxy `/mailhog/*` to `mailhog.infra-advisor.svc.cluster.local:8025`
+6. Proxy `/mailpit/*` to `mailpit.infra-advisor.svc.cluster.local:8025` (bcrypt basic auth via `MP_UI_AUTH`)
 7. Serve the SPA for all unknown paths (`try_files $uri $uri/ /index.html`)
 
 Static assets (`/assets/`) are cached with `Cache-Control: public, immutable` and a 1-year `Expires` header.

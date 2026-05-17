@@ -21,7 +21,7 @@ Phase 2: Kubernetes Workloads
     ├── check-env (preflight — validates .env vars)
     ├── Namespaces
     ├── Strimzi CRDs + Kafka cluster + topics
-    ├── Redis, PostgreSQL, MailHog
+    ├── Redis, PostgreSQL, Mailpit
     ├── Datadog Agent (DatadogAgent CR)
     ├── mcp-server, agent-api, auth-api, ui
     ├── load-generator CronJob

@@ -59,6 +59,6 @@ A **Kubernetes CronJob** (every 5 minutes) that samples from three YAML query co
 - [MCP Server (.NET)](/infra-advisor-ai/services/mcp-server-dotnet/) — .NET port: tool coverage, OTel wiring, Scriban templates
 - [Agent API](/infra-advisor-ai/services/agent-api/) — Python: multi-agent design, endpoints, session memory, conversation history, LLM Obs span tree
 - [Agent API (.NET)](/infra-advisor-ai/services/agent-api-dotnet/) — .NET port: OTel tracing, Npgsql conversation persistence, endpoint reference
-- [Auth API](/infra-advisor-ai/services/auth-api/) — Registration, JWT, password reset flow, DB schema, MailHog
+- [Auth API](/infra-advisor-ai/services/auth-api/) — Registration, JWT, password reset flow, DB schema, Mailpit
 - [Load Generator](/infra-advisor-ai/services/load-generator/) — Corpus structure, Kafka message format, observability
 - [UI](/infra-advisor-ai/services/ui/) — Backend switcher, conversation sidebar, model persistence, RUM, nginx proxy
