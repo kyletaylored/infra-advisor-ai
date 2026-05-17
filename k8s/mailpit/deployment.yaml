@@ -47,11 +47,12 @@ spec:
             limits:
               memory: 256Mi
               cpu: 200m
-          # Probes hit /api/v1/info under the configured webroot. Mailpit
-          # exempts /api/v1/info from MP_UI_AUTH so probes don't need creds.
+          # /livez and /readyz are Mailpit's dedicated probe endpoints and
+          # are always exempt from MP_UI_AUTH. They sit at the server root
+          # regardless of MP_WEBROOT — do NOT prefix with /mailpit/ here.
           livenessProbe:
             httpGet:
-              path: /mailpit/api/v1/info
+              path: /livez
               port: http
             initialDelaySeconds: 5
             periodSeconds: 15
@@ -59,7 +60,7 @@ spec:
             failureThreshold: 3
           readinessProbe:
             httpGet:
-              path: /mailpit/api/v1/info
+              path: /readyz
               port: http
             initialDelaySeconds: 3
             periodSeconds: 10
