@@ -1,3 +1,4 @@
+using InfraAdvisor.AgentApi.Observability;
 using Npgsql;
 
 namespace InfraAdvisor.AgentApi.Services;
@@ -77,7 +78,7 @@ public sealed class ConversationService
         {
             await using var conn = await _ds.OpenConnectionAsync();
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = """
+            cmd.CommandText = DbmSqlComment.Wrap("""
                 CREATE TABLE IF NOT EXISTS conversations (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                     user_id TEXT NOT NULL,
@@ -99,7 +100,7 @@ public sealed class ConversationService
                 );
                 CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
                 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
-                """;
+                """);
             await cmd.ExecuteNonQueryAsync();
             _log.LogInformation("Conversation DB schema ready");
         }
@@ -116,11 +117,11 @@ public sealed class ConversationService
         if (_ds is null) return null;
         await using var conn = await _ds.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        cmd.CommandText = DbmSqlComment.Wrap("""
             INSERT INTO conversations (user_id, title, model, backend)
             VALUES ($1, $2, $3, $4)
             RETURNING id, user_id, title, model, backend, created_at, updated_at
-            """;
+            """);
         cmd.Parameters.AddWithValue(userId);
         cmd.Parameters.AddWithValue(title);
         cmd.Parameters.AddWithValue(model is null ? DBNull.Value : (object)model);
@@ -144,7 +145,7 @@ public sealed class ConversationService
         if (_ds is null) return [];
         await using var conn = await _ds.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = """
+        cmd.CommandText = DbmSqlComment.Wrap("""
             SELECT c.id, c.user_id, c.title, c.model, c.backend, c.created_at, c.updated_at,
                    COUNT(m.id) AS message_count
             FROM conversations c
@@ -152,7 +153,7 @@ public sealed class ConversationService
             WHERE c.user_id = $1
             GROUP BY c.id
             ORDER BY c.updated_at DESC
-            """;
+            """);
         cmd.Parameters.AddWithValue(userId);
         var results = new List<ConversationSummary>();
         await using var reader = await cmd.ExecuteReaderAsync();
@@ -180,14 +181,14 @@ public sealed class ConversationService
         ConversationSummary? summary = null;
         await using (var cmd = conn.CreateCommand())
         {
-            cmd.CommandText = """
+            cmd.CommandText = DbmSqlComment.Wrap("""
                 SELECT c.id, c.user_id, c.title, c.model, c.backend, c.created_at, c.updated_at,
                        COUNT(m.id) AS message_count
                 FROM conversations c
                 LEFT JOIN messages m ON m.conversation_id = c.id
                 WHERE c.id = $1 AND c.user_id = $2
                 GROUP BY c.id
-                """;
+                """);
             cmd.Parameters.AddWithValue(Guid.Parse(convId));
             cmd.Parameters.AddWithValue(userId);
             await using var reader = await cmd.ExecuteReaderAsync();
@@ -207,12 +208,12 @@ public sealed class ConversationService
         var messages = new List<StoredMessage>();
         await using (var cmd = conn.CreateCommand())
         {
-            cmd.CommandText = """
+            cmd.CommandText = DbmSqlComment.Wrap("""
                 SELECT id, conversation_id, role, content, sources, trace_id, span_id, created_at
                 FROM messages
                 WHERE conversation_id = $1
                 ORDER BY created_at ASC
-                """;
+                """);
             cmd.Parameters.AddWithValue(Guid.Parse(convId));
             await using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
@@ -250,7 +251,7 @@ public sealed class ConversationService
         if (_ds is null) return false;
         await using var conn = await _ds.OpenConnectionAsync();
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "DELETE FROM conversations WHERE id = $1 AND user_id = $2";
+        cmd.CommandText = DbmSqlComment.Wrap("DELETE FROM conversations WHERE id = $1 AND user_id = $2");
         cmd.Parameters.AddWithValue(Guid.Parse(convId));
         cmd.Parameters.AddWithValue(userId);
         return await cmd.ExecuteNonQueryAsync() > 0;
@@ -271,14 +272,14 @@ public sealed class ConversationService
             // CreateBatchCommand() creates but does NOT add to BatchCommands — use explicit Add().
             await using var batch = conn.CreateBatch();
 
-            var insertUser = new NpgsqlBatchCommand(
-                "INSERT INTO messages (conversation_id, role, content, sources) VALUES ($1, 'user', $2, '[]'::jsonb)");
+            var insertUser = new NpgsqlBatchCommand(DbmSqlComment.Wrap(
+                "INSERT INTO messages (conversation_id, role, content, sources) VALUES ($1, 'user', $2, '[]'::jsonb)"));
             insertUser.Parameters.AddWithValue(convGuid);
             insertUser.Parameters.AddWithValue(userQuery);
             batch.BatchCommands.Add(insertUser);
 
-            var insertAssistant = new NpgsqlBatchCommand(
-                "INSERT INTO messages (conversation_id, role, content, sources, trace_id, span_id) VALUES ($1, 'assistant', $2, $3::jsonb, $4, $5)");
+            var insertAssistant = new NpgsqlBatchCommand(DbmSqlComment.Wrap(
+                "INSERT INTO messages (conversation_id, role, content, sources, trace_id, span_id) VALUES ($1, 'assistant', $2, $3::jsonb, $4, $5)"));
             insertAssistant.Parameters.AddWithValue(convGuid);
             insertAssistant.Parameters.AddWithValue(aiAnswer);
             insertAssistant.Parameters.AddWithValue(sourcesJson);
@@ -286,7 +287,7 @@ public sealed class ConversationService
             insertAssistant.Parameters.AddWithValue(spanId is null ? DBNull.Value : (object)spanId);
             batch.BatchCommands.Add(insertAssistant);
 
-            var updateConv = new NpgsqlBatchCommand("UPDATE conversations SET updated_at = NOW() WHERE id = $1");
+            var updateConv = new NpgsqlBatchCommand(DbmSqlComment.Wrap("UPDATE conversations SET updated_at = NOW() WHERE id = $1"));
             updateConv.Parameters.AddWithValue(convGuid);
             batch.BatchCommands.Add(updateConv);
 
