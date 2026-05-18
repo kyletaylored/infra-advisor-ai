@@ -64,19 +64,21 @@
 
   [~] Live-deployment verification (operator actions required):
       (a) Apply commit 1eb1274's manifest + secret one-time setup:
-            kubectl apply -f k8s/mailpit/
             make create-mailpit-secret    (needs MAILPIT_UI_USERNAME
                                            + MAILPIT_UI_PASSWORD in .env)
-          (a) is DONE per operator output: secret + configmap + svc
-          + deploy all created; old mailhog deployment + svc removed.
-      (b) Apply commit 3f6fcb9's deployment update (TCP probes) —
-          currently still NOT APPLIED. Operator must run:
-            git pull
-            kubectl apply -f k8s/mailpit/deployment.yaml
-            kubectl rollout status deploy/mailpit -n infra-advisor
-          Without this, mailpit-6595dd9857-* keeps cycling in
-          CrashLoopBackOff because the /livez HTTP probe from c636f70
-          fails (Mailpit gates it behind MP_UI_AUTH in v1.21).
+            kubectl apply -f k8s/mailpit/
+          DONE per operator output: secret + configmap + svc + deploy
+          all created; old mailhog deployment + svc removed.
+      (b) Apply commit 3f6fcb9's deployment update (TCP probes). The
+          c636f70 attempt with HTTP /livez probes returned 404 in
+          v1.21 — endpoint doesn't exist, regardless of what the docs
+          claim. TCP probes bypass Mailpit's HTTP layer entirely.
+          One command does apply + force-delete stuck pods + verify
+          the new probe + verify endpoint:
+            make redeploy-mailpit
+          (Bails with a non-zero exit code if the apply doesn't take
+          effect or if the new pod doesn't become Ready, so silent
+          stuck-rollouts can't recur.)
       (c) After (b), kubectl get endpoints mailpit shows an IP and
           https://infra-advisor-ai.kyletaylor.dev/mailpit/ serves the
           basic-auth prompt.

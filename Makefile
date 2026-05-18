@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret create-secrets setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector help
+.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret create-secrets redeploy-mailpit setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector help
 
 # Load .env if present (for local dev)
 -include .env
@@ -202,6 +202,35 @@ create-mailpit-secret: ## Create mailpit-secret with bcrypt-hashed MP_UI_AUTH fo
 	@echo "✓ mailpit-secret created (user: $(MAILPIT_UI_USERNAME))"
 
 create-secrets: create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-airflow-secret create-mailpit-secret ## Create all application K8s secrets
+
+redeploy-mailpit: ## Apply the Mailpit manifest, evict stuck pods from older ReplicaSets, wait for rollout, verify probe + endpoint
+	@echo "→ Applying k8s/mailpit/deployment.yaml + service.yaml + configmap.yaml..."
+	kubectl apply -f k8s/mailpit/
+	@echo "→ Force-deleting any pods from older ReplicaSets so the new RS can roll fresh..."
+	@# --force --grace-period=0 because stuck CrashLoopBackOff pods otherwise
+	@# block the rollout when terminationGracePeriodSeconds is the default 30s
+	@# and the kubelet is still bouncing them.
+	kubectl delete pod -n $(NAMESPACE) -l app=mailpit --force --grace-period=0 2>/dev/null || true
+	@echo "→ Waiting for rollout to reach Ready..."
+	kubectl rollout status deploy/mailpit -n $(NAMESPACE) --timeout=2m
+	@echo "→ Verifying the live readiness probe is tcpSocket (not httpGet)..."
+	@PROBE=$$(kubectl get deploy mailpit -n $(NAMESPACE) -o jsonpath='{.spec.template.spec.containers[0].readinessProbe}'); \
+	if echo "$$PROBE" | grep -q tcpSocket; then \
+		echo "  ✓ readiness probe is tcpSocket"; \
+	else \
+		echo "  ✗ readiness probe is NOT tcpSocket — apply did not take effect"; \
+		echo "    spec: $$PROBE"; \
+		exit 1; \
+	fi
+	@echo "→ Verifying the Service has a healthy endpoint..."
+	@EP=$$(kubectl get endpoints mailpit -n $(NAMESPACE) -o jsonpath='{.subsets[*].addresses[*].ip}'); \
+	if [ -n "$$EP" ]; then \
+		echo "  ✓ mailpit endpoint(s): $$EP"; \
+	else \
+		echo "  ✗ mailpit endpoint is empty — pod still not Ready"; \
+		exit 1; \
+	fi
+	@echo "✓ Mailpit redeployed. Open https://infra-advisor-ai.kyletaylor.dev/mailpit/ (basic auth: $(MAILPIT_UI_USERNAME))"
 
 setup-postgres-dbm: ## Create Datadog monitoring user + grants in Postgres (run once after deploy; requires authuser superuser)
 	@if [ -z "$(DD_POSTGRES_PASSWORD)" ]; then echo "ERROR: DD_POSTGRES_PASSWORD is not set"; exit 1; fi
