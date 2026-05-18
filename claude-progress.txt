@@ -148,6 +148,22 @@
               reachable through the nginx ingress (confirmed via
               forgot-password flow).
 
+[2026-05-18] Security hardening — MEDIUM + LOW findings (commit e2980e5)
+
+  Follow-up round closing the deferred MEDIUM findings from 2026-05-16 audit.
+  M3 (Redis password): redis-secret + requirepass, health probes updated,
+  DD autodiscovery uses %%env_DD_REDIS_PASSWORD%%, agent-api + agent-api-dotnet
+  read REDIS_PASSWORD from redis-secret.
+  M1 (securityContext): Python Dockerfiles add appuser UID 1000 + USER;
+  dotnet Dockerfiles add USER app; all K8s deployments get allowPrivilegeEscalation:
+  false; app containers get runAsNonRoot + drop ALL capabilities.
+  M2 (NetworkPolicy): postgres + redis restricted to named app pods + datadog ns.
+  M4 (CI recon): build-push.yml RG/cluster names → ${{ vars.AZURE_RG }} /
+  ${{ vars.AKS_CLUSTER_NAME }} GitHub Actions variables.
+  LOW: ALLOWED_DOMAIN env var in auth-api.
+  Operator: make create-redis-secret (REDIS_PASSWORD) + set GitHub Actions vars.
+  [~] Remaining: M5 (Airflow env scope), Cloudflare Access /airflow, key rotation.
+
 [2026-05-16] Security hardening — close CRITICAL + HIGH from public-repo audit
 
   Read-only audit by general-purpose subagent (.claude/agents/security-
