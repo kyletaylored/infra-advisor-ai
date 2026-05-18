@@ -39,6 +39,11 @@ spec:
                 name: mcp-server-dotnet-config
             - secretRef:
                 name: mcp-server-dotnet-secret
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           livenessProbe:
             httpGet:
               path: /health

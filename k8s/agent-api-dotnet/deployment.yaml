@@ -40,11 +40,22 @@ spec:
           ports:
             - containerPort: 8001
               name: http
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: REDIS_PASSWORD
           envFrom:
             - configMapRef:
                 name: agent-api-dotnet-config
             - secretRef:
                 name: agent-api-dotnet-secret
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           livenessProbe:
             httpGet:
               path: /health

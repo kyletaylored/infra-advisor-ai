@@ -1,4 +1,4 @@
-.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret create-secrets redeploy-mailpit setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector help
+.PHONY: deploy-infra deploy-k8s check-env create-ghcr-secret create-airflow-secret create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-redis-secret create-auth-api-secret create-dd-postgres-secret create-mailpit-secret create-secrets redeploy-mailpit setup-postgres-dbm run-dags apply-datadog-agent install-airflow upgrade-airflow sync-dags otel-poc run-otel-poc build-otel-poc otel-maf-poc run-otel-maf-poc build-otel-maf-poc start-otel-collector stop-otel-collector logs-otel-collector help
 
 # Load .env if present (for local dev)
 -include .env
@@ -152,6 +152,14 @@ create-load-generator-secret: ## Create load-generator-secret K8s Secret (Datado
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ load-generator-secret created in namespace $(NAMESPACE)"
 
+create-redis-secret: ## Create redis-secret K8s Secret (REDIS_PASSWORD)
+	@if [ -z "$(REDIS_PASSWORD)" ]; then echo "ERROR: REDIS_PASSWORD is not set — generate with: openssl rand -base64 24"; exit 1; fi
+	kubectl create secret generic redis-secret \
+		--namespace $(NAMESPACE) \
+		--from-literal=REDIS_PASSWORD=$(REDIS_PASSWORD) \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@echo "✓ redis-secret created"
+
 create-postgres-secret: ## Create postgres-secret K8s Secret
 	@if [ -z "$(POSTGRES_USER)" ]; then echo "ERROR: POSTGRES_USER is not set"; exit 1; fi
 	@if [ -z "$(POSTGRES_PASSWORD)" ]; then echo "ERROR: POSTGRES_PASSWORD is not set"; exit 1; fi
@@ -201,7 +209,7 @@ create-mailpit-secret: ## Create mailpit-secret with bcrypt-hashed MP_UI_AUTH fo
 		--dry-run=client -o yaml | kubectl apply -f -
 	@echo "✓ mailpit-secret created (user: $(MAILPIT_UI_USERNAME))"
 
-create-secrets: create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-airflow-secret create-mailpit-secret ## Create all application K8s secrets
+create-secrets: create-mcp-server-secret create-mcp-server-dotnet-secret create-agent-api-secret create-agent-api-dotnet-secret create-load-generator-secret create-redis-secret create-postgres-secret create-auth-api-secret create-dd-postgres-secret create-airflow-secret create-mailpit-secret ## Create all application K8s secrets
 
 redeploy-mailpit: ## Apply the Mailpit manifest, evict stuck pods from older ReplicaSets, wait for rollout, verify probe + endpoint
 	@echo "→ Applying k8s/mailpit/deployment.yaml + service.yaml + configmap.yaml..."

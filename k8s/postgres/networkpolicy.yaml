@@ -1,0 +1,38 @@
+---
+# Restrict ingress to postgres: only the three app services that need it
+# (agent-api, agent-api-dotnet, auth-api) plus the Datadog agent for DBM.
+# Any other pod in the cluster (including compromised workloads) is blocked.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-allow-apps
+  namespace: infra-advisor
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    # App services that read/write the database
+    - from:
+        - podSelector:
+            matchLabels:
+              app: agent-api
+        - podSelector:
+            matchLabels:
+              app: agent-api-dotnet
+        - podSelector:
+            matchLabels:
+              app: auth-api
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Datadog agent (cross-namespace) — DBM check and APM correlation
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: datadog
+      ports:
+        - protocol: TCP
+          port: 5432

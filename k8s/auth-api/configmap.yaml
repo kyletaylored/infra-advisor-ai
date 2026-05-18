@@ -21,3 +21,5 @@ data:
   # CORS allow-list. Comma-separated origins. Browser blocks any request from
   # an origin not in this list.
   ALLOWED_ORIGINS: "https://infra-advisor-ai.kyletaylor.dev"
+  # Email domain allowed to register. Change to restrict to a different org.
+  ALLOWED_DOMAIN: "@datadoghq.com"

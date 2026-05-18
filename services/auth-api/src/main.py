@@ -40,7 +40,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-ALLOWED_DOMAIN = "@datadoghq.com"
+ALLOWED_DOMAIN = os.environ.get("ALLOWED_DOMAIN", "@datadoghq.com")
 
 app = FastAPI(title="InfraAdvisor Auth API", version="1.0.0")
 

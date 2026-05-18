@@ -22,4 +22,9 @@ ENV ASPNETCORE_URLS=http://+:8001
 EXPOSE 8001
 
 COPY --from=build /app/publish .
+
+# aspnet base image ships a non-root 'app' user (UID=1654). Use it so
+# K8s securityContext: runAsNonRoot: true passes without a fixed UID.
+USER app
+
 ENTRYPOINT ["dotnet", "InfraAdvisor.AgentApi.dll"]

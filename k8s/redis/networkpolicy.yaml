@@ -1,0 +1,33 @@
+---
+# Restrict ingress to redis: only the two agent-api services that use it
+# for session memory and suggestion pools. Other pods are blocked.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-allow-apps
+  namespace: infra-advisor
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: agent-api
+        - podSelector:
+            matchLabels:
+              app: agent-api-dotnet
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Datadog agent (cross-namespace) — Redis check
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: datadog
+      ports:
+        - protocol: TCP
+          port: 6379

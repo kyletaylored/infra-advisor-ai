@@ -23,7 +23,8 @@ _WINDOW_SIZE = 10  # exchange pairs to retain
 def _redis_client() -> redis.Redis:
     host = os.environ.get("REDIS_HOST", "redis.infra-advisor.svc.cluster.local")
     port = int(os.environ.get("REDIS_PORT", "6379"))
-    return redis.Redis(host=host, port=port, decode_responses=True)
+    password = os.environ.get("REDIS_PASSWORD") or None
+    return redis.Redis(host=host, port=port, password=password, decode_responses=True)
 
 
 get_redis = _redis_client  # public alias for use outside this module

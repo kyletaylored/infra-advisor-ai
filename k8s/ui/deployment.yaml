@@ -31,6 +31,10 @@ spec:
           ports:
             - containerPort: 80
               name: http
+          # nginx master process must run as root to bind port 80.
+          # allowPrivilegeEscalation: false prevents setuid/setgid binary abuse.
+          securityContext:
+            allowPrivilegeEscalation: false
           livenessProbe:
             httpGet:
               path: /

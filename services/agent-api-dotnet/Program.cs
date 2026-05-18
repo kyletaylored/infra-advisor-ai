@@ -57,6 +57,7 @@ var availableModelsRaw = EnvOr("AVAILABLE_MODELS", "gpt-4.1-mini");
 var mcpServerUrl = EnvOr("MCP_SERVER_URL", "http://mcp-server-dotnet.infra-advisor.svc.cluster.local:8000/mcp");
 var redisHost = EnvOr("REDIS_HOST", "redis.infra-advisor.svc.cluster.local");
 var redisPort = int.Parse(EnvOr("REDIS_PORT", "6379"));
+var redisPassword = Environment.GetEnvironmentVariable("REDIS_PASSWORD");
 var kafkaBootstrapServers = EnvOr("KAFKA_BOOTSTRAP_SERVERS", "kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092");
 
 Environment.SetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT", azureDeployment);
@@ -74,6 +75,7 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
     var cfg = new ConfigurationOptions
     {
         EndPoints = { $"{redisHost}:{redisPort}" },
+        Password = redisPassword,
         AbortOnConnectFail = false,
         ConnectTimeout = 5000,
         SyncTimeout = 5000,

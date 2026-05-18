@@ -40,11 +40,23 @@ spec:
               value: "false"
             - name: DD_CODE_ORIGIN_FOR_SPANS_ENABLED
               value: "true"
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-secret
+                  key: REDIS_PASSWORD
           envFrom:
             - configMapRef:
                 name: agent-api-config
             - secretRef:
                 name: agent-api-secret
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           livenessProbe:
             httpGet:
               path: /health

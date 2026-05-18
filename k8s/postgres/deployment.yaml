@@ -138,6 +138,11 @@ spec:
                   key: POSTGRES_DB
             - name: PGDATA
               value: /var/lib/postgresql/data/pgdata
+          # postgres docker-entrypoint.sh starts as root then exec's to the
+          # postgres user (UID 70 in alpine), so runAsNonRoot would reject it.
+          # allowPrivilegeEscalation: false is safe and prevents setuid escalation.
+          securityContext:
+            allowPrivilegeEscalation: false
           livenessProbe:
             exec:
               command: ["pg_isready", "-d", "authdb"]

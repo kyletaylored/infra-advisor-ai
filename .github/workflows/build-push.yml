@@ -200,8 +200,8 @@ jobs:
       - name: Get AKS credentials
         uses: azure/aks-set-context@v5
         with:
-          resource-group: rg-tola-infra-advisor-ai
-          cluster-name: aks-infra-advisor-dev
+          resource-group: ${{ vars.AZURE_RG }}
+          cluster-name: ${{ vars.AKS_CLUSTER_NAME }}
           admin: 'false'
           use-kubelogin: 'true'
 
@@ -278,8 +278,8 @@ jobs:
       - name: Get AKS credentials
         uses: azure/aks-set-context@v5
         with:
-          resource-group: rg-tola-infra-advisor-ai
-          cluster-name: aks-infra-advisor-dev
+          resource-group: ${{ vars.AZURE_RG }}
+          cluster-name: ${{ vars.AKS_CLUSTER_NAME }}
           admin: 'false'
           use-kubelogin: 'true'
 
@@ -335,8 +335,8 @@ jobs:
       - name: Get AKS credentials
         uses: azure/aks-set-context@v5
         with:
-          resource-group: rg-tola-infra-advisor-ai
-          cluster-name: aks-infra-advisor-dev
+          resource-group: ${{ vars.AZURE_RG }}
+          cluster-name: ${{ vars.AKS_CLUSTER_NAME }}
           admin: 'false'
           use-kubelogin: 'true'
 

@@ -22,4 +22,7 @@ ENV ASPNETCORE_URLS=http://+:8000
 EXPOSE 8000
 
 COPY --from=build /app/publish .
+
+USER app
+
 ENTRYPOINT ["dotnet", "InfraAdvisor.McpServer.dll"]

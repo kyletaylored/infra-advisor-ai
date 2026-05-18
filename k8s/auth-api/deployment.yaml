@@ -36,6 +36,12 @@ spec:
                 name: auth-api-config
             - secretRef:
                 name: auth-api-secret
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
           livenessProbe:
             httpGet:
               path: /health
