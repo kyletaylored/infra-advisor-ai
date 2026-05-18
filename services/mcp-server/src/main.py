@@ -74,10 +74,24 @@ async def get_bridge_condition(
     order_by: str = "LOWEST_RATING ASC",
     limit: int = 50,
 ) -> list | dict:
-    """Query the FHWA National Bridge Inventory for bridges matching specified criteria.
+    """FHWA National Bridge Inventory — every US public bridge over 20 ft (~617,000 records).
 
-    state_code must be a 2-digit FIPS numeric code, NOT a 2-letter abbreviation:
-    TX=48, CA=06, FL=12, NY=36, LA=22, OK=40, AZ=04, CO=08, NM=35, AR=05.
+    Returns structure-level condition data: deck / superstructure / substructure ratings
+    (0=failed → 9=excellent), overall BRIDGE_CONDITION (Good/Fair/Poor), LOWEST_RATING
+    (worst of the three), scour-critical flag, ADT, location, year built. _source: 'FHWA NBI'.
+    Coverage: all US states + DC + Puerto Rico. Refreshed annually by FHWA.
+
+    Use when the user asks: structurally deficient bridges in <state/county>; bridges with
+    sufficiency rating under N; high-traffic bridges needing inspection; scour-vulnerable
+    bridges; oldest bridges in an area; bridge condition stats.
+    Do NOT use for: rail bridges (NBI is highway only); culverts under 20 ft span;
+    real-time inspection findings (data is annual); pedestrian-only bridges.
+
+    state_code is a 2-CHARACTER FIPS STATE CODE — note leading zero for single-digit states.
+    Common values: AL=01, AZ=04, AR=05, CA=06, CO=08, FL=12, GA=13, IL=17, LA=22, MS=28,
+    NM=35, NY=36, NC=37, OK=40, TX=48, VA=51, WA=53.
+    county_code is the 3-character FIPS county code within that state (e.g. Harris County TX=201).
+    Returns up to 200 rows sorted by ascending LOWEST_RATING (worst first).
     """
     return await _get_bridge_condition(
         BridgeConditionInput(
@@ -103,7 +117,25 @@ async def get_disaster_history(
     infrastructure_keywords: list[str] | None = None,
     limit: int = 100,
 ) -> list | dict:
-    """Query OpenFEMA for disaster declarations and public assistance data."""
+    """Federal disaster declaration history from OpenFEMA.
+
+    Returns the official FEMA record of major-disaster, emergency, and fire-management
+    declarations: declaration ID, incident type, declared date, affected counties, and
+    program activations. _source: 'OpenFEMA'.
+    Coverage: every US state + territory, 1953 to present. No API key required.
+
+    Use when the user asks: how often does an area get hurricanes / floods / wildfires;
+    what disasters affected the project area in the last N years; which counties have
+    repeat flood declarations; FEMA Public Assistance funding history; multi-hazard
+    exposure assessment for resilience planning.
+    Do NOT use for: real-time / active disasters (this is historical); individual property
+    damage data; FEMA flood-zone maps (different source); state/local emergency declarations
+    not in the federal record.
+
+    incident_types common values: 'Flood', 'Hurricane', 'Severe Storm', 'Tornado', 'Fire',
+    'Earthquake', 'Drought', 'Winter Storm', 'Coastal Storm', 'Tropical Storm'.
+    Returns up to 1000 records sorted by declarationDate descending.
+    """
     return await _get_disaster_history(
         DisasterHistoryInput(
             states=states,
@@ -124,12 +156,21 @@ async def get_energy_infrastructure(
     year_to: int | None = None,
     fuel_types: list[str] | None = None,
 ) -> list | dict:
-    """Query EIA for state-level energy generation and infrastructure data.
+    """EIA state-level electricity generation, capacity, and fuel-mix data.
+
+    _source: 'EIA'. Coverage: all US states, multi-year historical.
+    Use for multi-state or non-Texas energy queries. For Texas-specific real-time grid
+    storage, use get_ercot_energy_storage instead.
 
     data_series must be exactly one of:
-      - "generation" — electricity generated per state/fuel type (default)
-      - "capacity"   — installed generating capacity
-      - "fuel_mix"   — share of generation by fuel type
+      - "generation" — electricity generated per state/fuel type in MWh (default)
+      - "capacity"   — installed generating capacity in MW
+      - "fuel_mix"   — percentage share of generation by fuel type
+
+    Use "fuel_mix" for "renewable share" or "% solar" questions.
+    Use "generation" for raw MWh output questions.
+    Use "capacity" for installed MW questions.
+    fuel_types common values: 'solar', 'wind', 'nuclear', 'natural gas', 'coal', 'hydro'.
     """
     return await _get_energy_infrastructure(
         EnergyInfrastructureInput(
@@ -187,7 +228,20 @@ async def search_project_knowledge(
     domains: list[str] | None = None,
     top_k: int = 6,
 ) -> list | dict:
-    """Hybrid semantic + keyword search against the firm's internal knowledge base."""
+    """Hybrid semantic + keyword search against the firm's internal Azure AI Search knowledge base.
+
+    Searches case studies, prior project SOWs, risk frameworks, document templates, and
+    vetted best practices. _source: 'firm knowledge base'.
+
+    ALWAYS call this BEFORE draft_document — it pulls relevant templates and prior project
+    context that the draft tool needs to produce grounded output.
+    Do NOT use for: live external data (use the domain-specific tools); internet search
+    (use search_web_procurement); current procurement opportunities (use get_procurement_opportunities).
+
+    document_types common values: 'water_plan_project', 'sow', 'risk_summary', 'case_study', 'best_practice'.
+    domains common values: 'water', 'transportation', 'energy', 'environmental', 'business_development'.
+    Returns ranked document chunks with content, document_type, domain, and relevance score.
+    """
     return await _search_project_knowledge(
         ProjectKnowledgeInput(
             query=query,
@@ -271,12 +325,20 @@ async def get_procurement_opportunities(
     opportunity_types: list[str] | None = None,
     limit: int = 20,
 ) -> list | dict:
-    """Search SAM.gov and grants.gov for active federal contract opportunities and grants.
+    """SAM.gov + grants.gov — ACTIVE federal contract opportunities and grants.
 
-    Merges results from both sources sorted by deadline (soonest first).
-    Each result is tagged with _source: "SAM.gov" or "grants.gov".
-    Requires SAMGOV_API_KEY env var (free at api.sam.gov — key includes SAM- prefix).
-    opportunity_types: filter to "contract", "grant", or omit for both.
+    Merges and deduplicates results from both sources sorted by deadline (soonest first).
+    Each result tagged _source: 'SAM.gov' or 'grants.gov'. Requires SAMGOV_API_KEY.
+    Defaults to the last 12 months — NEVER ask the user for a date range.
+
+    BD PAIRING RULE: For business-development queries, always call get_contract_awards FIRST
+    to understand who won similar work, then call this tool to see open opportunities.
+    Do NOT use for: historical awards (use get_contract_awards); state/local RFPs
+    (use search_web_procurement); bond elections (use search_web_procurement).
+
+    opportunity_types: 'contract' | 'grant' | omit for both.
+    naics_codes common AEC values: ['237310'] highway, ['237110'] water/sewer,
+    ['237990'] heavy civil, ['541330'] engineering services, ['541310'] architecture.
     """
     return await _get_procurement_opportunities(
         ProcurementOpportunitiesInput(
@@ -302,10 +364,21 @@ async def get_contract_awards(
     min_award_usd: int | None = None,
     limit: int = 25,
 ) -> list | dict:
-    """Search USASpending.gov for historical federal contract awards.
+    """USASpending.gov — HISTORICAL federal contract awards.
 
-    Returns competitive intelligence: who won similar work, at what price, and for which agencies.
-    Each result tagged _source: "USASpending.gov". No API key required.
+    Who won similar work, at what price, and for which agencies.
+    _source: 'USASpending.gov'. No API key required. Default window: past 2 years.
+
+    Use when the user asks: who won contracts for <work type>; typical award amounts for
+    <NAICS> in <state>; incumbent contractors for <agency>; competitive intel before
+    bidding; spending patterns by NAICS or agency; pricing benchmarks for SOW drafts.
+    BD PAIRING RULE: ALWAYS call this BEFORE get_procurement_opportunities — understanding
+    who won similar work informs positioning for open opportunities.
+    Do NOT use for: active/open solicitations (use get_procurement_opportunities);
+    state/local awards (federal only); contracts under $25K (USASpending threshold).
+
+    naics_codes common AEC values: ['237310'] highway, ['237110'] water/sewer line,
+    ['237990'] other heavy civil (bridges/dams), ['541330'] engineering, ['541310'] architecture.
     date_from / date_to: ISO date strings (default: past 2 years through today).
     """
     return await _get_contract_awards(
@@ -332,11 +405,18 @@ async def search_web_procurement(
 ) -> list | dict:
     """Search government websites for state/local RFPs, bond elections, and budget announcements.
 
-    Uses Brave Search to find .gov and .us procurement pages, then extracts structured
-    data using gpt-4.1-nano. Each result has a confidence field ("high" or "medium").
-    Requires BRAVE_SEARCH_API_KEY env var.
-    sector: "transportation" | "water" | "energy" | "buildings" | "environmental"
-    result_type: "rfp" | "bond" | "budget" | "award" | "any"
+    Uses Azure OpenAI's web_search_preview tool to find and extract structured procurement
+    records from .gov and .us pages in one call. Each result has a confidence field
+    ('high' or 'medium') — always flag medium-confidence results to the user for verification.
+    No separate search API key required (uses AZURE_OPENAI_API_KEY).
+
+    Use for: state/local government RFPs; bond election announcements; municipal budget
+    procurement; opportunities NOT on SAM.gov or grants.gov.
+    Do NOT use for: federal opportunities (use get_procurement_opportunities);
+    historical federal awards (use get_contract_awards).
+
+    sector: 'transportation' | 'water' | 'energy' | 'buildings' | 'environmental'
+    result_type: 'rfp' | 'bond' | 'budget' | 'award' | 'any'
     Returns _partial_results: true if some page fetches timed out.
     """
     return await _search_web_procurement(
@@ -358,7 +438,22 @@ async def draft_document(
     client_name: str | None = None,
     notes: str | None = None,
 ) -> str | dict:
-    """Generate a structured document scaffold (SOW, risk summary, cost estimate, or funding memo)."""
+    """Render a structured consulting deliverable from a template + context dictionary.
+
+    Returns Markdown ready for client review. DETERMINISTIC — no LLM invoked inside the tool.
+    ALWAYS call search_project_knowledge FIRST to pull relevant templates and prior-project
+    context, then pass the retrieved snippets into context here so the draft is grounded.
+
+    document_type must be exactly one of:
+      - 'scope_of_work'           → SOW with scope, deliverables, schedule, exclusions, assumptions
+      - 'risk_summary'            → Top-5 risks ranked by likelihood × impact with mitigation language
+      - 'cost_estimate_scaffold'  → Line-item table with placeholder costs for analyst to fill in
+      - 'funding_positioning_memo'→ Grant/funding pursuit memo with eligibility, match requirements,
+                                    key differentiators
+
+    context: pass data from prior tool calls — e.g. {bridges:[...], contract_awards:[...],
+    best_practices:[...]}. Template fields reference keys in this object.
+    """
     return await _draft_document(
         DraftDocumentInput(
             document_type=document_type,

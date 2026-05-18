@@ -759,13 +759,13 @@
       prefixed to existing prompts, not replacing them
 
   Pending follow-up (lower-priority but valuable):
-  [ ] D. Add 3-4 few-shot worked examples to the agent system prompt
+  [x] D. Add 3-4 few-shot worked examples to the agent system prompt
       ("Q: low-rated TX bridges → call get_bridge_condition(state_code=
       '48', max_lowest_rating=4)") for faster tool-args convergence
-  [ ] E. New IResponseEvaluator that asserts "for question pattern X,
+  [x] E. New IResponseEvaluator that asserts "for question pattern X,
       tool Y must have been called" so we catch routing regressions
       automatically via the existing external-evals pipeline
-  [ ] Python mcp-server tools — same enrichment in src/tools/*.py
+  [x] Python mcp-server tools — same enrichment in src/tools/*.py
       (parallel codebase but currently the default for new conversations
       according to BackendType="python")
 
@@ -1085,7 +1085,7 @@
       (already validated in previous commit)
 
   Pending user action (out of session scope):
-  [ ] Remove TAVILY_API_KEY=... line from .env.example (permission-
+  [~] Remove TAVILY_API_KEY=... line from .env.example (permission-
       blocked from Claude's working dir). One-line manual edit.
 
 [2026-05-15] Replace Tavily with Azure OpenAI Responses + web_search_preview
