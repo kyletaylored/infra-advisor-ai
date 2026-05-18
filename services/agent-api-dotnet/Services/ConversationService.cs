@@ -76,9 +76,8 @@ public sealed class ConversationService
         if (_ds is null) return;
         try
         {
-            await using var conn = await _ds.OpenConnectionAsync();
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = DbmSqlComment.Wrap("""
+            await using var conn = await _ds.OpenDbmConnectionAsync();
+            await using var cmd = conn.CreateCommand("""
                 CREATE TABLE IF NOT EXISTS conversations (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
                     user_id TEXT NOT NULL,
@@ -115,9 +114,8 @@ public sealed class ConversationService
         string? model = null, string backend = "dotnet")
     {
         if (_ds is null) return null;
-        await using var conn = await _ds.OpenConnectionAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = DbmSqlComment.Wrap("""
+        await using var conn = await _ds.OpenDbmConnectionAsync();
+        await using var cmd = conn.CreateCommand("""
             INSERT INTO conversations (user_id, title, model, backend)
             VALUES ($1, $2, $3, $4)
             RETURNING id, user_id, title, model, backend, created_at, updated_at
@@ -143,9 +141,8 @@ public sealed class ConversationService
     public async Task<IReadOnlyList<ConversationSummary>> ListConversationsAsync(string userId)
     {
         if (_ds is null) return [];
-        await using var conn = await _ds.OpenConnectionAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = DbmSqlComment.Wrap("""
+        await using var conn = await _ds.OpenDbmConnectionAsync();
+        await using var cmd = conn.CreateCommand("""
             SELECT c.id, c.user_id, c.title, c.model, c.backend, c.created_at, c.updated_at,
                    COUNT(m.id) AS message_count
             FROM conversations c
@@ -176,19 +173,18 @@ public sealed class ConversationService
     public async Task<ConversationDetail?> GetConversationAsync(string convId, string userId)
     {
         if (_ds is null) return null;
-        await using var conn = await _ds.OpenConnectionAsync();
+        await using var conn = await _ds.OpenDbmConnectionAsync();
 
         ConversationSummary? summary = null;
-        await using (var cmd = conn.CreateCommand())
+        await using (var cmd = conn.CreateCommand("""
+            SELECT c.id, c.user_id, c.title, c.model, c.backend, c.created_at, c.updated_at,
+                   COUNT(m.id) AS message_count
+            FROM conversations c
+            LEFT JOIN messages m ON m.conversation_id = c.id
+            WHERE c.id = $1 AND c.user_id = $2
+            GROUP BY c.id
+            """))
         {
-            cmd.CommandText = DbmSqlComment.Wrap("""
-                SELECT c.id, c.user_id, c.title, c.model, c.backend, c.created_at, c.updated_at,
-                       COUNT(m.id) AS message_count
-                FROM conversations c
-                LEFT JOIN messages m ON m.conversation_id = c.id
-                WHERE c.id = $1 AND c.user_id = $2
-                GROUP BY c.id
-                """);
             cmd.Parameters.AddWithValue(Guid.Parse(convId));
             cmd.Parameters.AddWithValue(userId);
             await using var reader = await cmd.ExecuteReaderAsync();
@@ -206,14 +202,13 @@ public sealed class ConversationService
         }
 
         var messages = new List<StoredMessage>();
-        await using (var cmd = conn.CreateCommand())
+        await using (var cmd = conn.CreateCommand("""
+            SELECT id, conversation_id, role, content, sources, trace_id, span_id, created_at
+            FROM messages
+            WHERE conversation_id = $1
+            ORDER BY created_at ASC
+            """))
         {
-            cmd.CommandText = DbmSqlComment.Wrap("""
-                SELECT id, conversation_id, role, content, sources, trace_id, span_id, created_at
-                FROM messages
-                WHERE conversation_id = $1
-                ORDER BY created_at ASC
-                """);
             cmd.Parameters.AddWithValue(Guid.Parse(convId));
             await using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
@@ -249,9 +244,9 @@ public sealed class ConversationService
     public async Task<bool> DeleteConversationAsync(string convId, string userId)
     {
         if (_ds is null) return false;
-        await using var conn = await _ds.OpenConnectionAsync();
-        await using var cmd = conn.CreateCommand();
-        cmd.CommandText = DbmSqlComment.Wrap("DELETE FROM conversations WHERE id = $1 AND user_id = $2");
+        await using var conn = await _ds.OpenDbmConnectionAsync();
+        await using var cmd = conn.CreateCommand(
+            "DELETE FROM conversations WHERE id = $1 AND user_id = $2");
         cmd.Parameters.AddWithValue(Guid.Parse(convId));
         cmd.Parameters.AddWithValue(userId);
         return await cmd.ExecuteNonQueryAsync() > 0;
@@ -266,20 +261,20 @@ public sealed class ConversationService
         {
             var sourcesJson = System.Text.Json.JsonSerializer.Serialize(sources);
             var convGuid = Guid.Parse(convId);
-            await using var conn = await _ds.OpenConnectionAsync();
+            await using var conn = await _ds.OpenDbmConnectionAsync();
 
             // NpgsqlBatch for multi-statement parameterized queries in Npgsql 9.x.
             // CreateBatchCommand() creates but does NOT add to BatchCommands — use explicit Add().
             await using var batch = conn.CreateBatch();
 
-            var insertUser = new NpgsqlBatchCommand(DbmSqlComment.Wrap(
-                "INSERT INTO messages (conversation_id, role, content, sources) VALUES ($1, 'user', $2, '[]'::jsonb)"));
+            var insertUser = conn.CreateBatchCommand(
+                "INSERT INTO messages (conversation_id, role, content, sources) VALUES ($1, 'user', $2, '[]'::jsonb)");
             insertUser.Parameters.AddWithValue(convGuid);
             insertUser.Parameters.AddWithValue(userQuery);
             batch.BatchCommands.Add(insertUser);
 
-            var insertAssistant = new NpgsqlBatchCommand(DbmSqlComment.Wrap(
-                "INSERT INTO messages (conversation_id, role, content, sources, trace_id, span_id) VALUES ($1, 'assistant', $2, $3::jsonb, $4, $5)"));
+            var insertAssistant = conn.CreateBatchCommand(
+                "INSERT INTO messages (conversation_id, role, content, sources, trace_id, span_id) VALUES ($1, 'assistant', $2, $3::jsonb, $4, $5)");
             insertAssistant.Parameters.AddWithValue(convGuid);
             insertAssistant.Parameters.AddWithValue(aiAnswer);
             insertAssistant.Parameters.AddWithValue(sourcesJson);
@@ -287,7 +282,8 @@ public sealed class ConversationService
             insertAssistant.Parameters.AddWithValue(spanId is null ? DBNull.Value : (object)spanId);
             batch.BatchCommands.Add(insertAssistant);
 
-            var updateConv = new NpgsqlBatchCommand(DbmSqlComment.Wrap("UPDATE conversations SET updated_at = NOW() WHERE id = $1"));
+            var updateConv = conn.CreateBatchCommand(
+                "UPDATE conversations SET updated_at = NOW() WHERE id = $1");
             updateConv.Parameters.AddWithValue(convGuid);
             batch.BatchCommands.Add(updateConv);
 
