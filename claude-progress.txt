@@ -1,3 +1,71 @@
+[2026-05-18] DBM sqlcommenter for .NET + make redeploy-mailpit ops helper
+
+  Two distinct fixes that came out of the same live-verification round:
+
+  Commit 7bcb71f — `make redeploy-mailpit`:
+    The Mailpit rollout from commits 1eb1274/c636f70/3f6fcb9 left two
+    CrashLoopBackOff pods in the cluster blocking the new ReplicaSet
+    from going Ready (terminationGracePeriodSeconds default 30s while
+    the kubelet is still bouncing them). The operator-side recipe to
+    fix it was multiple kubectl commands in the right order, easy to
+    skip or run against the wrong context.
+
+    Makefile gains `redeploy-mailpit` as a single command:
+      1. kubectl apply -f k8s/mailpit/
+      2. kubectl delete pod -l app=mailpit --force --grace-period=0
+      3. kubectl rollout status --timeout=2m
+      4. ASSERT readinessProbe is tcpSocket (fails non-zero if the
+         apply didn't take effect — e.g. wrong kube-context)
+      5. ASSERT endpoint has an IP (fails non-zero if pods still
+         aren't Ready)
+
+  Commit 6fe9e7d — DBM <-> APM service-level correlation (.NET):
+    OpenTelemetry's Npgsql instrumentation does NOT inject the
+    Datadog-specific sqlcommenter tags (dddbs/dde/ddps/ddpv) that
+    DBM's "Calling Services" panel parses. Pure-OTel apps get
+    statement-level (hash-based) correlation but not service-level.
+    The Python services already inject these via ddtrace with
+    DD_DBM_PROPAGATION_MODE=full; .NET needed a manual implementation.
+
+    services/agent-api-dotnet/Observability/DbmSqlComment.cs   [NEW]
+      Reads DD_SERVICE / DD_ENV / DD_VERSION once at startup, builds
+      the static prefix once, appends W3C traceparent per-call from
+      Activity.Current (omitted when null, e.g. background DDL).
+      Format:
+        /*dddbs='svc',dde='env',ddps='svc',ddpv='ver',
+          traceparent='00-<traceid>-<spanid>-<flags>'*/ SELECT ...
+
+    services/agent-api-dotnet/Services/ConversationService.cs
+      All 6 cmd.CommandText assignments and all 3 NpgsqlBatchCommand
+      constructors wrapped with DbmSqlComment.Wrap(...). No call-site
+      signature changes — string-in-string-out.
+
+    Reference: https://docs.datadoghq.com/database_monitoring/connect_dbm_and_apm/?tab=otel
+
+  Verified:
+  [x] dotnet build agent-api-dotnet: 0 warnings, 0 errors
+  [x] All 9 SQL sites in ConversationService.cs are wrapped
+      (grep "DbmSqlComment.Wrap" returns 9 matches)
+  [x] DbmSqlComment.Wrap with Activity.Current == null returns
+      tags-only comment (no traceparent piece) — protects startup DDL
+
+  [~] Live-deployment verification (operator actions required):
+      (a) `make redeploy-mailpit` — CONFIRMED LIVE per operator:
+          "ok that seemed to work. i tested the forgot password
+          feature and could see it in mailpit"
+      (b) Agent-api-dotnet rebuild + rollout for 6fe9e7d:
+            git pull
+            # CI auto-rebuilds agent-api-dotnet on this push and
+            # kubectl set image's the SHA. Wait ~2 min then:
+            kubectl rollout status deploy/agent-api-dotnet -n infra-advisor
+      (c) After (b) and a few /query requests through the .NET
+          backend, DBM "Calling Services" populates with
+          infra-advisor-agent-api-dotnet. Verify by:
+            DD UI -> Database Monitoring -> Database instances ->
+            infra-advisor-postgres -> top-query -> Calling Services
+          Should show BOTH infra-advisor-agent-api (Python, already
+          working via ddtrace) and infra-advisor-agent-api-dotnet.
+
 [2026-05-17] Replace MailHog with Mailpit + subpath-routing convention
 
   MailHog (unmaintained, no UI auth) swapped for axllent/mailpit:v1.21
@@ -62,32 +130,23 @@
       code changed)
   [x] docs site builds 58 pages, 0 errors
 
-  [~] Live-deployment verification (operator actions required):
-      (a) Apply commit 1eb1274's manifest + secret one-time setup:
-            make create-mailpit-secret    (needs MAILPIT_UI_USERNAME
-                                           + MAILPIT_UI_PASSWORD in .env)
-            kubectl apply -f k8s/mailpit/
-          DONE per operator output: secret + configmap + svc + deploy
-          all created; old mailhog deployment + svc removed.
-      (b) Apply commit 3f6fcb9's deployment update (TCP probes). The
-          c636f70 attempt with HTTP /livez probes returned 404 in
-          v1.21 — endpoint doesn't exist, regardless of what the docs
-          claim. TCP probes bypass Mailpit's HTTP layer entirely.
-          One command does apply + force-delete stuck pods + verify
-          the new probe + verify endpoint:
-            make redeploy-mailpit
-          (Bails with a non-zero exit code if the apply doesn't take
-          effect or if the new pod doesn't become Ready, so silent
-          stuck-rollouts can't recur.)
-      (c) After (b), kubectl get endpoints mailpit shows an IP and
-          https://infra-advisor-ai.kyletaylor.dev/mailpit/ serves the
-          basic-auth prompt.
-      (d) Cloudflare Access policy in front of /mailpit/* — inbox
-          holds password-reset tokens, so basic auth alone is not
-          sufficient.
-      (e) UI image rebuild already triggered by CI when 1eb1274
-          landed on main; if /mailpit/ still 404s after (b), force
-          with: kubectl rollout restart deploy/ui -n infra-advisor.
+  Live-deployment verification:
+      [x] (a) Manifest + secret applied (operator confirmed: secret +
+              configmap + svc + deploy created; old mailhog removed).
+      [x] (b) TCP-probe spec rolled out via `make redeploy-mailpit`
+              (CONFIRMED LIVE: operator ran the helper and verified
+              end-to-end that the forgot-password email reaches the
+              Mailpit inbox UI).
+      [x] (c) /mailpit/ serves the basic-auth prompt and the inbox
+              displays auth-api password-reset emails — confirmed by
+              operator going through the full reset flow.
+      [~] (d) Cloudflare Access policy in front of /mailpit/* — NOT
+              YET CONFIGURED. Basic auth gates it today; Cloudflare
+              Access is the real defense-in-depth layer recommended
+              for the inbox path (password-reset tokens).
+      [x] (e) UI image rebuild already shipped via CI; /mailpit/ is
+              reachable through the nginx ingress (confirmed via
+              forgot-password flow).
 
 [2026-05-16] Security hardening — close CRITICAL + HIGH from public-repo audit
 
