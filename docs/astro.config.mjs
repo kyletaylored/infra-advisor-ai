@@ -17,6 +17,9 @@ export default defineConfig({
         },
         favicon: '/favicon.svg',
         customCss: ['./src/styles/brand.css'],
+        components: {
+            Head: './src/components/Head.astro',
+        },
         social: [
             {
                 icon: 'github',
@@ -48,18 +51,41 @@ export default defineConfig({
             { tag: 'meta', attrs: { name: 'twitter:image', content: 'https://kyletaylored.github.io/infra-advisor-ai/og-image.png' } },
 
             {
-                // Scroll the sidebar so the active item is visible on load and
-                // after client-side navigation. scrollIntoView({ block:'nearest' })
-                // scrolls only the nearest overflow:auto ancestor (.container-sidebar),
-                // leaving the main page scroll position untouched.
+                // Sidebar scroll behaviour with ClientRouter (SPA navigation):
+                //
+                // Problem: ClientRouter replaces the full DOM on each navigation,
+                // resetting the sidebar's scrollTop to 0. The old scrollSidebarToActive()
+                // then scrolled from 0 → active item on every click, which felt jarring.
+                //
+                // Fix: save scrollTop on astro:before-swap (old DOM still intact),
+                // restore it on astro:after-swap (new DOM in place, before paint),
+                // then call scrollIntoView({ block:'nearest' }) which only moves the
+                // sidebar the minimum amount to reveal the active item — or not at all
+                // if it's already visible. On the very first load (DOMContentLoaded)
+                // there's no saved position so we just reveal the active item directly.
                 tag: 'script',
                 content: `
-                    function scrollSidebarToActive() {
-                        const a = document.querySelector('.container-sidebar a[aria-current="page"]');
-                        if (a) a.scrollIntoView({ block: 'center', behavior: 'smooth' });
-                    }
-                    document.addEventListener('DOMContentLoaded', scrollSidebarToActive);
-                    document.addEventListener('astro:page-load', scrollSidebarToActive);
+                    (function () {
+                        let savedTop = 0;
+
+                        document.addEventListener('astro:before-swap', () => {
+                            const c = document.querySelector('.container-sidebar');
+                            if (c) savedTop = c.scrollTop;
+                        });
+
+                        document.addEventListener('astro:after-swap', () => {
+                            const c = document.querySelector('.container-sidebar');
+                            if (!c) return;
+                            c.scrollTop = savedTop;
+                            const a = c.querySelector('a[aria-current="page"]');
+                            if (a) a.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+                        });
+
+                        document.addEventListener('DOMContentLoaded', () => {
+                            const a = document.querySelector('.container-sidebar a[aria-current="page"]');
+                            if (a) a.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+                        });
+                    })();
                 `,
             },
             {
