@@ -24,3 +24,33 @@
     height: 1.5rem;
     width: auto;
 }
+
+/* ─── Sidebar visual hierarchy ───────────────────────────────────────────────
+   The lucode SidebarSublist component is recursive: every nesting level uses
+   the same .entry-title / .entry-link-inner classes. These rules use selector
+   specificity (0,3,0) to beat the component's scoped styles (0,2,0) and add
+   indentation + a vertical accent line for sub-groups (e.g. Instrumentation,
+   Monitoring, Evaluations inside LLM Engineering Guide). */
+
+/* Sub-group label: indent and accent line */
+.container-group-link > .container-sidebar-entry > .entry-title {
+    padding-left: 1rem;
+    padding-top: 0.5rem;
+    font-size: 0.8rem;
+    border-left: 2px solid color-mix(in srgb, #1d4ed8 50%, transparent);
+    border-top: 2px solid color-mix(in srgb, #1d4ed8 50%, transparent);
+    border-radius: 0;
+    margin-left: 0.375rem;
+    margin-top: 0.125rem;
+}
+
+/* Items inside sub-groups: indent to visually align under their section label */
+.container-group-link .container-group-link > .entry-link > .entry-link-inner {
+    /* padding-left: 1.25rem; */
+    margin-left: 1rem;
+    font-size: 0.7rem;
+}
+
+.container-group-link .entry-link-inner {
+    width: 100%;
+}
