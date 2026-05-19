@@ -48,6 +48,21 @@ export default defineConfig({
             { tag: 'meta', attrs: { name: 'twitter:image', content: 'https://kyletaylored.github.io/infra-advisor-ai/og-image.png' } },
 
             {
+                // Scroll the sidebar so the active item is visible on load and
+                // after client-side navigation. scrollIntoView({ block:'nearest' })
+                // scrolls only the nearest overflow:auto ancestor (.container-sidebar),
+                // leaving the main page scroll position untouched.
+                tag: 'script',
+                content: `
+                    function scrollSidebarToActive() {
+                        const a = document.querySelector('.container-sidebar a[aria-current="page"]');
+                        if (a) a.scrollIntoView({ block: 'center', behavior: 'smooth' });
+                    }
+                    document.addEventListener('DOMContentLoaded', scrollSidebarToActive);
+                    document.addEventListener('astro:page-load', scrollSidebarToActive);
+                `,
+            },
+            {
                 // Mermaid v11 ESM — CDN, renders .mermaid blocks client-side.
                 // Reads Starlight's localStorage theme key to match dark/light mode.
                 // Hooks into astro:page-load to re-render after client-side navigation.
