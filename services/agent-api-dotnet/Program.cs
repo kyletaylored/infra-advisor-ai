@@ -107,10 +107,17 @@ builder.Services.AddSingleton(_ => new AzureOpenAIClient(
 // uses as a cache key. AgentService catches session-expired exceptions
 // and calls RefreshAsync — first request after an mcp-server restart
 // pays one extra round trip; everything after is normal.
+// Register the named HttpClient used by McpClientHolder so OTel's
+// AddHttpClientInstrumentation() handler is in the pipeline (spans appear as
+// HTTP child spans under each tool_call in Datadog APM).
+builder.Services.AddHttpClient("mcp-dotnet");
+
 builder.Services.AddSingleton(sp => new McpClientHolder(
     serverUrl: mcpServerUrl,
     clientName: "infra-advisor-agent-api-dotnet",
-    logger: sp.GetRequiredService<ILogger<McpClientHolder>>()));
+    logger: sp.GetRequiredService<ILogger<McpClientHolder>>(),
+    httpClientFactory: sp.GetRequiredService<IHttpClientFactory>(),
+    loggerFactory: sp.GetRequiredService<ILoggerFactory>()));
 
 // ── IChatClient pipeline (M.E.AI) ─────────────────────────────────────────────
 // .UseFunctionInvocation() runs the tool-call loop and emits execute_tool spans.
@@ -250,7 +257,13 @@ ActivitySource.AddActivityListener(new ActivityListener
     ActivityStarted = activity =>
     {
         if (activity.OperationName is "invoke_agent" or "chat")
+        {
             activity.SetTag("_dd.ml_obs.prompt_tracking", promptTrackingJson);
+            // Propagate session.id from baggage so Datadog LLMObs can group
+            // traces by session (equivalent of Python LLMObs.annotate()).
+            var sid = activity.GetBaggageItem("session.id");
+            if (sid is not null) activity.SetTag("session.id", sid);
+        }
         if (activity.OperationName == "invoke_agent")
             AgentSpanContext.Capture(activity);
     },
@@ -435,6 +448,10 @@ app.MapPost("/query", async (
         var agentSessionKey = !string.IsNullOrWhiteSpace(conversationId)
             ? conversationId
             : sessionId;
+        // Propagate session.id into OTel baggage so the ActivityStarted hook can
+        // stamp it on every invoke_agent/chat span — Datadog LLMObs groups traces
+        // by this tag (equivalent of Python LLMObs.annotate(session_id=...)).
+        Activity.Current?.AddBaggage("session.id", agentSessionKey);
         result = await agentService.RunAgentAsync(
             query: body.Query,
             sessionId: agentSessionKey,
@@ -511,6 +528,7 @@ app.MapPost("/query/stream", async (
     var agentSessionKey = !string.IsNullOrWhiteSpace(conversationId)
         ? conversationId
         : sessionId;
+    Activity.Current?.AddBaggage("session.id", agentSessionKey);
 
     httpContext.Response.Headers.ContentType = "text/event-stream";
     httpContext.Response.Headers.CacheControl = "no-cache";

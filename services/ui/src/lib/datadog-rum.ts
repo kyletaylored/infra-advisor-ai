@@ -24,7 +24,7 @@ export function initDatadogRum(): void {
     defaultPrivacyLevel: "mask-user-input",
     // Trace all same-origin requests so /api/, /auth/, and any future endpoints correlate with APM
     allowedTracingUrls: [
-      { match: window.location.origin, propagatorTypes: ["datadog" as PropagatorType] },
+      (url) => url.includes(window.location.origin),
     ],
   });
 

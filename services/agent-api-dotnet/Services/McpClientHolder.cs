@@ -25,17 +25,26 @@ public class McpClientHolder : IAsyncDisposable
     private readonly string _serverUrl;
     private readonly string _clientName;
     private readonly ILogger<McpClientHolder> _logger;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ILoggerFactory _loggerFactory;
     private readonly SemaphoreSlim _connectLock = new(1, 1);
 
     private McpClient? _client;
     private IList<AITool> _tools = Array.Empty<AITool>();
     private long _generation;  // bumped on every successful (re)connect
 
-    public McpClientHolder(string serverUrl, string clientName, ILogger<McpClientHolder> logger)
+    public McpClientHolder(
+        string serverUrl,
+        string clientName,
+        ILogger<McpClientHolder> logger,
+        IHttpClientFactory httpClientFactory,
+        ILoggerFactory loggerFactory)
     {
         _serverUrl = serverUrl;
         _clientName = clientName;
         _logger = logger;
+        _httpClientFactory = httpClientFactory;
+        _loggerFactory = loggerFactory;
     }
 
     // Generation increments on each successful (re)connect — callers (eg
@@ -91,11 +100,15 @@ public class McpClientHolder : IAsyncDisposable
 
     private async Task ConnectNoLockAsync(CancellationToken ct)
     {
-        var transport = new HttpClientTransport(new HttpClientTransportOptions
-        {
-            Endpoint = new Uri(_serverUrl),
-            Name = _clientName,
-        });
+        // Use an IHttpClientFactory-managed HttpClient so OTel's
+        // AddHttpClientInstrumentation() delegating handler is in the pipeline,
+        // making MCP HTTP calls visible as child spans in Datadog APM.
+        var httpClient = _httpClientFactory.CreateClient("mcp-dotnet");
+        var transport = new HttpClientTransport(
+            new HttpClientTransportOptions { Endpoint = new Uri(_serverUrl), Name = _clientName },
+            httpClient,
+            _loggerFactory,
+            ownsHttpClient: false);
         var client = await McpClient.CreateAsync(transport, cancellationToken: ct);
         var listed = await client.ListToolsAsync(cancellationToken: ct);
         _client = client;
