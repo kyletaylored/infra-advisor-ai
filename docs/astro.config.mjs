@@ -142,6 +142,7 @@ export default defineConfig({
                     { label: 'Auth API', slug: 'services/auth-api' },
                     { label: 'Load Generator', slug: 'services/load-generator' },
                     { label: 'UI', slug: 'services/ui' },
+                    { label: 'MCP Tool Reference', slug: 'services/mcp-tools' },
                 ],
             },
             {
@@ -223,6 +224,7 @@ export default defineConfig({
                     { label: 'Local Setup', slug: 'development/local-setup' },
                     { label: 'Testing', slug: 'development/testing' },
                     { label: 'Conventions', slug: 'development/conventions' },
+                    { label: '.NET ↔ Python Parity', slug: 'development/dotnet-python-parity' },
                 ],
             },
             {

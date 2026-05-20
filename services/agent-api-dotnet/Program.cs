@@ -740,13 +740,13 @@ app.MapDelete("/session/{sessionId}", async (string sessionId, MemoryService mem
 // spoofable. UseAuthentication() above populates HttpContext.User; the
 // RequireAuthorization() suffix below guarantees it's non-null.
 
-static string SubClaim(HttpContext ctx) =>
-    ctx.User?.FindFirst("sub")?.Value
-    ?? throw new InvalidOperationException("JWT sub claim missing — auth middleware misconfigured");
+static string? SubClaim(HttpContext ctx) =>
+    ctx.User?.FindFirst("sub")?.Value;
 
 app.MapPost("/conversations", async (HttpContext httpContext, ConversationService conversationSvc) =>
 {
     var userId = SubClaim(httpContext);
+    if (userId is null) return Results.Unauthorized();
 
     string? title = null, model = null, backend = null;
     try
@@ -758,28 +758,41 @@ app.MapPost("/conversations", async (HttpContext httpContext, ConversationServic
     }
     catch { }
 
-    var conv = await conversationSvc.CreateConversationAsync(
-        userId, title ?? "New Conversation", model, backend ?? "dotnet");
-    return conv is null
-        ? Results.Problem(detail: "Conversation persistence not available", statusCode: 503)
-        : Results.Ok(conv);
+    try
+    {
+        var conv = await conversationSvc.CreateConversationAsync(
+            userId, title ?? "New Conversation", model, backend ?? "dotnet");
+        return conv is null
+            ? Results.Problem(detail: "Conversation persistence not available", statusCode: 503)
+            : Results.Ok(conv);
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem(detail: ex.Message, statusCode: 500);
+    }
 }).RequireAuthorization();
 
 app.MapGet("/conversations", async (HttpContext httpContext, ConversationService conversationSvc) =>
 {
-    var list = await conversationSvc.ListConversationsAsync(SubClaim(httpContext));
+    var userId = SubClaim(httpContext);
+    if (userId is null) return Results.Unauthorized();
+    var list = await conversationSvc.ListConversationsAsync(userId);
     return Results.Ok(list);
 }).RequireAuthorization();
 
 app.MapGet("/conversations/{id}", async (string id, HttpContext httpContext, ConversationService conversationSvc) =>
 {
-    var conv = await conversationSvc.GetConversationAsync(id, SubClaim(httpContext));
+    var userId = SubClaim(httpContext);
+    if (userId is null) return Results.Unauthorized();
+    var conv = await conversationSvc.GetConversationAsync(id, userId);
     return conv is null ? Results.NotFound() : Results.Ok(conv);
 }).RequireAuthorization();
 
 app.MapDelete("/conversations/{id}", async (string id, HttpContext httpContext, ConversationService conversationSvc) =>
 {
-    var deleted = await conversationSvc.DeleteConversationAsync(id, SubClaim(httpContext));
+    var userId = SubClaim(httpContext);
+    if (userId is null) return Results.Unauthorized();
+    var deleted = await conversationSvc.DeleteConversationAsync(id, userId);
     return deleted ? Results.StatusCode(204) : Results.NotFound();
 }).RequireAuthorization();
 
