@@ -315,6 +315,7 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     {
         opts.RequireHttpsMetadata = false;  // TLS handled at the nginx ingress
         opts.SaveToken = false;
+        opts.MapInboundClaims = false;      // keep JWT claim names as-is ("sub" stays "sub")
         opts.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = false,
