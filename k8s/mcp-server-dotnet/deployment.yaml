@@ -22,9 +22,10 @@ spec:
         tags.datadoghq.com/version: latest
       annotations:
         ad.datadoghq.com/mcp-server-dotnet.logs: '[{"source":"csharp","service":"infra-advisor-mcp-server-dotnet"}]'
-        # DD .NET tracer admission injection deliberately omitted (parity with
-        # agent-api-dotnet). Service is pure OpenTelemetry; traces flow via
-        # OTLP to datadog-agent collector, logs correlate via OTel @tr/@sp.
+        # Opt out of namespace-wide DD .NET tracer auto-injection (same reason
+        # as agent-api-dotnet — parallel tracer creates non-OTLP spans that
+        # break span links from the MCP client).
+        admission.datadoghq.com/enabled: "false"
     spec:
       imagePullSecrets:
         - name: ghcr-pull-secret

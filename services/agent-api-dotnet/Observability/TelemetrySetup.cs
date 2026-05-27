@@ -58,12 +58,16 @@ public static class TelemetrySetup
                 }))
             .WithTracing(t => t
                 // Library auto-instrumentations: HTTP server span (trace root),
-                // outbound HTTP client spans (Azure OpenAI REST POST + MCP HTTP),
-                // Npgsql command spans (every SQL query — gives DBM something
-                // to anchor SQL-comment trace propagation against when the
-                // DD .NET tracer's auto-instrumentation runs alongside).
+                // outbound HTTP client spans (Azure OpenAI REST POST only — MCP
+                // calls are filtered out because the MCP SDK's Experimental.
+                // ModelContextProtocol source already emits tool/call spans for
+                // those requests; the redundant HTTP spans create duplicate edges
+                // and inflate span-link counts in the trace graph).
+                // Npgsql command spans (every SQL query).
                 .AddAspNetCoreInstrumentation()
-                .AddHttpClientInstrumentation()
+                .AddHttpClientInstrumentation(opts =>
+                    opts.FilterHttpRequestMessage = req =>
+                        req.RequestUri?.Host?.Contains("mcp-server-dotnet") != true)
                 .AddNpgsql()
 
                 // GenAI span sources.

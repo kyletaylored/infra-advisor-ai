@@ -25,12 +25,14 @@ spec:
         # RenderedCompactJsonFormatter output and correlates with traces via the
         # OTel @tr/@sp fields.
         ad.datadoghq.com/agent-api-dotnet.logs: "[{\"source\":\"csharp\",\"service\":\"infra-advisor-agent-api-dotnet\"}]"
-        # DD .NET tracer admission injection (admission.datadoghq.com/dotnet-lib.version)
-        # is deliberately omitted. This service is 100% OpenTelemetry-instrumented;
-        # the DD tracer ran in parallel and split trace_ids (it reads RUM's legacy
-        # x-datadog-trace-id header while OTel SDK uses W3C traceparent — they
-        # diverged on every request). Removing it unifies the trace tree and
-        # matches the project's stated goal: demonstrate OTel-only LLMObs on .NET.
+        # Opt out of the namespace-wide DD .NET tracer auto-injection
+        # (datadog-agent.yaml apm.instrumentation targets infra-advisor namespace).
+        # Without this, the admission webhook injects DD tracer v3 alongside our
+        # OTel SDK. The two tracers create parallel root spans — DD tracer sends
+        # via its own agent protocol, OTel sends via OTLP — so LLM spans (OTel)
+        # are orphaned from the DD-tracer root and span links point to non-OTLP
+        # spans that Datadog reports as "not ingested or retained".
+        admission.datadoghq.com/enabled: "false"
     spec:
       imagePullSecrets:
         - name: ghcr-pull-secret
