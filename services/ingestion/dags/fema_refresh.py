@@ -24,6 +24,7 @@ with DAG(
     schedule="0 2 * * *",  # daily 02:00 UTC
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
+    is_paused_upon_creation=True,
     tags=["ingestion", "fema", "environmental"],
     doc_md="""
     ## FEMA Refresh DAG

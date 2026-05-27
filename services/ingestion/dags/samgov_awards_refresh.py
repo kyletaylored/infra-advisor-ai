@@ -34,6 +34,7 @@ with DAG(
     schedule="0 6 * * 0",  # weekly Sunday 06:00 UTC
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
+    is_paused_upon_creation=True,
     tags=["ingestion", "business_development", "usaspending"],
     doc_md="""
     ## SAM.gov Awards Refresh DAG

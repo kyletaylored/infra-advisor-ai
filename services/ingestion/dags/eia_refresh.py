@@ -24,6 +24,7 @@ with DAG(
     schedule="0 4 * * 0",  # weekly Sunday 04:00 UTC
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
+    is_paused_upon_creation=True,
     tags=["ingestion", "energy", "eia"],
     doc_md="""
     ## EIA Refresh DAG

@@ -19,6 +19,7 @@ with DAG(
     schedule="0 2 * * 0",  # weekly Sunday 02:00 UTC
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
+    is_paused_upon_creation=True,
     tags=["public-data", "knowledge-base", "weekly"],
     doc_md="""
     ## Public Docs Ingestion DAG

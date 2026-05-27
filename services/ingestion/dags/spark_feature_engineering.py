@@ -38,6 +38,7 @@ with DAG(
     schedule="@daily",
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
+    is_paused_upon_creation=True,
     tags=["feature-engineering", "spark", "transportation"],
     doc_md="""
     ## Spark Feature Engineering DAG

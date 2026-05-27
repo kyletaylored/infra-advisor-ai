@@ -40,6 +40,7 @@ with DAG(
     schedule="0 7 1 * *",  # monthly, 1st of month 07:00 UTC
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
+    is_paused_upon_creation=True,
     tags=["ingestion", "business_development", "census"],
     doc_md="""
     ## Census Market Intelligence Refresh DAG

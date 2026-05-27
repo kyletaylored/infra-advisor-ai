@@ -404,6 +404,7 @@ upgrade-airflow: ## Upgrade Airflow Helm release from k8s/airflow/values.yaml
 	fi
 	@if [ -z "$(AIRFLOW_ADMIN_USERNAME)" ]; then echo "ERROR: AIRFLOW_ADMIN_USERNAME is not set"; exit 1; fi
 	@if [ -z "$(AIRFLOW_ADMIN_PASSWORD)" ]; then echo "ERROR: AIRFLOW_ADMIN_PASSWORD is not set"; exit 1; fi
+	-kubectl delete job airflow-create-user -n airflow --ignore-not-found=true 2>/dev/null
 	helm upgrade airflow apache-airflow/airflow \
 		--namespace airflow \
 		--values k8s/airflow/values.yaml \

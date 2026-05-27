@@ -18,6 +18,7 @@ with DAG(
     schedule=None,  # manual trigger only
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
+    is_paused_upon_creation=True,
     tags=["init", "knowledge-base", "synthetic"],
     doc_md="""
     ## Knowledge Base Init DAG

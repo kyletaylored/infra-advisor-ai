@@ -20,6 +20,12 @@ env:
     value: "https://infra-advisor-ai.kyletaylor.dev/airflow"
   - name: AIRFLOW__WEBSERVER__BASE_URL
     value: "https://infra-advisor-ai.kyletaylor.dev/airflow"
+  - name: AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION
+    value: "true"
+  - name: AIRFLOW__SCHEDULER__SCHEDULER_HEARTBEAT_SEC
+    value: "30"
+  - name: AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL
+    value: "120"
 
 # ── API server (Airflow 3.x) ──────────────────────────────────────────────────
 # Serve the UI at /airflow so it's accessible via the existing nginx reverse proxy.
@@ -168,11 +174,22 @@ scheduler:
       partition: 0
       maxUnavailable: 1
   livenessProbe:
+    # Override the default command so it calls airflow directly instead of
+    # going through /entrypoint, which re-runs pip install on every check and
+    # causes the 60s probe timeout → crash loop (23 restarts observed).
+    command:
+      - sh
+      - -c
+      - airflow jobs check --job-type SchedulerJob --local
     initialDelaySeconds: 120
     timeoutSeconds: 60
     failureThreshold: 20
     periodSeconds: 60
   startupProbe:
+    command:
+      - sh
+      - -c
+      - airflow jobs check --job-type SchedulerJob --local
     failureThreshold: 60
     periodSeconds: 10
     timeoutSeconds: 60

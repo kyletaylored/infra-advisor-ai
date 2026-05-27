@@ -53,6 +53,7 @@ with DAG(
     schedule="0 3 * * 0",  # weekly Sunday 03:00 UTC
     start_date=datetime(2024, 1, 1, tzinfo=timezone.utc),
     catchup=False,
+    is_paused_upon_creation=True,
     tags=["ingestion", "transportation", "nbi"],
     doc_md="""
     ## NBI Refresh DAG
