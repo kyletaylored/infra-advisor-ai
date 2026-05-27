@@ -1,3 +1,71 @@
+[2026-05-27] Airflow scheduler crash loop fix + upgrade reliability + DAG pause controls
+
+  Commit b3b7a63 — Opt out of DD .NET tracer injection + filter duplicate MCP HTTP spans:
+    Both .NET deployments (agent-api-dotnet, mcp-server-dotnet) were missing
+    admission.datadoghq.com/enabled: "false". The Datadog admission webhook was
+    injecting the DD .NET tracer alongside the OTel SDK, creating parallel root
+    spans — DD tracer via its own protocol, OTel via OTLP — which orphaned LLM
+    spans and produced "not ingested or retained" span-link errors in APM.
+
+    TelemetrySetup.cs AddHttpClientInstrumentation now filters requests whose
+    host contains "mcp-server-dotnet". The MCP SDK's Experimental source already
+    emits tool/call spans for those requests; the redundant HttpClient spans
+    created duplicate edges and inflated span-link counts.
+
+    k8s/agent-api-dotnet/deployment.yaml: + admission.datadoghq.com/enabled: "false"
+    k8s/mcp-server-dotnet/deployment.yaml: + admission.datadoghq.com/enabled: "false"
+    services/agent-api-dotnet/Observability/TelemetrySetup.cs:
+      AddHttpClientInstrumentation with FilterHttpRequestMessage predicate.
+
+  Commit c4a8d67 — Fix Airflow scheduler crash loop, upgrade reliability, DAG pause controls:
+    Root cause of scheduler crash loop (23 restarts observed):
+      The liveness and startup probes used `exec /entrypoint airflow jobs check`.
+      The Airflow entrypoint re-runs pip install of _PIP_ADDITIONAL_REQUIREMENTS
+      on every invocation. With 15+ packages, pip takes >60s, exceeding the 60s
+      probe timeout — kubelet kills the container in a tight loop.
+
+    Root cause of make upgrade-airflow always failing:
+      The airflow-create-user Helm post-upgrade hook job is left in the cluster
+      after each upgrade. On the next run Helm tries to re-run it, the admin
+      user already exists, the job exits non-zero, and the upgrade fails with
+      "Job Failed. failed: 1/1".
+
+    k8s/airflow/values.yaml:
+      scheduler.livenessProbe.command: [sh, -c, "airflow jobs check --job-type
+        SchedulerJob --local"] — bypasses /entrypoint, no pip on probe checks.
+      scheduler.startupProbe.command: same override.
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION=true (global env) — all DAGs
+        start with UI toggle off.
+      AIRFLOW__SCHEDULER__SCHEDULER_HEARTBEAT_SEC=30 — 6× less CPU churn.
+      AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL=120 — reparse every 2min.
+
+    Makefile: `kubectl delete job airflow-create-user -n airflow
+      --ignore-not-found=true` added before helm upgrade so the hook job
+      can be re-created cleanly on each upgrade.
+
+    services/ingestion/dags/*.py (all 9 DAGs):
+      is_paused_upon_creation=True added to every DAG() constructor.
+
+  Verified:
+  [x] git log confirms both commits clean: b3b7a63, c4a8d67
+  [x] values.yaml: livenessProbe.command and startupProbe.command overrides present
+  [x] values.yaml: DAGS_ARE_PAUSED_AT_CREATION, HEARTBEAT_SEC, FILE_PROCESS_INTERVAL set
+  [x] Makefile: kubectl delete job airflow-create-user step present before helm upgrade
+  [x] All 9 DAG files: is_paused_upon_creation=True confirmed in each DAG() constructor
+  [x] Both .NET deployments: admission.datadoghq.com/enabled: "false" annotation present
+  [x] TelemetrySetup.cs: FilterHttpRequestMessage predicate excludes mcp-server-dotnet
+
+  [~] Live-deployment verification (run make upgrade-airflow after git push):
+      (a) helm upgrade completes without "Job Failed" error
+      (b) airflow-scheduler-0 reaches Ready=True without further restarts
+          (kubectl get pod airflow-scheduler-0 -n airflow — RESTARTS column
+          should stop incrementing after rollout)
+      (c) Airflow UI → DAGs list: all 9 DAGs show toggle in OFF/paused state
+      (d) Flip one DAG toggle ON → trigger a manual run → verify it executes
+          (scheduler must be stable for tasks to start)
+      (e) DD APM: .NET traces no longer show "span link not retained" errors;
+          LLM spans appear under the correct OTel root span
+
 [2026-05-18] DBM sqlcommenter for .NET + make redeploy-mailpit ops helper
 
   Two distinct fixes that came out of the same live-verification round:
