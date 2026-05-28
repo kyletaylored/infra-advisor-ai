@@ -4109,3 +4109,58 @@
   [x] grep "^import ddtrace" dags/*.py → 0 results
   [x] grep "schedule_interval" dags/*.py → 0 results (only in comments)
   [x] All third-party imports are inside def bodies; top level is stdlib + airflow only
+
+[2026-05-28] Docs: Comprehensive docs site audit and corrections
+  docs/src/content/docs/ — 13 files updated across 9 fix groups:
+
+  DAG count 5 → 9 (8 files):
+  - index.mdx: "5 Airflow pipelines" → "9"; Mermaid node updated
+  - data-pipeline/index.md: "Five" → "Nine"; added 4 missing DAG rows
+    (samgov_awards_refresh, census_market_intelligence_refresh,
+     public_docs_ingestion, spark_feature_engineering)
+  - data-pipeline/knowledge-base-init.md: "other four DAGs" → "other eight"
+  - services/mcp-server.md, deployment/quickstart.md, deployment/index.md,
+    agent-guides/build-test-verify.md: all count references updated
+
+  Planner Agent removed from docs (was deleted from code):
+  - services/agent-api.md: removed planner step from flow diagram + span tree
+  - architecture/data-flow.mdx: removed "Planner LLM" from sequence diagram
+
+  Postgres: StatefulSet → Deployment (k8s/postgres/deployment.yaml is a Deployment):
+  - deployment/kubernetes.md: postgres moved to Deployments table, storage
+    changed to "PVC, ReadWriteOnce, 5Gi, cluster default storage class"
+  - architecture/infrastructure.md: "StatefulSet" → "Deployment"; azurefile-csi removed
+
+  AKS name: aks-infra-advisor → aks-infra-advisor-dev:
+  - agent-guides/build-test-verify.md, agent-guides/project-map.md
+
+  UI port: 3000 → 5173 (Vite dev server default):
+  - agent-guides/build-test-verify.md, agent-guides/project-map.md
+
+  Airflow trigger command: deploy/airflow-scheduler → airflow-scheduler-0:
+  - agent-guides/build-test-verify.md: all kubectl exec lines fixed
+
+  project-map.md structural fixes:
+  - Airflow directory: k8s/airflow/ → services/ingestion/dags/
+  - Azure OpenAI models: removed gpt-5.4-mini (nonexistent), gpt-4.1-nano;
+    corrected to gpt-4.1-mini / gpt-4.1 / text-embedding-3-small
+  - Added agent-api-dotnet (port 8080) and mcp-server-dotnet (port 8001)
+  - Removed APIM (not in stack; nginx is the only public ingress)
+  - Added postgres + mailpit to namespaces/services tables
+
+  draft_document template names fixed in services/mcp-server.md:
+  - statement_of_work → scope_of_work
+  - cost_estimate → cost_estimate_scaffold
+  - funding_memo → funding_positioning_memo
+
+  deployment/kubernetes.md .NET services added to table:
+  - agent-api-dotnet, mcp-server-dotnet, mailpit rows added
+
+  Verified:
+  [x] No remaining "5 DAGs" / "Five DAGs" / "5 Airflow" in docs
+  [x] No remaining "planner" / "Planner Agent" in agent-api.md or data-flow.mdx
+  [x] postgres listed as Deployment (not StatefulSet) in all files
+  [x] AKS name aks-infra-advisor-dev consistent across agent-guides
+  [x] UI port 5173 consistent across agent-guides
+  [x] .NET services present in kubernetes.md deployment table
+  [x] project-map.md models/services/ingress all corrected

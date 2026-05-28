@@ -4,6 +4,10 @@
    the search-result highlight, and the focused tab indicator all pick up
    the brand blue. Everything else uses Starlight's defaults. */
 
+.main {
+    max-width: none !important;
+}
+
 :root {
     /* Dark theme (Starlight default). */
     --sl-color-accent-low: #1e3a8a;

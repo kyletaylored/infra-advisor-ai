@@ -106,7 +106,7 @@ All pods should show `Running` status. The Airflow scheduler may take 3–5 minu
 
 ```bash
 make sync-dags      # copy DAG files to Airflow PVC
-make run-dags       # trigger all 5 DAGs
+make run-dags       # trigger all 9 DAGs
 ```
 
 The `knowledge_base_init` DAG must complete before `search_project_knowledge` returns results. Monitor progress in the Airflow UI:

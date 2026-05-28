@@ -2,13 +2,13 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import lucode from 'lucode-starlight';
-
 import mdx from '@astrojs/mdx';
+import react from '@astrojs/react';
 
 export default defineConfig({
     site: 'https://kyletaylored.github.io',
     base: '/infra-advisor-ai',
-    integrations: [starlight({
+    integrations: [react(), starlight({
         title: 'InfraAdvisor AI',
         description: 'AI-powered infrastructure advisory platform for AEC/O&M consulting firms',
         logo: {

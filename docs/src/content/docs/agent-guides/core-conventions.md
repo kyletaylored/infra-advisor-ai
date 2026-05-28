@@ -18,34 +18,34 @@ description: Detailed coding patterns and structural conventions for AI agent co
 
 ### Python
 
-| Item | Convention | Example |
-|---|---|---|
-| Modules | `snake_case` | `bridge_condition.py` |
-| Classes | `PascalCase` | `BridgeConditionInput` |
-| Functions | `snake_case` | `get_bridge_condition` |
-| Constants | `UPPER_SNAKE_CASE` | `CONDITION_LABELS` |
-| Environment variables | `UPPER_SNAKE_CASE` | `AZURE_OPENAI_ENDPOINT` |
-| Private methods | `_snake_case` prefix | `_build_where_clause` |
-| Async functions | `async def` + `snake_case` | `async def fetch_bridges` |
+| Item                  | Convention                 | Example                   |
+| --------------------- | -------------------------- | ------------------------- |
+| Modules               | `snake_case`               | `bridge_condition.py`     |
+| Classes               | `PascalCase`               | `BridgeConditionInput`    |
+| Functions             | `snake_case`               | `get_bridge_condition`    |
+| Constants             | `UPPER_SNAKE_CASE`         | `CONDITION_LABELS`        |
+| Environment variables | `UPPER_SNAKE_CASE`         | `AZURE_OPENAI_ENDPOINT`   |
+| Private methods       | `_snake_case` prefix       | `_build_where_clause`     |
+| Async functions       | `async def` + `snake_case` | `async def fetch_bridges` |
 
 ### Kubernetes
 
-| Item | Convention | Example |
-|---|---|---|
-| Resource names | `kebab-case` | `mcp-server`, `agent-api` |
-| Label key | `app` | `app: mcp-server` |
-| ConfigMap names | `<service>-config` | `mcp-server-config` |
-| Secret names | `<service>-secret` or descriptive | `ghcr-pull-secret` |
-| Namespace | per service group | `infra-advisor`, `kafka`, `airflow`, `datadog` |
+| Item            | Convention                        | Example                                        |
+| --------------- | --------------------------------- | ---------------------------------------------- |
+| Resource names  | `kebab-case`                      | `mcp-server`, `agent-api`                      |
+| Label key       | `app`                             | `app: mcp-server`                              |
+| ConfigMap names | `<service>-config`                | `mcp-server-config`                            |
+| Secret names    | `<service>-secret` or descriptive | `ghcr-pull-secret`                             |
+| Namespace       | per service group                 | `infra-advisor`, `kafka`, `airflow`, `datadog` |
 
 ### Datadog
 
-| Item | Convention | Example |
-|---|---|---|
-| Custom metric names | `<service>.<category>.<name>` | `mcp.tool.calls` |
-| Metric tags | `key:value` lowercase | `tool:get_bridge_condition`, `status:success` |
-| Service names | `kebab-case` | `infratools-mcp`, `infra-advisor-agent` |
-| Span names | `<component>.<action>` | `agent.run`, `mcp.get_bridge_condition` |
+| Item                | Convention                    | Example                                       |
+| ------------------- | ----------------------------- | --------------------------------------------- |
+| Custom metric names | `<service>.<category>.<name>` | `mcp.tool.calls`                              |
+| Metric tags         | `key:value` lowercase         | `tool:get_bridge_condition`, `status:success` |
+| Service names       | `kebab-case`                  | `infratools-mcp`, `infra-advisor-agent`       |
+| Span names          | `<component>.<action>`        | `agent.run`, `mcp.get_bridge_condition`       |
 
 ## Structural patterns
 
@@ -159,7 +159,7 @@ spec:
         ad.datadoghq.com/<service-name>.logs: '[{"source":"python","service":"<dd-service-name>"}]'
     spec:
       imagePullSecrets:
-        - name: ghcr-pull-secret    # REQUIRED on every deployment
+        - name: ghcr-pull-secret # REQUIRED on every deployment
       containers:
         - name: <service-name>
           image: ghcr.io/kyletaylored/infra-advisor-ai/<service-name>:latest

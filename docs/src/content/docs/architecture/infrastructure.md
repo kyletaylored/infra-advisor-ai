@@ -25,9 +25,8 @@ The 24 GB total RAM supports all workloads with the LocalExecutor Airflow setup.
 
 | Deployment | Model | Version | SKU | Capacity | Use |
 |------------|-------|---------|-----|----------|-----|
-| `gpt-4.1-mini` | gpt-4.1-mini | 2025-04-14 | GlobalStandard | 250K TPM | Agent reasoning, planning, suggestions |
-| `gpt-4.1` | gpt-4.1 | latest | GlobalStandard | 10K TPM | Deep synthesis queries |
-| `gpt-5.4-mini` | gpt-5.4-mini | 2026-03-17 | GlobalStandard | 250K TPM | Future model upgrade |
+| `gpt-4.1-mini` | gpt-4.1-mini | 2025-04-14 | GlobalStandard | 250K TPM | Agent reasoning (router, suggestions, faithfulness eval) |
+| `gpt-4.1` | gpt-4.1 | latest | GlobalStandard | 10K TPM | Specialist deep synthesis queries |
 | `text-embedding-3-small` | text-embedding-3-small | 1 | Standard | 350K TPM | Vector embeddings for AI Search |
 
 Deployments are chained sequentially (each `dependsOn` the previous) to avoid Azure provisioning conflicts.
@@ -89,14 +88,14 @@ Redis runs as a single-pod Kubernetes Deployment in the `infra-advisor` namespac
 | Persistence | None (in-memory only — session loss on restart is acceptable) |
 | Port | 6379 (ClusterIP only) |
 
-### PostgreSQL (Kubernetes StatefulSet)
+### PostgreSQL (Kubernetes Deployment)
 
-Auth API user accounts are stored in a PostgreSQL 16 StatefulSet in the `infra-advisor` namespace. Airflow has its own separate PostgreSQL sidecar (managed by the Helm chart) in the `airflow` namespace.
+Auth API user accounts are stored in a PostgreSQL 16 Deployment in the `infra-advisor` namespace. Airflow has its own separate PostgreSQL sidecar (managed by the Helm chart) in the `airflow` namespace.
 
 | Property | Value |
 |----------|-------|
 | Image | `postgres:16-alpine` |
-| Storage | Azure File Share CSI (azurefile-csi driver) |
+| Storage | PVC, ReadWriteOnce, 5Gi (cluster default storage class) |
 | Port | 5432 (ClusterIP only) |
 
 ## Deploying infrastructure

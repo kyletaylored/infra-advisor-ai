@@ -3,7 +3,7 @@ title: Data Pipeline
 description: Airflow DAGs and data ingestion pipeline for InfraAdvisor AI
 ---
 
-Five Apache Airflow DAGs ingest real US government data on a recurring schedule, store raw records in Azure Blob Storage as Parquet files, and index searchable chunks into Azure AI Search. Together they maintain a continuously updated knowledge base of 600k+ infrastructure records.
+Nine Apache Airflow DAGs ingest real US government data on a recurring schedule, store raw records in Azure Blob Storage as Parquet files, and index searchable chunks into Azure AI Search. Together they maintain a continuously updated knowledge base of 600k+ infrastructure records.
 
 ## How the pipeline works
 
@@ -38,6 +38,10 @@ Task 3: index_to_search()
 | [eia_refresh](/infra-advisor-ai/data-pipeline/eia-refresh/) | Weekly 04:00 UTC | EIA API v2 | State generation/capacity |
 | [twdb_water_plan_refresh](/infra-advisor-ai/data-pipeline/twdb-refresh/) | Monthly 1st 05:00 UTC | TWDB Excel + EPA SDWIS | ~3k projects + ~3.5k water systems |
 | [knowledge_base_init](/infra-advisor-ai/data-pipeline/knowledge-base-init/) | On-demand | LLM synthetic generation | Firm knowledge documents |
+| `samgov_awards_refresh` | Daily | USASpending.gov API | Federal contract awards ≥ $500K from SAM.gov |
+| `census_market_intelligence_refresh` | Weekly | Census Bureau | Census Bureau market intelligence data |
+| `public_docs_ingestion` | On-demand | Public infrastructure documents | Public infrastructure document ingestion into knowledge base |
+| `spark_feature_engineering` | Weekly | Ingested datasets | Spark-based feature engineering across ingested datasets |
 
 ## Azure AI Search index domains
 
@@ -65,7 +69,7 @@ Credentials: admin / admin
 **Sync and run DAGs:**
 ```bash
 make sync-dags    # kubectl cp DAG files to the PVC
-make run-dags     # trigger all 5 DAGs
+make run-dags     # trigger all 9 DAGs
 ```
 
 ## Datadog Data Jobs Monitoring

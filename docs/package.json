@@ -6,12 +6,19 @@
   "scripts": {
     "dev": "astro dev",
     "build": "astro build",
-    "preview": "astro preview"
+    "preview": "astro preview",
+    "fetch-trace": "node scripts/fetch-trace.js"
   },
   "dependencies": {
     "@astrojs/mdx": "^5.0.6",
+    "@astrojs/react": "^5.0.5",
     "@astrojs/starlight": "^0.38.3",
+    "@types/react": "^19.2.15",
+    "@types/react-dom": "^19.2.3",
+    "@xyflow/react": "^12.10.2",
     "astro": "^6.2.2",
-    "lucode-starlight": "^0.1.2"
+    "lucode-starlight": "^0.1.2",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
   }
 }

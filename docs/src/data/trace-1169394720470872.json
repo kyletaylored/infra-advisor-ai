@@ -1,0 +1,241 @@
+{
+  "traceId": "11693947204708720967",
+  "fetchedAt": "2026-05-28T19:52:24.974Z",
+  "spans": [
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "internal",
+      "resource": "classify_domain",
+      "spanID": "8691906530992712584",
+      "parentID": "7108097974137221840",
+      "duration": 89200,
+      "type": "custom"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "http.request",
+      "resource": "POST oai-infra-advisor-dev.openai.azure.com/openai/deployments/text-embedding-3-small/embeddings",
+      "spanID": "17176012225075876433",
+      "parentID": "7108097974137221840",
+      "duration": 251715008,
+      "type": "http"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "redis.command",
+      "resource": "GET",
+      "spanID": "16015912177963888375",
+      "parentID": "7108097974137221840",
+      "duration": 1143700,
+      "type": "redis"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "http.request",
+      "resource": "POST oai-infra-advisor-dev.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions",
+      "spanID": "7979290713824249794",
+      "parentID": "5699657674136150750",
+      "duration": 824839104,
+      "type": "http"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "client.request",
+      "resource": "chat gpt-4.1-mini",
+      "spanID": "5699657674136150750",
+      "parentID": "7108097974137221840",
+      "duration": 1264808960,
+      "type": "http"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "http.request",
+      "resource": "POST mcp-server-dotnet.infra-advisor.svc.cluster.local:8000/mcp",
+      "spanID": "1179571494533297907",
+      "parentID": "7108097974137221840",
+      "duration": 11970300,
+      "type": "http"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "http.request",
+      "resource": "POST oai-infra-advisor-dev.openai.azure.com/openai/deployments/gpt-4.1-mini/chat/completions",
+      "spanID": "12557502206032846113",
+      "parentID": "12115497563819348927",
+      "duration": 589214976,
+      "type": "http"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "client.request",
+      "resource": "chat gpt-4.1-mini",
+      "spanID": "12115497563819348927",
+      "parentID": "7108097974137221840",
+      "duration": 1391583872,
+      "type": "http"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "redis.command",
+      "resource": "SETEX",
+      "spanID": "6992096225436439475",
+      "parentID": "7108097974137221840",
+      "duration": 11578000,
+      "type": "redis"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "redis.command",
+      "resource": "SETEX",
+      "spanID": "241248315377006670",
+      "parentID": "7108097974137221840",
+      "duration": 2460100,
+      "type": "redis"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "postgres.query",
+      "resource": "postgres.query",
+      "spanID": "13113797192024530458",
+      "parentID": "7108097974137221840",
+      "duration": 10549500,
+      "type": "sql"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "aspnet_core.request",
+      "resource": "POST /query/stream",
+      "spanID": "7108097974137221840",
+      "parentID": "2716046440972629095",
+      "duration": 3751733760,
+      "type": "web"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "http.server.request",
+      "resource": "POST /query/stream",
+      "spanID": "202804142047792780",
+      "parentID": "2716046440972629095",
+      "duration": 3751817216,
+      "type": "web"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "Internal",
+      "resource": "execute_tool search_project_knowledge",
+      "spanID": "13754985450791155688",
+      "parentID": "17208057246395225277",
+      "duration": 783020224,
+      "type": "custom"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "client.request",
+      "resource": "invoke_agent infra-advisor(c3a57e37be9b4886ac5aa4cabb09aee7)",
+      "spanID": "17208057246395225277",
+      "parentID": "202804142047792780",
+      "duration": 3450016512,
+      "type": "http"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "http.client.request",
+      "resource": "POST",
+      "spanID": "2689540797032328121",
+      "parentID": "12557502206032846113",
+      "duration": 588896768,
+      "type": "http"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "postgresql.query",
+      "resource": "INSERT INTO messages ( conversation_id, role, content, sources ) VALUES ( ? :: jsonb ) INSERT INTO messages ( conversation_id, role, content, sources, trace_id, span_id ) VALUES ( ? :: jsonb, ? ) UPDATE conversations SET updated_at = NOW ( ) WHERE id = ?",
+      "spanID": "15956877484145202719",
+      "parentID": "13113797192024530458",
+      "duration": 10492900,
+      "type": "sql"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "http.client.request",
+      "resource": "POST",
+      "spanID": "1411015591540467612",
+      "parentID": "17176012225075876433",
+      "duration": 251516608,
+      "type": "http"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "http.client.request",
+      "resource": "POST",
+      "spanID": "3997468964849528770",
+      "parentID": "7979290713824249794",
+      "duration": 824457600,
+      "type": "http"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "client.request",
+      "resource": "embeddings text-embedding-3-small",
+      "spanID": "5635620593101901339",
+      "parentID": "13461640754623690172",
+      "duration": 252328192,
+      "type": "http"
+    },
+    {
+      "service": "infra-advisor-agent-api-dotnet",
+      "name": "Internal",
+      "resource": "retrieve_best_practices",
+      "spanID": "13461640754623690172",
+      "parentID": "202804142047792780",
+      "duration": 252734704,
+      "type": "custom"
+    },
+    {
+      "service": "infra-advisor-mcp-server-dotnet",
+      "name": "http.client.request",
+      "resource": "POST",
+      "spanID": "1554423447256362628",
+      "parentID": "11085607764633680076",
+      "duration": 393437504,
+      "type": "http"
+    },
+    {
+      "service": "infra-advisor-mcp-server-dotnet",
+      "name": "http.client.request",
+      "resource": "POST",
+      "spanID": "15717201436134190909",
+      "parentID": "11085607764633680076",
+      "duration": 114252896,
+      "type": "http",
+      "error": 1
+    },
+    {
+      "service": "infra-advisor-mcp-server-dotnet",
+      "name": "http.server.request",
+      "resource": "tools/call search_project_knowledge",
+      "spanID": "11085607764633680076",
+      "parentID": "13754985450791155688",
+      "duration": 767135680,
+      "type": "web"
+    },
+    {
+      "service": "infra-advisor-mcp-server-dotnet",
+      "name": "http.server.request",
+      "resource": "POST /mcp/",
+      "spanID": "12314654392646380331",
+      "parentID": "343388039991429441",
+      "duration": 770417984,
+      "type": "web"
+    },
+    {
+      "service": "infra-advisor-ui",
+      "name": "browser.request",
+      "resource": "/api-dotnet/query/stream",
+      "spanID": "2716046440972629095",
+      "duration": 3832100096,
+      "type": "browser",
+      "parentID": "0"
+    }
+  ]
+}

@@ -30,7 +30,7 @@ Phase 2: Kubernetes Workloads
 Phase 3: Data Initialization
   make sync-dags && make run-dags
     ├── kubectl cp DAG files to PVC
-    └── Trigger all 5 Airflow DAGs
+    └── Trigger all 9 Airflow DAGs
 ```
 
 ## Makefile reference
@@ -66,7 +66,7 @@ Phase 3: Data Initialization
 | `make install-airflow` | Fresh Helm install (removes existing release first) |
 | `make upgrade-airflow` | Helm upgrade with `k8s/airflow/values.yaml` |
 | `make sync-dags` | `kubectl cp` DAG files to scheduler PVC |
-| `make run-dags` | Trigger all 5 DAGs |
+| `make run-dags` | Trigger all 9 Airflow DAGs |
 
 ### Testing & verification
 

@@ -19,17 +19,14 @@ datadog          Datadog Agent DaemonSet
 | Name | Replicas | Image | Port | Resources (req/lim) |
 |------|----------|-------|------|---------------------|
 | `mcp-server` | 2 | `ghcr.io/.../mcp-server:latest` | 8000 | 256Mi/512Mi RAM, 250m/500m CPU |
+| `mcp-server-dotnet` | 1 | `ghcr.io/.../mcp-server-dotnet:latest` | 8001 | .NET 9 MCP Server (port 8001) |
 | `agent-api` | 2 | `ghcr.io/.../agent-api:latest` | 8001 | 512Mi/1Gi RAM, 500m/1000m CPU |
+| `agent-api-dotnet` | 1 | `ghcr.io/.../agent-api-dotnet:latest` | 8080 | .NET 9 Agent API (port 8080) |
 | `auth-api` | 2 | `ghcr.io/.../auth-api:latest` | 8002 | 128Mi/256Mi RAM, 100m/500m CPU |
 | `ui` | 2 | `ghcr.io/.../ui:latest` | 80 | 64Mi/128Mi RAM, 50m/100m CPU |
 | `redis` | 1 | `redis:7.4-alpine` | 6379 | 128Mi/256Mi RAM, 100m/200m CPU |
-| `mailpit` | 1 | `axllent/mailpit:v1.21` | 1025/8025 | 64Mi/256Mi RAM |
-
-### StatefulSet
-
-| Name | Replicas | Storage | Purpose |
-|------|----------|---------|---------|
-| `postgres` | 1 | Azure File Share (azurefile-csi) | Auth API user database |
+| `postgres` | 1 | `postgres:16-alpine` | 5432 | Auth API user database (PVC, ReadWriteOnce, 5Gi, cluster default storage class) |
+| `mailpit` | 1 | `axllent/mailpit:v1.21` | 1025/8025 | SMTP capture (dev/demo) |
 
 ### CronJob
 

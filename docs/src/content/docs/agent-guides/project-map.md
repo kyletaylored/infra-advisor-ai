@@ -5,30 +5,34 @@ description: Complete service, namespace, dependency, and external API reference
 
 ## Services
 
-| Service | Directory | Language | Port | K8s Namespace | Image |
-|---|---|---|---|---|---|
-| InfraTools MCP Server | `services/mcp-server/` | Python 3.12 | 8000 | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/mcp-server` |
-| Agent API | `services/agent-api/` | Python 3.12 | 8001 | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/agent-api` |
-| Load Generator | `services/load-generator/` | Python 3.12 | — (batch) | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/load-generator` |
-| React UI | `services/ui/` | TypeScript / React 18 | 3000 | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/ui` |
-| Airflow (Helm) | `k8s/airflow/` | — | 8080 (UI) | `airflow` | apache/airflow (Helm chart) |
-| Kafka (Strimzi) | `k8s/kafka/` | — | 9092 | `kafka` | strimzi/kafka |
-| Redis | `k8s/redis/` | — | 6379 | `infra-advisor` | redis:7 |
-| Datadog Agent | `k8s/datadog/` | — | 8126 (APM), 8125 (DogStatsD) | `datadog` | datadog/agent |
+| Service               | Directory                  | Language              | Port                         | K8s Namespace   | Image                                                  |
+| --------------------- | -------------------------- | --------------------- | ---------------------------- | --------------- | ------------------------------------------------------ |
+| InfraTools MCP Server | `services/mcp-server/`     | Python 3.12           | 8000                         | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/mcp-server`     |
+| MCP Server (.NET)     | `services/mcp-server-dotnet/` | .NET 9             | 8001                         | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/mcp-server-dotnet` |
+| Agent API             | `services/agent-api/`      | Python 3.12           | 8001                         | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/agent-api`      |
+| Agent API (.NET)      | `services/agent-api-dotnet/` | .NET 9              | 8080                         | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/agent-api-dotnet` |
+| Load Generator        | `services/load-generator/` | Python 3.12           | — (batch)                    | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/load-generator` |
+| React UI              | `services/ui/`             | TypeScript / React 18 | 5173 (dev) / 80 (K8s)        | `infra-advisor` | `ghcr.io/kyletaylored/infra-advisor-ai/ui`             |
+| Airflow (Helm)        | `services/ingestion/dags/` | —                     | 8080 (UI)                    | `airflow`       | apache/airflow (Helm chart)                            |
+| Kafka (Strimzi)       | `k8s/kafka/`               | —                     | 9092                         | `kafka`         | strimzi/kafka                                          |
+| Redis                 | `k8s/redis/`               | —                     | 6379                         | `infra-advisor` | redis:7                                                |
+| PostgreSQL            | `k8s/postgres/`            | —                     | 5432                         | `infra-advisor` | postgres:16-alpine                                     |
+| Mailpit               | `k8s/mailpit/`             | —                     | 1025 (SMTP), 8025 (HTTP)     | `infra-advisor` | axllent/mailpit                                        |
+| Datadog Agent         | `k8s/datadog/`             | —                     | 8126 (APM), 8125 (DogStatsD) | `datadog`       | datadog/agent                                          |
 
 ## Kubernetes Namespaces
 
-| Namespace | Contents |
-|---|---|
-| `infra-advisor` | mcp-server, agent-api, load-generator, ui, redis |
-| `kafka` | Strimzi operator, KafkaCluster CR, Kafka broker |
-| `airflow` | Airflow scheduler, webserver, Postgres sidecar |
-| `datadog` | DD Agent DaemonSet, ClusterAgent |
+| Namespace       | Contents                                         |
+| --------------- | ------------------------------------------------ |
+| `infra-advisor` | mcp-server, mcp-server-dotnet, agent-api, agent-api-dotnet, auth-api, load-generator, ui, redis, postgres, mailpit |
+| `kafka`         | Strimzi operator, KafkaCluster CR, Kafka broker  |
+| `airflow`       | Airflow scheduler, webserver, Postgres sidecar   |
+| `datadog`       | DD Agent DaemonSet, ClusterAgent                 |
 
 ## Inter-Service Dependencies
 
 ```
-React UI (port 3000)
+React UI (port 5173 dev / 80 K8s)
   └─► Agent API (port 8001)  [HTTP POST /query]
         ├─► MCP Server (port 8000)  [MCP streamable HTTP]
         │     ├─► FHWA NBI ArcGIS REST API  [external]
@@ -62,26 +66,26 @@ Datadog Agent DaemonSet
 
 ## Azure Resources (resource group: `rg-tola-infra-advisor-ai`)
 
-| Resource | Type | Notes |
-|---|---|---|
-| `aks-infra-advisor` | AKS | 3 nodes, Standard_D2s_v3, K8s 1.30+ |
-| Azure OpenAI | Cognitive Services | Deployments: `gpt-4.1-mini` (agent), `gpt-4.1-nano` (eval), `text-embedding-3-small` |
-| Azure AI Search | Search service | Index: `infra-advisor-knowledge` |
-| Azure Blob Storage | Storage account | Container: `infra-advisor-raw` (raw parquet) |
-| Azure API Management | APIM | Routes external traffic to agent-api |
+| Resource             | Type               | Notes                                                                                |
+| -------------------- | ------------------ | ------------------------------------------------------------------------------------ |
+| `aks-infra-advisor-dev`  | AKS                | 3 nodes, Standard_D2s_v3, K8s 1.30+                                                  |
+| Azure OpenAI         | Cognitive Services | Deployments: `gpt-4.1-mini` (agent/router), `gpt-4.1` (specialist), `text-embedding-3-small` (embeddings) |
+| Azure AI Search      | Search service     | Index: `infra-advisor-knowledge`                                                     |
+| Azure Blob Storage   | Storage account    | Container: `infra-advisor-raw` (raw parquet)                                         |
 
 ## Kafka Topics
 
-| Topic | Producer | Consumer | Purpose |
-|---|---|---|---|
-| `infra.query.events` | Load Generator | Agent API | Synthetic query delivery |
-| `infra.eval.results` | Agent API | (DD DSM monitoring) | Evaluation scores + latency |
+| Topic                | Producer       | Consumer            | Purpose                     |
+| -------------------- | -------------- | ------------------- | --------------------------- |
+| `infra.query.events` | Load Generator | Agent API           | Synthetic query delivery    |
+| `infra.eval.results` | Agent API      | (DD DSM monitoring) | Evaluation scores + latency |
 
 ## Azure AI Search Index
 
 **Index name:** `infra-advisor-knowledge`
 
 **Document sources loaded by Airflow DAGs:**
+
 - `domain: "transportation"`, `document_type: "asset_record"` — FHWA NBI bridge records (Texas)
 - `domain: "environmental"`, `document_type: "disaster_declaration"` — OpenFEMA disaster declarations
 - `domain: "energy"`, `document_type: "energy_record"` — EIA state electricity data
@@ -91,21 +95,21 @@ Datadog Agent DaemonSet
 
 ## External API Endpoints
 
-| Source | Base URL | Auth |
-|---|---|---|
-| FHWA NBI (BTS NTAD) | `https://services.arcgis.com/xOi1kZaI0eWDREZv/arcgis/rest/services/National_Bridge_Inventory/FeatureServer/0/query` | None |
-| OpenFEMA | `https://www.fema.gov/api/open/v2/` | None |
-| EIA API v2 | `https://api.eia.gov/v2/electricity/electric-power-operational-data/data/` | `EIA_API_KEY` env var |
-| EPA Envirofacts SDWIS | `https://enviro.epa.gov/enviro/efservice/` | None |
-| TWDB Water Plan | `https://www.twdb.texas.gov/waterplanning/data/rwp-database/index.asp` | None (batch download) |
+| Source                | Base URL                                                                                                            | Auth                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| FHWA NBI (BTS NTAD)   | `https://services.arcgis.com/xOi1kZaI0eWDREZv/arcgis/rest/services/National_Bridge_Inventory/FeatureServer/0/query` | None                  |
+| OpenFEMA              | `https://www.fema.gov/api/open/v2/`                                                                                 | None                  |
+| EIA API v2            | `https://api.eia.gov/v2/electricity/electric-power-operational-data/data/`                                          | `EIA_API_KEY` env var |
+| EPA Envirofacts SDWIS | `https://enviro.epa.gov/enviro/efservice/`                                                                          | None                  |
+| TWDB Water Plan       | `https://www.twdb.texas.gov/waterplanning/data/rwp-database/index.asp`                                              | None (batch download) |
 
 ## Internal K8s DNS Names
 
-| Service | DNS Name |
-|---|---|
-| MCP Server | `mcp-server.infra-advisor.svc.cluster.local:8000` |
-| Agent API | `agent-api.infra-advisor.svc.cluster.local:8001` |
-| Redis | `redis.infra-advisor.svc.cluster.local:6379` |
-| Kafka | `kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092` |
-| Datadog Agent | `datadog-agent.datadog.svc.cluster.local:8126` (APM), `:8125` (DogStatsD) |
-| Airflow Webserver | `airflow-webserver.airflow.svc.cluster.local:8080` |
+| Service           | DNS Name                                                                  |
+| ----------------- | ------------------------------------------------------------------------- |
+| MCP Server        | `mcp-server.infra-advisor.svc.cluster.local:8000`                         |
+| Agent API         | `agent-api.infra-advisor.svc.cluster.local:8001`                          |
+| Redis             | `redis.infra-advisor.svc.cluster.local:6379`                              |
+| Kafka             | `kafka-cluster-kafka-bootstrap.kafka.svc.cluster.local:9092`              |
+| Datadog Agent     | `datadog-agent.datadog.svc.cluster.local:8126` (APM), `:8125` (DogStatsD) |
+| Airflow Webserver | `airflow-webserver.airflow.svc.cluster.local:8080`                        |

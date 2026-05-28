@@ -5,7 +5,12 @@ sidebar:
   order: 1
 ---
 
-import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+import { Tabs, TabItem, Aside } from "@astrojs/starlight/components";
+import TraceViewer from "@components/TraceViewer.jsx";
+import traceData from "@data/trace-1169394720470872.json";
+
+<TraceViewer client:load spans={traceData.spans} />
+{/* <HorizontalFlow /> */}
 
 Once your service is [instrumented](../../instrumentation/python/), every request produces an LLMObs trace. This page is about what that trace looks like, how to slice it, and the UI features that make it more than a pretty waterfall.
 
@@ -62,14 +67,14 @@ The two trees expose the same logical decisions (route → specialist → tool) 
 
 The DD trace explorer supports the full APM query language plus LLMObs-specific filters. The most useful shapes:
 
-| Goal | Query |
-|---|---|
-| All traces for one user/session | `@ml_app:infra-advisor-ai @session.id:<uuid>` |
-| Only failed queries | `@ml_app:infra-advisor-ai status:error` |
-| Slow LLM calls | `@ml_app:infra-advisor-ai operation_name:chat duration:>5s` |
-| One conversation, all turns | `@ml_app:infra-advisor-ai @meta.gen_ai.conversation.id:<id>` group by `trace_id` |
-| Traces that used a specific tool | `@ml_app:infra-advisor-ai @meta.tools_called:get_bridge_condition` |
-| Tool routing accuracy regressions | `@ml_app:infra-advisor-ai @evaluations.tool_routing_accuracy.value:false` |
+| Goal                              | Query                                                                            |
+| --------------------------------- | -------------------------------------------------------------------------------- |
+| All traces for one user/session   | `@ml_app:infra-advisor-ai @session.id:<uuid>`                                    |
+| Only failed queries               | `@ml_app:infra-advisor-ai status:error`                                          |
+| Slow LLM calls                    | `@ml_app:infra-advisor-ai operation_name:chat duration:>5s`                      |
+| One conversation, all turns       | `@ml_app:infra-advisor-ai @meta.gen_ai.conversation.id:<id>` group by `trace_id` |
+| Traces that used a specific tool  | `@ml_app:infra-advisor-ai @meta.tools_called:get_bridge_condition`               |
+| Tool routing accuracy regressions | `@ml_app:infra-advisor-ai @evaluations.tool_routing_accuracy.value:false`        |
 
 Save these as **Saved Views** in the trace explorer. The trace explorer's "Group by → trace_id" view is the right default for LLMObs work because one logical request is always one trace.
 
@@ -132,7 +137,9 @@ A handful of saved views worth keeping handy:
 4. **"New prompt regression"** — `@meta.prompt.version:v2-* @evaluations.meai_relevance.value:<3`. Useful right after a prompt rollout.
 
 <Aside type="tip">
-**Group by trace_id, almost always.** LLMObs's UI sometimes defaults to grouping by span. For agent debugging you want one row per logical request — that's `trace_id`.
+  **Group by trace_id, almost always.** LLMObs's UI sometimes defaults to
+  grouping by span. For agent debugging you want one row per logical request —
+  that's `trace_id`.
 </Aside>
 
 ## What's next

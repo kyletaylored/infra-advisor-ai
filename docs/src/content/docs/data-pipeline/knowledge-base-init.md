@@ -10,7 +10,7 @@ description: LLM-generated synthetic firm knowledge base initialization DAG
 
 ## Purpose
 
-The other four DAGs populate the index with public government data. This DAG generates synthetic internal firm documents — project proposals, lessons learned, cost benchmarks, and risk frameworks — to simulate the type of institutional knowledge a consulting firm would have accumulated over years of project delivery.
+The other eight DAGs populate the index with public government data. This DAG generates synthetic internal firm documents — project proposals, lessons learned, cost benchmarks, and risk frameworks — to simulate the type of institutional knowledge a consulting firm would have accumulated over years of project delivery.
 
 This enables queries like:
 - "What similar bridge rehabilitation projects has the firm delivered?"

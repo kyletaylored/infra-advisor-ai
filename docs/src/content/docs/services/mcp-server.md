@@ -178,7 +178,9 @@ Hybrid semantic + BM25 search against the Azure AI Search knowledge base populat
 
 **Returns:** Ranked document chunks with content, source, domain, and relevance score.
 
-**Index:** `infra-advisor-knowledge` — populated by all 5 Airflow DAGs plus the knowledge base init pipeline.
+**Index:** `infra-advisor-knowledge` — populated by all 9 Airflow DAGs.
+
+See [MCP Tool Reference](/services/mcp-tools) for the complete, authoritative tool signatures.
 
 ---
 
@@ -187,16 +189,16 @@ Hybrid semantic + BM25 search against the Azure AI Search knowledge base populat
 Generates structured document scaffolds using Jinja2 templates. No LLM is invoked — this tool produces deterministic template output.
 
 **Parameters:**
-- `document_type` — `statement_of_work`, `risk_summary`, `cost_estimate`, `funding_memo`
+- `document_type` — `scope_of_work`, `risk_summary`, `cost_estimate_scaffold`, `funding_positioning_memo`
 - `context` — Dict of values to inject into template fields
 
 **Returns:** Rendered document text (Markdown) for the specified document type.
 
 **Templates:**
-- `statement_of_work` — SOW with scope, deliverables, timeline, exclusions
+- `scope_of_work` — SOW with scope, deliverables, timeline, exclusions
 - `risk_summary` — Risk register with likelihood, impact, mitigation
-- `cost_estimate` — Line-item cost table with totals
-- `funding_memo` — Federal funding opportunity summary with eligibility and match requirements
+- `cost_estimate_scaffold` — Line-item cost table with totals
+- `funding_positioning_memo` — Federal funding opportunity summary with eligibility and match requirements
 
 ---
 

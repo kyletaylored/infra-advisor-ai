@@ -6,7 +6,7 @@ description: Command-by-command build and verification reference for AI agent co
 ## Prerequisites
 
 - `uv` installed (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- `kubectl` configured (`az aks get-credentials --resource-group rg-tola-infra-advisor-ai --name aks-infra-advisor`)
+- `kubectl` configured (`az aks get-credentials --resource-group rg-tola-infra-advisor-ai --name aks-infra-advisor-dev`)
 - `helm` installed
 - `az` CLI installed and logged in
 - `.env` file populated (copy from `.env.example`)
@@ -70,7 +70,7 @@ uv run uvicorn src.main:app --reload --port 8001
 cd services/ui
 npm install
 npm run dev
-# http://localhost:3000 — /api/* proxied to localhost:8001
+# http://localhost:5173 — /api/* proxied to localhost:8001
 ```
 
 ### 6. Stop local infrastructure
@@ -87,7 +87,7 @@ docker compose down
 make deploy-infra          # Deploy Azure Bicep IaC (AKS, AI Search, OpenAI, etc.)
 make create-ghcr-secret    # Create ghcr-pull-secret K8s Secret in infra-advisor namespace
 make deploy-k8s            # Apply all Kubernetes manifests (namespaces, DD, Kafka, Redis, Airflow, services)
-make run-dags              # Manually trigger all 5 Airflow DAGs via CLI
+make run-dags              # Manually trigger all 9 Airflow DAGs via CLI
 ```
 
 ---
@@ -154,14 +154,14 @@ kubectl get secret ghcr-pull-secret -n infra-advisor
 kubectl port-forward -n airflow svc/airflow-webserver 8080:8080
 
 # Trigger DAGs manually via CLI
-kubectl exec -n airflow deploy/airflow-scheduler -- airflow dags trigger knowledge_base_init
-kubectl exec -n airflow deploy/airflow-scheduler -- airflow dags trigger nbi_refresh
-kubectl exec -n airflow deploy/airflow-scheduler -- airflow dags trigger fema_refresh
-kubectl exec -n airflow deploy/airflow-scheduler -- airflow dags trigger eia_refresh
-kubectl exec -n airflow deploy/airflow-scheduler -- airflow dags trigger twdb_water_plan_refresh
+kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger knowledge_base_init
+kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger nbi_refresh
+kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger fema_refresh
+kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger eia_refresh
+kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags trigger twdb_water_plan_refresh
 
 # Check DAG run status
-kubectl exec -n airflow deploy/airflow-scheduler -- airflow dags list-runs -d knowledge_base_init
+kubectl exec -n airflow airflow-scheduler-0 -c scheduler -- airflow dags list-runs -d knowledge_base_init
 ```
 
 ### DAG tests (mock external APIs)
@@ -386,7 +386,7 @@ kubectl get secret ghcr-pull-secret -n infra-advisor
 make create-ghcr-secret  # recreate if missing
 
 # Airflow DAG import error
-kubectl logs -n airflow deploy/airflow-scheduler | grep ERROR
+kubectl logs -n airflow airflow-scheduler-0 -c scheduler | grep ERROR
 
 # Redis connectivity
 kubectl exec -n infra-advisor deploy/agent-api -- redis-cli -h redis ping

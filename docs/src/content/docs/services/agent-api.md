@@ -7,11 +7,11 @@ description: Multi-agent reasoning core with LangChain ReAct and LLM Observabili
 
 The Agent API is the reasoning core of InfraAdvisor AI. A parallel .NET implementation is documented at [Agent API (.NET)](/infra-advisor-ai/services/agent-api-dotnet/). It receives natural-language queries, routes them to the appropriate specialist agent, executes MCP tool calls, synthesizes answers, and maintains session memory in Redis.
 
-Every query produces a rich Datadog LLM Observability trace with a multi-level span hierarchy: workflow → router → planner → specialist → tool calls → faithfulness eval.
+Every query produces a rich Datadog LLM Observability trace with a multi-level span hierarchy: workflow → router → specialist → tool calls → faithfulness eval.
 
 ## Multi-agent architecture
 
-Queries flow through three sequential agents before the final answer is assembled:
+Queries flow through two sequential agents before the final answer is assembled:
 
 ```
 POST /query
@@ -19,10 +19,6 @@ POST /query
   ├── Router Agent (gpt-4.1-mini)
   │     Classifies domain: engineering | water_energy | business_development | document | general
   │     Cost: ~200 prompt tokens + 50 completion tokens
-  │
-  ├── Planner Agent (gpt-4.1-mini)
-  │     Produces 1–2 sentence execution strategy
-  │     Injected as context hint to the specialist
   │
   └── Specialist Agent (LangGraph ReAct executor)
         Receives curated tool subset for its domain
@@ -327,8 +323,6 @@ The `trace_id` is the ddtrace trace ID for the current request. The UI renders a
 workflow: query-processing
   task: load-history              (tags: history.turns)
   agent: router                   (tags: query.domain)
-    chat_model (auto-instrumented)
-  agent: planner
     chat_model (auto-instrumented)
   agent: infra-advisor            (tags: tools_called.count, sources.count)
     tool: get_bridge_condition    (auto-instrumented via langchain-mcp-adapters)

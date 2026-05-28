@@ -27,7 +27,7 @@ InfraAdvisor AI lets infrastructure consultants ask natural-language questions a
     A router LLM routes each query to the right domain specialist. Each specialist works with a curated tool subset to reduce hallucination surface.
   </Card>
   <Card title="Live government data" icon="open-book">
-    5 Airflow pipelines ingest 615k+ records weekly from FHWA, FEMA, EIA, EPA, and TWDB into a hybrid vector + BM25 search index.
+    9 Airflow pipelines ingest 615k+ records weekly from FHWA, FEMA, EIA, EPA, and TWDB into a hybrid vector + BM25 search index.
   </Card>
   <Card title="Full-stack observability" icon="magnifier">
     Every layer instrumented with Datadog — APM, LLM Observability, RUM session replay, Data Streams, Data Jobs, and CSPM.
@@ -58,7 +58,7 @@ flowchart TD
     end
 
     subgraph azure["Azure"]
-        Airflow["Airflow · 5 DAGs\\nFHWA · FEMA · EIA · TWDB · Synthetic"]
+        Airflow["Airflow · 9 DAGs\\nFHWA · FEMA · EIA · TWDB · Synthetic"]
         Blob["Blob Storage\\nParquet · date-partitioned"]
         Search["AI Search\\n615k+ docs · hybrid BM25 + vector"]
     end
