@@ -21,6 +21,11 @@ data:
   DD_LLMOBS_ML_APP: "infra-advisor-ai"
   DD_LLMOBS_AGENTLESS_ENABLED: "false"
   DD_CODE_ORIGIN_FOR_SPANS_ENABLED: "true"
+  DD_TRACE_ENABLED: "true"
+  # AI Guard: automatic LangChain integration (ddtrace>=3.14, langchain>=0.1.20 —
+  # both satisfied). Patches BaseTool.invoke/ainvoke + chat model calls with no
+  # code changes. DD_APP_KEY (required by the integration) lives in agent-api-secret.
+  DD_AI_GUARD_ENABLED: "true"
   AZURE_OPENAI_DEPLOYMENT: "gpt-4.1-mini"
   AZURE_OPENAI_EVAL_DEPLOYMENT: "gpt-4.1-mini"
   AVAILABLE_MODELS: "gpt-4.1-mini,gpt-4.1,gpt-5.4-mini"

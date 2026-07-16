@@ -292,6 +292,12 @@ builder.Services.AddSingleton<RetrievalService>();
 // 50 attempts across all evaluators.
 builder.Services.AddSingleton<EvalSubmissionLog>();
 builder.Services.AddHttpClient<DatadogEvalsClient>();
+// AI Guard: HTTP API path (no LangChain-equivalent auto-integration exists
+// for Microsoft Agent Framework). Ring buffer mirrors EvalSubmissionLog —
+// surfaced via GET /ai-guard/status since AI Guard's HTTP API sends no
+// traces to Datadog on its own (see DatadogAiGuardClient).
+builder.Services.AddSingleton<AiGuardSubmissionLog>();
+builder.Services.AddHttpClient<DatadogAiGuardClient>();
 builder.Services.AddSingleton<IResponseEvaluator, CitationPresentEvaluator>();
 builder.Services.AddSingleton<IResponseEvaluator, BdToolOrderingEvaluator>();
 builder.Services.AddSingleton<IResponseEvaluator, ToolRoutingAccuracyEvaluator>();
@@ -463,6 +469,13 @@ app.MapPost("/query", async (
         var errTraceId = GetDdTraceId(httpContext, Activity.Current);
         return Results.Problem(detail: ex.Message, statusCode: 500,
             extensions: new Dictionary<string, object?> { ["trace_id"] = errTraceId });
+    }
+
+    if (result.Blocked)
+    {
+        var blockedTraceId = GetDdTraceId(httpContext, Activity.Current);
+        return Results.Problem(detail: result.BlockReason ?? "Blocked by AI Guard", statusCode: 403,
+            extensions: new Dictionary<string, object?> { ["trace_id"] = blockedTraceId, ["blocked"] = true });
     }
 
     await memoryService.SetSessionModelAsync(sessionId, deployment);
@@ -709,6 +722,44 @@ app.MapGet("/eval/status", (
                 trace_id_decimal = e.TraceIdDecimal,
                 span_id_decimal = e.SpanIdDecimal,
                 reasoning = e.Reasoning,
+                error = e.Error,
+            }).ToList(),
+        },
+    });
+});
+
+// ── /ai-guard/status — read-only diagnostics for the admin UI ─────────────────
+// AI Guard's HTTP API path (the only option for MAF — no LangChain-equivalent
+// auto-integration exists) sends no traces to Datadog. This endpoint is the
+// only in-app visibility into whether AI Guard is actually evaluating
+// requests, what it's deciding, and whether calls are succeeding.
+app.MapGet("/ai-guard/status", (
+    DatadogAiGuardClient aiGuard,
+    AiGuardSubmissionLog log) =>
+{
+    var snapshot = log.Snapshot();
+    return Results.Ok(new
+    {
+        datadog = new
+        {
+            enabled = aiGuard.Enabled,
+            note = "AI Guard HTTP API path sends no traces to Datadog — this panel is the " +
+                   "only in-app visibility. See llm-engineering/ai-guard.mdx.",
+        },
+        evaluations = new
+        {
+            total = snapshot.TotalEvaluated,
+            blocked = snapshot.TotalBlocked,
+            failed = snapshot.TotalFailed,
+            recent = snapshot.Recent.Select(e => new
+            {
+                timestamp_iso = e.Timestamp.ToString("o"),
+                action = e.Action,
+                reason = e.Reason,
+                success = e.Success,
+                duration_ms = e.DurationMs,
+                trace_id_decimal = e.TraceIdDecimal,
+                span_id_decimal = e.SpanIdDecimal,
                 error = e.Error,
             }).ToList(),
         },

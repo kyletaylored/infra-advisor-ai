@@ -1,0 +1,87 @@
+---
+title: AI Guard
+description: Datadog's prompt/tool-call safety layer — why it exists, the LangChain auto-integration on Python, and the HTTP API path .NET needs since no MAF-equivalent auto-integration exists.
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+An agent that can call tools is an agent that can be tricked into calling the *wrong* tools — a prompt injection buried in a document, a malicious instruction smuggled through a tool result, a user directly trying to jailbreak the system prompt. [AI Guard](https://docs.datadoghq.com/security/ai_guard/) is DD's answer: every prompt/tool-call decision point gets evaluated against a safety model before it reaches the LLM, and the response comes back as `ALLOW`, `DENY`, or `ABORT`.
+
+The problem it solves for InfraAdvisor specifically: `/query` is public-facing (behind auth, but any authenticated user can send arbitrary text). Without a guard, a malicious query is indistinguishable from a legitimate one until the LLM has already acted on it — by which point a tool may have already run.
+
+## Two very different integration paths
+
+<Aside type="note">
+**Same feature, asymmetric implementation cost.** Python's agent stack is genuinely built on LangChain, so DD's automatic integration applies with zero code changes. .NET uses Microsoft Agent Framework (MAF), which has no LangChain-equivalent auto-integration — the only option is DD's raw HTTP API, called by hand. This is one of the rare cases where the Python side is *simpler* to ship, not the .NET side.
+</Aside>
+
+<Tabs syncKey="lang">
+  <TabItem label="Python (LangChain auto-integration)">
+
+Since `services/agent-api/src/agent.py` builds its agent loop on `langgraph.prebuilt.create_react_agent` + `langchain_openai.AzureChatOpenAI`, and the service already runs `ddtrace.auto`, enabling AI Guard is pure configuration — no code changes:
+
+```bash
+# Requires: ddtrace>=3.14.0 (services/agent-api pins >=4.7.1 — satisfied),
+# langchain>=0.1.20 (pins >=1.2.0 — satisfied)
+DD_AI_GUARD_ENABLED=true
+DD_API_KEY=<...>
+DD_APP_KEY=<...>
+DD_ENV=dev
+DD_SERVICE=infra-advisor-agent-api
+DD_TRACE_ENABLED=true
+```
+
+The integration patches `BaseTool.invoke`/`ainvoke` and chat-model calls automatically. Every LLM call and every tool call gets evaluated; blocking behavior follows your AI Guard service-level configuration in DD (or set `DD_AI_GUARD_BLOCK=false` to log without blocking).
+
+Because this runs through DD's own SDK instrumentation path, evaluations show up as native traces in DD's AI Guard UI — no extra plumbing needed.
+
+  </TabItem>
+  <TabItem label=".NET (HTTP API)">
+
+MAF has no LangChain-equivalent auto-integration, so `services/agent-api-dotnet` calls DD's HTTP API directly:
+
+```
+POST https://api.<site>/api/v2/ai-guard/evaluate
+DD-API-KEY: <key>
+DD-APPLICATION-KEY: <key>
+```
+
+`services/agent-api-dotnet/Services/DatadogAiGuardClient.cs` (modeled on `DatadogEvalsClient.cs`) sends the incoming user query as a single-message transcript and gets back `{action, reason}`. It's wired into `AgentService.RunAgentAsync` and `RunAgentStreamingAsync` as a pre-flight check — before classify_domain, retrieval, or the agent loop ever run:
+
+```csharp
+// services/agent-api-dotnet/Services/AgentService.cs (excerpt)
+var guardResult = await _aiGuard.EvaluateAsync(
+    new[] { new AiGuardMessage("user", query) }, ct);
+if (guardResult.IsBlocked)
+{
+    return new AgentResult(
+        Answer: "", Sources: [], ToolsCalled: [], QueryDomain: "blocked",
+        Blocked: true, BlockReason: guardResult.Reason);
+}
+```
+
+On `DENY`/`ABORT`, `/query` returns HTTP 403 and `/query/stream` yields an `ErrorEvent` instead of ever calling the LLM.
+
+<Aside type="caution">
+**Fails open.** A transport error, timeout, or missing `DD_API_KEY`/`DD_APPLICATION_KEY` is treated as `ALLOW`, not `DENY`. A Datadog outage or misconfiguration must never take down the product — the risk trade-off is "occasionally miss a bad prompt" over "block all traffic when DD is unreachable."
+</Aside>
+
+  </TabItem>
+</Tabs>
+
+## The trace-visibility gap (and the workaround)
+
+DD's docs state this plainly: **HTTP API calls to AI Guard produce no Datadog traces.** Native trace visibility in DD's AI Guard UI is an SDK-only feature — since .NET has no SDK integration option, the .NET path is permanently blind to DD's dedicated UI, not just today.
+
+We compensate with three layers of substitute visibility, all reusing patterns already in the codebase:
+
+1. **A manual APM span.** `DatadogAiGuardClient` wraps the HTTP call in a child `Activity` tagged `ai_guard.action` / `ai_guard.reason` / `ai_guard.duration_ms`, nested under the normal request trace. Not a native "AI Guard trace," but a real, trace-correlated span visible in APM.
+2. **Structured logs.** The decision is logged through the same Serilog + `DatadogTraceContextEnricher` pipeline every other .NET log line uses — `dd.trace_id`/`dd.span_id` correlation comes for free.
+3. **An in-app diagnostics panel.** `AiGuardSubmissionLog` (a 50-entry ring buffer, same shape as `EvalSubmissionLog`) backs `GET /ai-guard/status` and an `AiGuardDiagnostics.tsx` admin panel — the fastest way to confirm "is AI Guard actually running?" without grepping pod logs.
+
+Python doesn't need any of this — the LangChain auto-integration's native trace visibility already covers it.
+
+## What's next
+
+- [Data security & RBAC](../security-rbac/) — the complementary layer for content that already made it into a span (redaction, access control), vs. AI Guard's job of stopping bad input before it's acted on.
+- [.NET ↔ Python feature parity](/infra-advisor-ai/development/dotnet-python-parity/) — where AI Guard sits in the broader parity picture.

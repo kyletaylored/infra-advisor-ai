@@ -175,31 +175,77 @@ class SuggestionsResponse(BaseModel):
     suggestions: list[SuggestionItem]
 
 
-# All available tools — kept here so the suggestions prompt stays in sync with main.py TOOL_NAMES
-_ALL_TOOLS = (
-    "get_bridge_condition (FHWA National Bridge Inventory — structural ratings, ADT, sufficiency), "
-    "get_disaster_history (FEMA disaster declarations and hazard mitigation grants), "
-    "get_energy_infrastructure (EIA electricity generation and capacity by state/fuel), "
-    "get_water_infrastructure (EPA SDWIS water system compliance and TWDB water plans), "
-    "get_ercot_energy_storage (ERCOT Texas grid energy storage resource 4-second charging data), "
-    "search_txdot_open_data (TxDOT Open Data portal — AADT traffic counts, construction projects, highway datasets), "
-    "search_project_knowledge (firm knowledge base — case studies, risk frameworks, templates), "
-    "draft_document (generate SOW, risk summary, cost estimate, or funding memo), "
-    "get_procurement_opportunities (SAM.gov and grants.gov — active federal contract opportunities and open grant programs), "
-    "get_contract_awards (USASpending.gov — historical federal contract awards for competitive intelligence and pricing benchmarks), "
-    "search_web_procurement (Brave Search — state and local RFPs, bond elections, and government budget announcements)"
-)
+# Tool catalog — keep IN SYNC with the MCP server tool descriptions and with
+# .NET's SuggestionService.ToolCatalog (services/agent-api-dotnet/Services/
+# SuggestionService.cs). Suggestion-pool prompts inject this string so the
+# LLM generates questions that map cleanly to a single tool call with
+# realistic args, instead of questions that no tool can actually answer.
+_TOOL_CATALOG = """\
+Available MCP tools and what they can answer (use this list to ground every \
+suggestion in something the system can actually look up):
 
-_FALLBACK_SUGGESTIONS: list[SuggestionItem] = [
-    SuggestionItem(label="Deficient bridges",
-                   query="List structurally deficient bridges in Texas with ADT over 10,000, sorted by sufficiency rating lowest first."),
-    SuggestionItem(label="SDWA violations",
+1. get_bridge_condition — FHWA National Bridge Inventory. All US bridges over 20 ft. Fields: condition ratings (0-9), BRIDGE_CONDITION Good/Fair/Poor, scour-critical flag, ADT, year built, location. Input: 2-char FIPS state code (e.g. '48' = TX, '06' = CA). Works nationwide.
+2. get_disaster_history — OpenFEMA major-disaster + emergency declarations 1953-present. Nationwide. Filter by states (2-letter abbrev), incident_types (Flood, Hurricane, Tornado, etc.), date range.
+3. get_energy_infrastructure — EIA state-level annual electricity statistics. All 50 states. data_series: 'generation' | 'capacity' | 'fuel_mix'. Fuel codes: SUN, WND, NG, COL, NUC, HYC, BIO, GEO, PET.
+4. get_ercot_energy_storage — ERCOT public data API. TEXAS ONLY (~90% of TX, excludes El Paso and SPP regions). Battery storage 4-second charging data. Use for ERCOT-specific grid questions only.
+5. get_water_infrastructure — Dispatched by query_type: 'water_systems' (EPA SDWIS, all US), 'violations' (EPA SDWIS, nationwide), 'water_plan_projects' (TWDB, TEXAS ONLY, regions A-P). Always cite PWSID for individual systems.
+6. search_txdot_open_data — TxDOT Open Data portal (ArcGIS). TEXAS ONLY. AADT counts, construction projects, highway geometry. query_type: 'catalog_search' | 'traffic_counts' | 'construction_projects'.
+7. search_project_knowledge — Azure AI Search index of internal firm content (case studies, prior SOWs, templates, best practices). Call BEFORE draft_document.
+8. draft_document — Renders one of 4 templates: 'scope_of_work' | 'risk_summary' | 'cost_estimate_scaffold' | 'funding_positioning_memo'. Always call search_project_knowledge first.
+9. get_procurement_opportunities — SAM.gov + grants.gov. ACTIVE/OPEN federal solicitations and grants. NEVER asks for a date range. AEC NAICS: 237310 (highway), 237110 (water/sewer), 237990 (heavy civil), 541330 (engineering services).
+10. get_contract_awards — USASpending.gov. HISTORICAL federal contract awards. Default window: past 2 years. CALL THIS BEFORE get_procurement_opportunities for BD research — know past winners before pursuing open opportunities.
+11. search_web_procurement — Azure OpenAI web_search_preview. State/local RFPs, bond elections, budget announcements on .gov / .us / DemandStar / BidNet / BonfireHub. Use ONLY for non-federal procurement.
+
+Hard constraints:
+- For Texas-specific tools (ERCOT, TxDOT, TWDB), only use Texas in the question.
+- For NAICS codes, prefer ['237310', '237110', '237990', '541330'].
+- For federal BD questions, suggest the get_contract_awards → get_procurement_opportunities sequence.
+- For 'recent disaster' questions, name an incident_type and a state.
+- For energy questions outside Texas grid, use get_energy_infrastructure (not ERCOT)."""
+
+# Curated golden-path seed pool — hand-verified to work end-to-end against the
+# current tool set. Mirrors .NET's SuggestionService.SeedPool entry-for-entry
+# so both backends give the same reliable first-touch experience. Loaded into
+# the Redis pool on cold start (see _pool_maintenance_loop) and used as the
+# fallback when the LLM or Redis is unavailable.
+_SEED_POOL: list[SuggestionItem] = [
+    # Bridges — single tool, fast
+    SuggestionItem(label="Worst Texas bridges",
+                   query="List the 25 worst-rated bridges in Texas by lowest condition rating."),
+    SuggestionItem(label="California scour bridges",
+                   query="Find structurally deficient bridges in California with scour-critical flags set."),
+    SuggestionItem(label="Harris County deficient",
+                   query="Show structurally deficient bridges in Harris County, Texas with ADT over 10,000."),
+    # Water — single tool, two datasets
+    SuggestionItem(label="Texas SDWA violations",
                    query="Which Texas community water systems have open Safe Drinking Water Act violations serving more than 10,000 people?"),
-    SuggestionItem(label="Infrastructure opportunities",
-                   query="What active federal procurement opportunities exist for infrastructure engineering services on SAM.gov with NAICS codes for civil or environmental work?"),
-    SuggestionItem(label="Disaster risk counties",
-                   query="Which Texas counties have received 5 or more FEMA disaster declarations since 2010, and what hazard types are most frequent?"),
+    SuggestionItem(label="Texas desalination plans",
+                   query="List recommended desalination projects from the TWDB 2026 State Water Plan."),
+    # FEMA disasters — single tool
+    SuggestionItem(label="Recent Texas hurricanes",
+                   query="How many hurricane disaster declarations has Texas had in the last 10 years?"),
+    # Energy — single tool
+    SuggestionItem(label="Texas renewable mix",
+                   query="What's the renewable energy generation share for Texas in the last 5 years?"),
+    # TxDOT — single tool, Texas-only
+    SuggestionItem(label="TxDOT pavement data",
+                   query="Find TxDOT Open Data datasets related to pavement condition."),
+    # Federal procurement — chained tools (the BD golden path)
+    SuggestionItem(label="TX highway BD",
+                   query="Find recent federal contract awards for highway construction in Texas under NAICS 237310, then list open opportunities matching the same NAICS."),
+    SuggestionItem(label="Water engineering RFPs",
+                   query="Show active federal solicitations for water engineering services (NAICS 541330 or 237110) with bid deadlines in the next 60 days."),
+    # Document drafting — chained: knowledge → draft
+    SuggestionItem(label="SOW for bridge rehab",
+                   query="Pull templates and prior projects for bridge rehabilitation, then draft a scope_of_work for an IH-35 bridge corridor project."),
+    # Cross-domain — exercises 2-3 tools
+    SuggestionItem(label="Flood-risk bridge audit",
+                   query="For Harris County, Texas: list structurally deficient bridges, recent flood declarations in the last 5 years, and water systems with violations."),
 ]
+
+# Deterministic 4-item slice used when the LLM/Redis path fails outright —
+# error-path fallback, not the cold-start pool seed (which uses all 12).
+_FALLBACK_SUGGESTIONS: list[SuggestionItem] = _SEED_POOL[:4]
 
 _SUGGESTIONS_PROMPT = """\
 You are generating follow-up question suggestions for an AI assistant serving consultants at an \
@@ -328,6 +374,11 @@ async def _fill_pool(llm: Any) -> None:
 async def _pool_maintenance_loop(llm: Any) -> None:
     """Background task: seed pool on startup, then top it up every 30 minutes."""
     if _pool_size() < 4:
+        # Curated golden-path queries first, so the very first user sees
+        # hand-verified suggestions rather than waiting on an LLM call —
+        # same rationale as .NET's SuggestionService cold-start seeding.
+        _pool_add(_SEED_POOL)
+        logger.info("suggestion pool seeded with %d curated golden-path queries", len(_SEED_POOL))
         await _fill_pool(llm)
     while True:
         await asyncio.sleep(_POOL_REFILL_INTERVAL)
@@ -452,7 +503,7 @@ async def suggestions(
         query=body.query[:500],
         sources=sources_str,
         answer=body.answer[:800],
-        tools=_ALL_TOOLS,
+        tools=_TOOL_CATALOG,
     )
 
     try:

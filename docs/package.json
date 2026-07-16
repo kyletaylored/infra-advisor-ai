@@ -7,6 +7,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
+    "check-links": "node scripts/check-links.js",
     "fetch-trace": "node scripts/fetch-trace.js"
   },
   "dependencies": {

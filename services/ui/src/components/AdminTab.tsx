@@ -17,6 +17,7 @@ import { Trash2, Shield } from "lucide-react";
 import { User, createUser, deleteUser, listUsers, patchUser } from "../lib/auth";
 import { useAuth } from "../hooks/useAuth";
 import { EvalDiagnostics } from "./EvalDiagnostics";
+import { AiGuardDiagnostics } from "./AiGuardDiagnostics";
 
 // ── Checkbox helper ───────────────────────────────────────────────────────────
 
@@ -391,6 +392,21 @@ export function AdminTab() {
             Snapshot of the .NET agent's external-evaluations pipeline. To change sample rate or judge model, update env vars and restart the agent-api-dotnet pod.
           </Text>
           <EvalDiagnostics />
+        </Box>
+
+        {/* ── AI Guard diagnostics (read-only) ────────────────────────────
+            AI Guard's HTTP API path (the only option for the .NET/MAF
+            backend) sends no traces to Datadog, so this in-app panel is
+            the only visibility into whether it's running and what it's
+            deciding. See docs/llm-engineering/ai-guard.mdx. */}
+        <Box>
+          <Text fontSize="sm" fontWeight="semibold" color="gray.700" mb={1}>
+            AI Guard (read-only)
+          </Text>
+          <Text fontSize="xs" color="gray.500" mb={3}>
+            Snapshot of the .NET agent's AI Guard pre-flight checks. Native Datadog trace visibility isn't available over the HTTP API — this panel plus the manual ai_guard.* APM span tags are the substitute.
+          </Text>
+          <AiGuardDiagnostics />
         </Box>
       </VStack>
 

@@ -1,3 +1,141 @@
+[2026-07-16] AI Guard rollout (Python + .NET) + parity audit refresh + docs check-links tooling
+
+  Three-part ultraplan: audit Python/.NET backend parity, implement Datadog AI
+  Guard on both stacks, and audit docs usability. Full plan at
+  /Users/kyle.taylor/.claude/plans/moonlit-weaving-hammock.md.
+
+  Parity audit (research only, no separate commit):
+    Corrected the stale 2026-05-16 dotnet-python-parity.mdx doc — tool-
+    description enrichment and the suggestion-pool mechanism were marked X
+    but are actually done on both sides. Confirmed the real remaining gap:
+    .NET has a full external-evals pipeline (DatadogEvalsClient +
+    EvalSubmissionLog + 5 IResponseEvaluators + /eval/status +
+    EvalDiagnostics.tsx); Python has zero equivalent evaluators, only a
+    faithfulness_score placeholder relying on ddtrace LLMObs auto-annotation.
+
+  AI Guard — Python (config-only, services/agent-api):
+    Python's agent.py is genuinely LangChain-based (langgraph create_react_
+    agent + langchain_openai + langchain_mcp_adapters), and ddtrace.auto is
+    already the first import. DD's automatic LangChain integration for AI
+    Guard applies with zero code changes — confirmed ddtrace>=4.7.1 already
+    exceeds the >=3.14.0 floor.
+
+    k8s/agent-api/configmap.yaml: + DD_TRACE_ENABLED, DD_AI_GUARD_ENABLED.
+    k8s/secrets/agent-api-secret.yaml: + DD_API_KEY, DD_APP_KEY placeholders
+      (DD_APP_KEY is new — required by the AI Guard integration; DD_API_KEY
+      was not previously provisioned on this service at all).
+    Makefile create-agent-api-secret: DD_API_KEY/DD_APP_KEY optional
+      (WARN not ERROR — AI Guard degrades gracefully without them).
+
+  AI Guard — .NET (new code, services/agent-api-dotnet):
+    MAF has no LangChain-equivalent auto-integration, so this uses DD's raw
+    HTTP API (POST /api/v2/ai-guard/evaluate). DD's own docs state HTTP API
+    calls produce NO Datadog traces — a hard platform limitation, not a
+    config gap. Compensated with manual span tagging + structured logging +
+    an admin diagnostics panel, all reusing existing patterns.
+
+    services/agent-api-dotnet/Services/DatadogAiGuardClient.cs  [NEW]
+      Modeled directly on DatadogEvalsClient.cs: env-driven DD_API_KEY +
+      DD_APPLICATION_KEY, graceful-disable-if-either-unset, FAILS OPEN
+      (treats transport/parse errors as ALLOW — a DD outage must never
+      block legitimate traffic). Wraps the HTTP call in a child Activity
+      tagged ai_guard.action/reason/duration_ms for partial APM visibility,
+      logs the decision (picked up by the existing
+      DatadogTraceContextEnricher for dd.trace_id/dd.span_id correlation),
+      and records every attempt to AiGuardSubmissionLog.
+
+    services/agent-api-dotnet/Services/AiGuardSubmissionLog.cs  [NEW]
+      50-entry ring buffer, same shape as EvalSubmissionLog.
+
+    services/agent-api-dotnet/Services/AgentService.cs
+      Pre-flight guard check added as step 0 in both RunAgentAsync and
+      RunAgentStreamingAsync — runs before classify_domain/retrieval/the
+      agent loop. On DENY/ABORT: RunAgentAsync returns AgentResult with new
+      Blocked/BlockReason fields; RunAgentStreamingAsync yields an
+      ErrorEvent and stops (streaming can't rewind already-sent text).
+
+    services/agent-api-dotnet/Models/AgentResult.cs: + Blocked, BlockReason
+      (both optional, default false/null — existing call sites unaffected).
+
+    services/agent-api-dotnet/Program.cs
+      + AiGuardSubmissionLog/DatadogAiGuardClient DI registration.
+      /query: checks result.Blocked, returns 403 with BlockReason instead
+        of 200 when AI Guard denies.
+      + GET /ai-guard/status — read-only diagnostics, same pattern as
+        /eval/status (sample submissions, action counts, no auth required
+        — matches /eval/status's existing unauthenticated precedent).
+
+    services/ui/src/components/AiGuardDiagnostics.tsx  [NEW]
+      Polls /api-dotnet/ai-guard/status every 10s, mirrors EvalDiagnostics.tsx.
+    services/ui/src/components/AdminTab.tsx: + AiGuardDiagnostics section.
+
+    k8s/secrets/agent-api-dotnet-secret.yaml: + DD_APPLICATION_KEY.
+    Makefile create-agent-api-dotnet-secret: + DD_APPLICATION_KEY (optional,
+      WARN not ERROR).
+
+  Parity doc rewrite (docs/src/content/docs/development/dotnet-python-parity.mdx):
+    Corrected stale rows, added AI Guard as a new capability row (noting
+    Python's path is the SIMPLER one here — a rare case where .NET is not
+    ahead), moved Tier 2-4 items into an explicit "Backlog — not planned
+    this round" section so the doc stops implying work is in progress that
+    isn't.
+
+  Python suggestion catch-up (services/agent-api/src/main.py):
+    _ALL_TOOLS (flat string) replaced with _TOOL_CATALOG (structured,
+    numbered, mirrors .NET's SuggestionService.ToolCatalog verbatim).
+    _FALLBACK_SUGGESTIONS (4 hardcoded) replaced with _SEED_POOL (12
+    curated entries, ported 1:1 from .NET's SeedPool) with
+    _FALLBACK_SUGGESTIONS now a slice of it. _pool_maintenance_loop seeds
+    the Redis pool with all 12 on cold start before the first LLM fill,
+    matching .NET's cold-start behavior.
+
+  Docs tooling (docs/):
+    scripts/check-links.js  [NEW] — crawls dist/**/*.html for internal
+      <a href> links under the /infra-advisor-ai base path, verifies each
+      resolves to an existing dist file. No fs.globSync dependency (plain
+      recursive readdirSync walk) so it doesn't require a specific Node
+      version. package.json: + "check-links" script.
+    src/content/docs/llm-engineering/ai-guard.mdx  [NEW] — why AI Guard
+      exists, the LangChain-vs-HTTP-API asymmetry, the trace-visibility
+      gap and its workaround. astro.config.mjs: + sidebar entry.
+
+    Corrected a research-agent finding before acting on it: the original
+    research claimed 6 pages (security-rbac.mdx, export-api.mdx,
+    external.mdx, instrumentation/dotnet.mdx, monitoring/mcp-clients.mdx,
+    monitoring/operations.mdx) "mix shipped and aspirational content
+    inconsistently" needing a standardized callout. On inspection this was
+    a false positive — the finding came from an OR'd grep pattern
+    (`"Roadmap, not shipped\|aspirational\|Aside type=\"caution\""`) that
+    matched ordinary operational <Aside type="caution"> warnings unrelated
+    to roadmap framing. Only experiments.mdx actually documents unshipped
+    work, and already does so correctly/uniquely. Skipped the non-fix.
+
+  Verified:
+  [x] dotnet build -c Release (agent-api-dotnet): 0 warnings, 0 errors
+  [x] npx tsc --noEmit (services/ui): 0 errors
+  [x] uv run pytest services/agent-api/tests/: 23 passed
+  [x] npx astro build (docs): 59 pages, 0 errors (was 58 before ai-guard.mdx)
+  [x] npm run check-links (docs, new): 0 broken internal links across 59 pages
+  [x] grep _ALL_TOOLS services/agent-api/src/*.py: 0 remaining references
+
+  [~] Live-deployment verification (operator actions required):
+      (a) make create-agent-api-secret + create-agent-api-dotnet-secret
+          with DD_APP_KEY / DD_APPLICATION_KEY set, then redeploy both pods.
+      (b) Send a deliberately malicious/injection-style prompt through
+          Python /query — confirm an AI Guard evaluation appears in DD's
+          AI Guard UI / LLM Obs trace view (native trace visibility).
+      (c) Same malicious-prompt test against .NET /query and /query/stream
+          — confirm HTTP 403 / ErrorEvent respectively, confirm the request
+          never reaches the LLM.
+      (d) GET /ai-guard/status (via /api-dotnet/ai-guard/status) shows the
+          submission; AdminTab's new "AI Guard (read-only)" panel renders.
+      (e) DD APM: confirm the manual ai_guard.* span tags appear nested
+          under the /query request trace (the substitute for the native
+          trace visibility HTTP API calls don't get).
+      (f) Confirm DD_API_KEY/DD_APP_KEY absence still allows /query to
+          succeed (fail-open behavior) — test with the keys unset in a
+          non-prod pod before assuming this in prod.
+
 [2026-05-27] Airflow scheduler crash loop fix + upgrade reliability + DAG pause controls
 
   Commit b3b7a63 — Opt out of DD .NET tracer injection + filter duplicate MCP HTTP spans:

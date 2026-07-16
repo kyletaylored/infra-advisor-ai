@@ -30,6 +30,7 @@ public class AgentService
     private readonly RetrievalService _retrieval;
     private readonly IReadOnlyList<IResponseEvaluator> _evaluators;
     private readonly DatadogEvalsClient _ddEvals;
+    private readonly DatadogAiGuardClient _aiGuard;
     private readonly Histogram<double> _faithfulnessHistogram;
     private readonly Counter<long> _conversationCounter;
     private readonly Counter<long> _toolCounter;
@@ -51,6 +52,7 @@ public class AgentService
         RetrievalService retrieval,
         IEnumerable<IResponseEvaluator> evaluators,
         DatadogEvalsClient ddEvals,
+        DatadogAiGuardClient aiGuard,
         IMeterFactory meterFactory,
         ILogger<AgentService> logger)
     {
@@ -60,6 +62,7 @@ public class AgentService
         _retrieval = retrieval;
         _evaluators = evaluators.ToList();
         _ddEvals = ddEvals;
+        _aiGuard = aiGuard;
         _logger = logger;
         _evalSampleRate = double.TryParse(
             Environment.GetEnvironmentVariable("EVAL_SAMPLE_RATE"),
@@ -88,6 +91,27 @@ public class AgentService
         string deployment,
         CancellationToken ct = default)
     {
+        // 0. AI Guard pre-flight check on the raw user query. Runs before
+        //    anything else touches the LLM/tool loop — see DatadogAiGuardClient
+        //    for why this is the HTTP API path (no LangChain-equivalent
+        //    auto-integration exists for Microsoft Agent Framework) and why
+        //    it fails open on transport errors.
+        var guardResult = await _aiGuard.EvaluateAsync(
+            new[] { new AiGuardMessage("user", query) }, ct);
+        if (guardResult.IsBlocked)
+        {
+            _logger.LogWarning(
+                "AI Guard blocked query for session={SessionId}: {Action} — {Reason}",
+                sessionId, guardResult.Action, guardResult.Reason);
+            return new AgentResult(
+                Answer: "",
+                Sources: new List<string>(),
+                ToolsCalled: new List<string>(),
+                QueryDomain: "blocked",
+                Blocked: true,
+                BlockReason: guardResult.Reason ?? $"Blocked by AI Guard ({guardResult.Action})");
+        }
+
         // 1. Task: classify the query domain (manual span — pure CS, no LLM).
         var domain = ClassifyDomainTraced(query);
 
@@ -293,6 +317,22 @@ public class AgentService
         string deployment,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
+        // 0. AI Guard pre-flight check — see RunAgentAsync for rationale.
+        //    Streaming can't rewind text already sent to the client, so this
+        //    must run before the first StreamEvent goes out.
+        var guardResult = await _aiGuard.EvaluateAsync(
+            new[] { new AiGuardMessage("user", query) }, ct);
+        if (guardResult.IsBlocked)
+        {
+            _logger.LogWarning(
+                "AI Guard blocked streaming query for session={SessionId}: {Action} — {Reason}",
+                sessionId, guardResult.Action, guardResult.Reason);
+            yield return new ErrorEvent(
+                guardResult.Reason ?? $"Blocked by AI Guard ({guardResult.Action})",
+                TraceId: Activity.Current?.TraceId.ToString());
+            yield break;
+        }
+
         // 1. classify_domain (sync) — instant; report as a completed step.
         var domain = ClassifyDomainTraced(query);
         yield return new StepEvent("classify_domain", "done", domain);
