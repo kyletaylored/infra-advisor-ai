@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading.RateLimiting;
 using Azure;
 using Azure.AI.OpenAI;
+using System.ClientModel.Primitives;
 using InfraAdvisor.AgentApi.Models;
 using InfraAdvisor.AgentApi.Observability;
 using InfraAdvisor.AgentApi.Services;
@@ -90,8 +91,34 @@ builder.Services.AddSingleton<IConnectionMultiplexer>(_ =>
 });
 
 // ── Azure OpenAI client (used by both M.E.AI's IChatClient and SuggestionService) ─
-builder.Services.AddSingleton(_ => new AzureOpenAIClient(
-    new Uri(azureEndpoint), new AzureKeyCredential(azureApiKey)));
+// Retry policy is explicitly bounded rather than left at the SDK default.
+// Traces 1722495265582310941 / 1891183475693376788 showed single "chat"
+// spans running 42-52s under sustained 429s — not wrong (retrying is
+// correct), but uncoordinated with the 300s nginx proxy timeout shared by
+// the rest of the /query/stream pipeline (MCP calls, embeddings, DB
+// writes). MaxRetries caps the worst-case total wait, leaving headroom
+// under the proxy ceiling (the SDK's ClientRetryPolicy doesn't expose a
+// separate max-per-delay knob in this System.ClientModel version — bounding
+// retry count is the lever available). RateLimitObservabilityPolicy makes
+// each individual 429 visible (as a counter + log line) instead of
+// vanishing into the SDK's internal retry loop.
+var llmRateLimitMeter = new Meter(TelemetrySetup.ActivitySourceName);
+var llmRateLimitCounter = llmRateLimitMeter.CreateCounter<long>(
+    "infra_advisor.llm.rate_limited",
+    description: "Count of individual Azure OpenAI 429 responses observed by the retry pipeline.");
+
+builder.Services.AddSingleton(sp =>
+{
+    var options = new AzureOpenAIClientOptions
+    {
+        RetryPolicy = new ClientRetryPolicy(maxRetries: 4),
+    };
+    options.AddPolicy(
+        new RateLimitObservabilityPolicy(
+            llmRateLimitCounter, sp.GetRequiredService<ILogger<RateLimitObservabilityPolicy>>()),
+        PipelinePosition.PerTry);
+    return new AzureOpenAIClient(new Uri(azureEndpoint), new AzureKeyCredential(azureApiKey), options);
+});
 
 // ── MCP client holder — lazy connect with reconnect-on-session-expired ─────
 // Previously we did a synchronous McpClient.CreateAsync at startup and
@@ -110,7 +137,11 @@ builder.Services.AddSingleton(_ => new AzureOpenAIClient(
 // Register the named HttpClient used by McpClientHolder so OTel's
 // AddHttpClientInstrumentation() handler is in the pipeline (spans appear as
 // HTTP child spans under each tool_call in Datadog APM).
-builder.Services.AddHttpClient("mcp-dotnet");
+// Explicit finite timeout (default HttpClient.Timeout is 100s) so a
+// genuinely hung mcp-server-dotnet call fails within a bounded window
+// instead of tying up the streaming pipeline for the full default.
+builder.Services.AddHttpClient("mcp-dotnet")
+    .ConfigureHttpClient(c => c.Timeout = TimeSpan.FromSeconds(60));
 
 builder.Services.AddSingleton(sp => new McpClientHolder(
     serverUrl: mcpServerUrl,

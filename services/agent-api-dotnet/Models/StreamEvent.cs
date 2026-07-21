@@ -58,7 +58,12 @@ public sealed record DoneEvent(
 
 // Surfaced when something fatal happens mid-stream. The UI shows the
 // error and stops the stream — same UX as the existing /query 5xx path.
+// Category is an optional machine-readable classification ("mcp_unavailable",
+// "mcp_session_expired", null for uncategorized) the UI can key off of
+// later without string-matching Message; Message is always a clear,
+// user-actionable string, never a raw exception message.
 public sealed record ErrorEvent(
     string Message,
-    string? TraceId
+    string? TraceId,
+    string? Category = null
 ) : StreamEvent("error");

@@ -11,6 +11,7 @@ import {
   IconButton,
   Link,
   NativeSelect,
+  Spinner,
   Text,
   Textarea,
   VStack,
@@ -487,6 +488,12 @@ export function Chat() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<{ message: string; traceId: string | null } | null>(null);
   const [activeMsgIdx, setActiveMsgIdx] = useState<number | null>(null);
+  // "Still working…" indicator for the active assistant message — see
+  // lastEventAtRef below. Covers long silent stretches (e.g. an LLM
+  // rate-limit backoff) where the backend emits no StepEvent/TextChunkEvent
+  // for 30-60s and the assistant bubble would otherwise show nothing.
+  const [showStillWorking, setShowStillWorking] = useState(false);
+  const lastEventAtRef = useRef<number>(Date.now());
   const [recommendations, setRecommendations] = useState<Suggestion[]>([]);
   const [availableModels, setAvailableModels] = useState<string[]>(["gpt-4.1-mini"]);
   const [selectedModel, setSelectedModel] = useState<string>(getModel());
@@ -586,6 +593,11 @@ export function Chat() {
     setInput("");
     setError(null);
     setLoading(true);
+    setShowStillWorking(false);
+    lastEventAtRef.current = Date.now();
+    const stillWorkingTimer = window.setInterval(() => {
+      setShowStillWorking(Date.now() - lastEventAtRef.current > 4000);
+    }, 1000);
 
     const userMessage: Message = { role: "user", content: query, sources: [], steps: [], bridges: [] };
     // Empty assistant placeholder we mutate in place as stream events arrive.
@@ -634,6 +646,8 @@ export function Chat() {
       }
 
       function handleStreamEvent(evt: StreamEvent) {
+        lastEventAtRef.current = Date.now();
+        setShowStillWorking(false);
         switch (evt.event) {
           case "step":
             upsertStep({
@@ -698,6 +712,8 @@ export function Chat() {
         traceId: err instanceof ApiError ? err.traceId : null,
       });
     } finally {
+      window.clearInterval(stillWorkingTimer);
+      setShowStillWorking(false);
       setLoading(false);
     }
   }
@@ -1005,6 +1021,13 @@ export function Chat() {
                           <VStack mt={3} gap={2} align="stretch">
                             {msg.bridges.map((b, j) => <BridgeCard key={j} bridge={b} />)}
                           </VStack>
+                        )}
+
+                        {msg.role === "assistant" && activeMsgIdx === i && showStillWorking && (
+                          <HStack gap={2} mt={msg.steps.length > 0 || msg.content ? 2 : 0} color="gray.500">
+                            <Spinner size="xs" />
+                            <Text fontSize="xs">Still working…</Text>
+                          </HStack>
                         )}
 
                       </Box>

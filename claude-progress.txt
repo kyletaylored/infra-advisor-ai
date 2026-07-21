@@ -1,3 +1,116 @@
+[2026-07-21] MCP streaming reliability + "still working" UX + bounded LLM retry
+
+  Triggered by user report: MCP API calls constantly failing, no UI feedback
+  that a request is still running, generic/unhelpful errors. Investigated via
+  Datadog MCP tools — traces 1722495265582310941 and 1891183475693376788
+  (both POST /query/stream on agent-api-dotnet, both 200 OK but 50-64s total
+  duration). Found three distinct root causes, all fixed. Full plan at
+  /Users/kyle.taylor/.claude/plans/idempotent-exploring-allen.md.
+
+  Fix 1 — MCP retry + clear errors on the streaming path:
+    RunAgentAsync (/query) already had session-expired detection +
+    transparent reconnect-and-retry-once via McpClientHolder.RefreshAsync.
+    RunAgentStreamingAsync (/query/stream) skipped this entirely and
+    surfaced the raw exception message as an ErrorEvent. Trace 2 showed a
+    literal 404 "session expired" from mcp-server-dotnet; both traces
+    showed a recurring TaskCanceledException on the MCP call that Datadog
+    Error Tracking had marked RESOLVED (issue
+    1d5322a6-5065-11f1-91de-da7ad0900003) despite recurring in both traces.
+
+    services/agent-api-dotnet/Services/AgentService.cs
+      RunAgentStreamingAsync: retries once via McpClientHolder.RefreshAsync
+      when session-expiry hits before anything (tool chip/text) has streamed
+      to the client — resets toolStarts/allSources/toolsCalledOrdered/
+      toolResults/fullAnswer before replaying so tool/step counts don't
+      double-report. New ClassifyStreamError(ex, sessionRetryAttempted)
+      turns terminal exceptions into a clear, user-actionable message +
+      category (mcp_session_expired / upstream_timeout / unknown) instead of
+      raw exception text; full exception still logged server-side.
+    services/agent-api-dotnet/Models/StreamEvent.cs
+      ErrorEvent gains optional Category field (additive, nullable).
+    services/agent-api-dotnet/Program.cs
+      "mcp-dotnet" named HttpClient gets an explicit 60s timeout (was
+      unset -> 100s default).
+    services/agent-api-dotnet/Services/McpClientHolder.cs
+      Added LogDebug diagnostics at ConnectNoLockAsync entry (logs whether
+      the caller's ct is already cancelled) to help confirm/refute the
+      hypothesis that a stale request's CancellationToken was leaking into
+      the shared MCP client and causing the near-instant TaskCanceledException.
+
+  Fix 2 — "Still working" indicator during silent stretches:
+    The global "Thinking..." indicator was deliberately removed previously;
+    during a long silent stretch (e.g. the 42-52s Azure OpenAI 429 backoff
+    seen in both traces) the backend emits zero StepEvent/TextChunkEvents,
+    so the user saw a fully empty assistant bubble for up to a minute.
+
+    services/ui/src/components/Chat.tsx
+      New lastEventAtRef + showStillWorking state. A 1s interval (started in
+      submit(), cleared in the existing finally block) flags showStillWorking
+      once 4s have passed since the last stream event. Rendered as a small
+      Spinner + "Still working..." row inside the active assistant bubble
+      (activeMsgIdx === i), so it reappears on any later gap too, not just at
+      cold start. Pure client-side idle timer — no backend change needed.
+
+  Fix 3 — Bounded, visible Azure OpenAI 429 backoff:
+    AzureOpenAIClient was constructed with zero custom options — default SDK
+    retry, no visibility into individual 429s, uncoordinated with the 300s
+    nginx proxy timeout shared by the rest of the /query/stream pipeline.
+
+    services/agent-api-dotnet/Observability/RateLimitObservabilityPolicy.cs  [NEW]
+      System.ClientModel.Primitives.PipelinePolicy (NOT Azure.Core's
+      HttpPipelinePolicy — Azure.AI.OpenAI 2.9.0-beta.1 is built on
+      System.ClientModel, confirmed via reflection after an initial Azure.Core
+      attempt failed to compile). Registered at PipelinePosition.PerTry;
+      inspects message.Response.Status == 429 on every retry attempt and
+      increments a counter + logs, since the SDK's ClientRetryPolicy
+      otherwise swallows individual 429s before AgentService ever sees them.
+    services/agent-api-dotnet/Program.cs
+      AzureOpenAIClient singleton now built with AzureOpenAIClientOptions {
+      RetryPolicy = new ClientRetryPolicy(maxRetries: 4) } (System.ClientModel
+      doesn't expose a separate max-per-delay knob in this version — bounding
+      retry count is the available lever) + the new
+      RateLimitObservabilityPolicy wired in. New counter
+      infra_advisor.llm.rate_limited (meter = TelemetrySetup.ActivitySourceName,
+      already AddMeter'd in TelemetrySetup.cs).
+
+  Out of scope (flagged, not fixed): recurring Kafka rdkafka
+  "1/1 brokers are down" connection-refused errors in KafkaConsumerService
+  logs — separate infra/networking issue, not causing these query failures.
+  Python backend's missing /query/stream endpoint (documented gap in
+  dotnet-python-parity.mdx) — unrelated, both investigated traces are dotnet.
+
+  Verified:
+  [x] dotnet build (agent-api-dotnet): 0 warnings, 0 errors
+  [x] npx tsc --noEmit (services/ui): 0 errors
+  [x] git diff --stat: change scope matches the plan exactly (StreamEvent.cs,
+      Program.cs, AgentService.cs, McpClientHolder.cs, Chat.tsx, + new
+      RateLimitObservabilityPolicy.cs) — no unrelated files touched
+
+  [~] Live-deployment verification (operator actions required):
+      (a) kubectl rollout restart deployment/mcp-server-dotnet mid-
+          conversation, then send /query/stream before any tool call fires —
+          confirm transparent retry (infra_advisor.mcp.reconnect counter
+          with reason=session_expired_stream increments, no ErrorEvent
+          reaches the UI).
+      (b) Repeat after some TextChunkEvents have already streamed — confirm
+          retry is correctly skipped and the UI gets the new categorized
+          ErrorEvent (mcp_session_expired) instead of a raw exception string.
+      (c) Re-pull a fresh Datadog trace (get_datadog_trace) after (a) to
+          confirm the retry shows as two POST .../mcp attempts, and confirm
+          the near-instant TaskCanceledException (issue
+          1d5322a6-5065-11f1-91de-da7ad0900003) stops recurring in Error
+          Tracking across repeated runs — if it still recurs, the
+          CancellationToken-leak hypothesis in McpClientHolder needs deeper
+          investigation than the bounded-timeout mitigation shipped here.
+      (d) Manual UI test: throttle/delay the backend and confirm "Still
+          working..." appears after ~4-5s, disappears the moment the next
+          event streams, and reappears on a second gap later in the same
+          message.
+      (e) Force sustained 429s against a rate-limited test deployment;
+          confirm chat span duration stays bounded (fresh Datadog trace),
+          infra_advisor.llm.rate_limited increments per 429, and pod logs
+          show the distinct rate-limit warning line.
+
 [2026-07-16] AI Guard rollout (Python + .NET) + parity audit refresh + docs check-links tooling
 
   Three-part ultraplan: audit Python/.NET backend parity, implement Datadog AI

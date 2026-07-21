@@ -285,6 +285,28 @@ public class AgentService
         return e.Message;
     }
 
+    // Turns a mid-stream exception into a clear, user-actionable message +
+    // machine-readable category for the terminal ErrorEvent. Never surfaces
+    // raw .NET/HTTP exception text to the user — the full exception is still
+    // logged server-side at the yield site for diagnosis.
+    private static (string Message, string Category) ClassifyStreamError(
+        Exception ex, bool sessionRetryAttempted)
+    {
+        if (IsMcpSessionExpired(ex))
+        {
+            return sessionRetryAttempted
+                ? ("The infrastructure data service restarted and reconnecting failed. Please retry your question.", "mcp_session_expired")
+                : ("The infrastructure data service restarted. Please retry your question.", "mcp_session_expired");
+        }
+        for (var e = ex; e is not null; e = e.InnerException!)
+        {
+            if (e is TaskCanceledException or OperationCanceledException or TimeoutException)
+                return ("A backend service didn't respond in time. Please retry your question.", "upstream_timeout");
+            if (e.InnerException is null) break;
+        }
+        return (ex.Message, "unknown");
+    }
+
     // Wraps ClassifyDomain in a manual Activity tagged so DD LLMObs renders
     // it as a "task" kind span (alongside the agent / chat / tool / embedding
     // / retrieval kinds emitted elsewhere in this trace).
@@ -317,6 +339,10 @@ public class AgentService
         string deployment,
         [System.Runtime.CompilerServices.EnumeratorCancellation] CancellationToken ct = default)
     {
+        _logger.LogDebug(
+            "[stream] starting for session={SessionId}; ct already cancelled: {AlreadyCancelled}",
+            sessionId, ct.IsCancellationRequested);
+
         // 0. AI Guard pre-flight check — see RunAgentAsync for rationale.
         //    Streaming can't rewind text already sent to the client, so this
         //    must run before the first StreamEvent goes out.
@@ -360,6 +386,14 @@ public class AgentService
         var fullAnswer = new System.Text.StringBuilder();
         Exception? streamError = null;
 
+        // Whether anything the user can already see (a tool chip or answer
+        // text) has been yielded yet. A session-expired reconnect is only
+        // safe to retry transparently while this is still false — once
+        // something has streamed, replaying the query would duplicate or
+        // contradict what the client already rendered.
+        var anyStreamed = false;
+        var retriedMcpSession = false;
+
         var updates = agent.RunStreamingAsync(augmentedQuery, session, cancellationToken: ct);
         var enumerator = updates.GetAsyncEnumerator(ct);
 
@@ -370,6 +404,35 @@ public class AgentService
             // a C# constraint, so we step manually here.
             bool moved;
             try { moved = await enumerator.MoveNextAsync(); }
+            catch (Exception ex) when (IsMcpSessionExpired(ex) && !anyStreamed && !retriedMcpSession)
+            {
+                // mcp-server-dotnet was restarted before any tool call/text
+                // reached the client — safe to reconnect and restart the
+                // stream from scratch, same recovery RunAgentAsync does for
+                // /query. Not attempted once anyStreamed is true (see above).
+                retriedMcpSession = true;
+                _logger.LogWarning(
+                    "MCP session expired mid-stream for session={SessionId} before any output — reconnecting and restarting once: {Error}",
+                    sessionId, RootErrorMessage(ex));
+                _mcpReconnectCounter.Add(1,
+                    new KeyValuePair<string, object?>("reason", "session_expired_stream"));
+                await enumerator.DisposeAsync();
+                await _mcpHolder.RefreshAsync(ct);
+                agent = await _agentHolder.GetAgentAsync(ct);
+                // Restored session JSON references AITool instances from the
+                // prior MCP client; recreate fresh against the new agent so
+                // tool call routing wires correctly (same reasoning as
+                // RunAgentAsync's retry path).
+                session = await agent.CreateSessionAsync(ct);
+                toolStarts.Clear();
+                allSources.Clear();
+                toolsCalledOrdered.Clear();
+                toolResults.Clear();
+                fullAnswer.Clear();
+                updates = agent.RunStreamingAsync(augmentedQuery, session, cancellationToken: ct);
+                enumerator = updates.GetAsyncEnumerator(ct);
+                continue;
+            }
             catch (Exception ex)
             {
                 streamError = ex;
@@ -379,15 +442,21 @@ public class AgentService
 
             var update = enumerator.Current;
             foreach (var ev in HandleUpdate(update, toolStarts, allSources, toolsCalledOrdered, toolResults, fullAnswer))
+            {
+                if (ev is ToolCallStartEvent or TextChunkEvent) anyStreamed = true;
                 yield return ev;
+            }
         }
         await enumerator.DisposeAsync();
 
         if (streamError is not null)
         {
-            _logger.LogWarning("agent.RunStreamingAsync failed for session={SessionId}: {Error}",
-                sessionId, streamError.Message);
-            yield return new ErrorEvent(streamError.Message, TraceId: Activity.Current?.TraceId.ToString());
+            var (errorMessage, errorCategory) = ClassifyStreamError(streamError, retriedMcpSession);
+            _logger.LogWarning(
+                "agent.RunStreamingAsync failed for session={SessionId} category={Category}: {Error}",
+                sessionId, errorCategory, RootErrorMessage(streamError));
+            yield return new ErrorEvent(
+                errorMessage, TraceId: Activity.Current?.TraceId.ToString(), Category: errorCategory);
             yield break;
         }
 

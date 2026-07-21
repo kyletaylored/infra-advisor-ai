@@ -100,6 +100,20 @@ public class McpClientHolder : IAsyncDisposable
 
     private async Task ConnectNoLockAsync(CancellationToken ct)
     {
+        // `ct` here belongs to whichever request happened to trigger this
+        // (re)connect, but the resulting McpClient is cached and shared by
+        // every subsequent request until the next RefreshAsync. It must only
+        // gate the handshake below (CreateAsync/ListToolsAsync) — it must
+        // never be captured by the transport for later use, or an unrelated
+        // request's cancellation (e.g. the browser navigating away mid-SSE)
+        // could tear down the shared client for everyone else. Diagnostic
+        // log to confirm/refute this as the source of the near-instant
+        // TaskCanceledException seen recurring in Datadog Error Tracking
+        // (issue 1d5322a6-5065-11f1-91de-da7ad0900003) on MCP tool calls.
+        _logger.LogDebug(
+            "[mcp] connecting to {Url}; caller ct already cancelled: {AlreadyCancelled}",
+            _serverUrl, ct.IsCancellationRequested);
+
         // Use an IHttpClientFactory-managed HttpClient so OTel's
         // AddHttpClientInstrumentation() delegating handler is in the pipeline,
         // making MCP HTTP calls visible as child spans in Datadog APM.
