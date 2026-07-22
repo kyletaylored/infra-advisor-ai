@@ -1,3 +1,98 @@
+[2026-07-22] Datadog agent/operator upgrade + discovered mcp-server crash loop
+
+  Triggered by user pasting a DatadogAgent CR exported from the Datadog UI
+  and asking for a diff against datadog/datadog-agent.yaml, plus a request
+  to upgrade the agent version.
+
+  Diff findings: our config already had everything the UI export showed
+  (and more) — no missing features. Notably ours intentionally scopes
+  apm.instrumentation.targets to the infra-advisor namespace via
+  namespaceSelector (UI's was unscoped/cluster-wide), and ours has a fully
+  custom otelCollector.conf.configData pipeline (LLMObs ml_app injection,
+  DBM<->APM correlation, Prometheus scrape) that the UI export naturally
+  can't know about — both correctly kept as-is, not overwritten.
+
+  Version upgrade (commit c816124):
+    Checked live cluster + Helm repo directly: datadog-operator was
+    2.21.1 (app 1.25.0), latest stable chart 2.24.0 (app 1.28.0); Agent/
+    Cluster Agent were 7.77.2, latest stable 7.81.2. datadog-agent.yaml
+    previously had no explicit image.tag override at all — version was
+    whatever the operator defaulted to. Added
+    override.nodeAgent/clusterAgent.image.tag: "7.81.2" for reproducibility
+    (matches this repo's explicit-pinning convention elsewhere).
+
+    Also fixed a real bug the user found via their own IDE edit: AppSec
+    injection was enabled (appsec.injector.enabled: "true") but the agent
+    was logging "processor service name is required when AppSec is
+    enabled" — added the
+    agent.datadoghq.com/appsec.injector.processor.service.name annotation
+    set to "infra-advisor-target" (matches the apm.instrumentation.targets
+    name already in the config).
+
+    Applied live: `helm upgrade datadog-operator datadog/datadog-operator
+    -n datadog --version 2.24.0`, then `kubectl apply -f
+    datadog/datadog-agent.yaml`. Operator lease took its normal ~60s to
+    transfer to the new pod (looked stuck at first, wasn't). Both the
+    Agent DaemonSet and Cluster Agent Deployment rolled out cleanly to
+    7.81.2 — confirmed via `agent status` that Agent 7.81's consolidation
+    of process collection into the core agent container (no more separate
+    process-agent container) hasn't broken liveProcessCollection/
+    processDiscovery; checks are running and reporting data as expected.
+
+  Discovered while re-checking the live rollout — a genuinely important
+  find, unrelated to the agent upgrade itself:
+
+  mcp-server crash-loop bug (commit 7e07fbf) — user reported the
+  USASpending 422 was STILL happening with no new debug info, despite the
+  log_external_api_failure fix (a3805ca) supposedly being live. Searched
+  Datadog Logs for it — zero hits, anywhere, ever. Checked the actual
+  cluster: services/mcp-server's Deployment was pinned to image
+  mcp-server:a3805ca (correct, CI's SHA-pinning worked), but the pods
+  actually serving traffic were from a ReplicaSet 16 DAYS old — the new
+  pod was stuck in CrashLoopBackOff (119 restarts over 9h) with
+  "Permission denied" creating /home/appuser/.cache/uv. Root cause:
+  services/mcp-server/Dockerfile's CMD was `uv run uvicorn ...`, which
+  does a runtime sync-check requiring a writable uv cache dir under
+  $HOME — but the appuser account is created with --no-create-home, so
+  /home/appuser never exists. Every single mcp-server image built and
+  pushed since this bug was introduced has been silently crash-looping,
+  with Kubernetes masking it by continuing to serve the last-known-good
+  16-day-old pods — meaning the log_external_api_failure fix, and
+  everything else touching mcp-server today, never actually went live
+  until this fix ships.
+
+    Fixed by changing CMD to invoke the already-fully-synced venv
+    directly (`/app/.venv/bin/uvicorn ...`), skipping uv's runtime
+    sync-check entirely — no cache write needed. Confirmed via grep that
+    mcp-server is the ONLY Dockerfile in the repo using the uv-sync-then-
+    uv-run pattern (agent-api/auth-api use `uv pip install --system`
+    instead, installing into system site-packages, which is why they
+    never hit this).
+
+  Verified:
+  [x] helm upgrade datadog-operator: 2.21.1 -> 2.24.0 confirmed via
+      `helm list -n datadog`
+  [x] kubectl rollout status: Agent DaemonSet + Cluster Agent both
+      successfully rolled out to 7.81.2 (confirmed via pod image
+      inspection, not just rollout-status exit code)
+  [x] AppSec ClusterRoleBinding datadog-datadog-appsec-dca now exists
+      (created by the operator once AppSec config was valid)
+  [x] agent status on a new pod: feature_process_enabled: true, checks
+      [process rtprocess] running, 131 processes / 32 containers reported
+      — process collection intact under the new architecture
+  [x] grep confirms no other service Dockerfile has the uv-run cache bug
+
+  [~] Pending (not yet done — awaiting push):
+      (a) mcp-server Dockerfile fix (7e07fbf) is committed but not
+          pushed — CI won't rebuild/redeploy the image until pushed to
+          main. Until then, mcp-server is STILL serving the 16-day-old
+          image, and log_external_api_failure (and every other
+          mcp-server change from today) remains not-actually-live.
+      (b) Once pushed and CI redeploys: re-verify the USASpending 422
+          case end-to-end — confirm the new pod stays healthy (no
+          CrashLoopBackOff) and that Datadog Logs now show the
+          "external API failure: source=usaspending ..." line for real.
+
 [2026-07-22] Persist tool-call reasoning + Copy/Open-in-Sandbox buttons + Sandbox .NET parity
 
   Triggered by continued opaque tool failures in chat — user wanted the
