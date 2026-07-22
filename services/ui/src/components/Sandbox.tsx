@@ -12,6 +12,16 @@ import {
 } from "@chakra-ui/react";
 import { Sparkles } from "lucide-react";
 import { getApiBase } from "../lib/api";
+import { getToken } from "../lib/auth";
+
+// Every protected endpoint requires a bearer token (services/agent-api and
+// agent-api-dotnet both fail with 401 "Authorization header missing"
+// otherwise) — matches the authHeader()/authHeaders() pattern already used
+// in lib/api.ts and lib/auth.ts.
+function authHeader(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 // ── Endpoint definitions ─────────────────────────────────────────────────────
 
@@ -236,7 +246,7 @@ export function Sandbox({ prefill }: { prefill?: SandboxPrefill | null }) {
     try {
       const resp = await fetch(`${apiBase}/suggestions`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeader() },
         body: JSON.stringify({
           query: "infrastructure",
           answer: "Explore infrastructure data across bridges, energy, water, and disaster records.",
@@ -289,7 +299,7 @@ export function Sandbox({ prefill }: { prefill?: SandboxPrefill | null }) {
     try {
       const resp = await fetch(url, {
         method: endpoint.method,
-        headers: isGet ? {} : { "Content-Type": "application/json" },
+        headers: isGet ? authHeader() : { "Content-Type": "application/json", ...authHeader() },
         body: isGet ? undefined : body,
       });
 
