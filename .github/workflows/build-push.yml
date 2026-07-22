@@ -193,6 +193,8 @@ jobs:
     permissions:
       contents: read
     steps:
+      - uses: actions/checkout@v6
+
       - name: Azure login
         uses: azure/login@v3
         with:
