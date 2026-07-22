@@ -36,7 +36,16 @@ from database import (
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
-    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    # dd.trace_id/dd.span_id placeholders are what actually make
+    # DD_LOGS_INJECTION=true correlate a log line to its trace — ddtrace
+    # patches LogRecord with these attributes regardless, but they never
+    # reach the rendered output (and so are invisible to Datadog's log
+    # pipeline) unless the format string references them explicitly.
+    format=(
+        "%(asctime)s %(levelname)s [%(name)s] "
+        "[dd.service=%(dd.service)s dd.env=%(dd.env)s dd.version=%(dd.version)s "
+        "dd.trace_id=%(dd.trace_id)s dd.span_id=%(dd.span_id)s] - %(message)s"
+    ),
 )
 logger = logging.getLogger(__name__)
 
