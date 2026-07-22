@@ -208,7 +208,7 @@ export type StreamEvent =
       tools_called: string[];
       query_domain: string;
     }
-  | { event: "error"; message: string; trace_id: string | null };
+  | { event: "error"; message: string; trace_id: string | null; category?: string | null };
 
 // Streams events from POST /query/stream as an AsyncIterable<StreamEvent>.
 // Caller consumes with `for await (const ev of sendQueryStream(...))`.

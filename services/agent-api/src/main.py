@@ -13,13 +13,13 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
-from agent import build_llm, build_mcp_client, run_agent
+from agent import build_llm, build_mcp_client, run_agent, run_agent_stream
 from auth import limiter, require_auth
 from conversations import (
     create_conversation,
@@ -483,6 +483,92 @@ async def query(
         span_id=span_id,
         session_id=session_id,
         model=deployment,
+    )
+
+
+@app.post("/query/stream")
+@limiter.limit("20/minute")
+async def query_stream(
+    request: Request,
+    body: QueryRequest,
+    x_session_id: str | None = Header(default=None, alias="X-Session-ID"),
+    x_dd_rum_session_id: str | None = Header(default=None, alias="X-DD-RUM-Session-ID"),
+    x_conversation_id: str | None = Header(default=None, alias="X-Conversation-ID"),
+    x_user_id: str | None = Header(default=None, alias="X-User-ID"),
+    _user: dict = Depends(require_auth),
+) -> StreamingResponse:
+    """SSE streaming counterpart to /query. Same session/model resolution as
+    /query; the 503 readiness guard fires before the StreamingResponse is
+    constructed so it's a normal HTTP error, not a mid-stream one — same
+    shape as agent-api-dotnet's /query/stream (Program.cs)."""
+    session_id = x_session_id or body.session_id or str(uuid.uuid4())
+
+    if not _mcp_client or not _llm:
+        raise HTTPException(
+            status_code=503,
+            detail="Agent not ready — MCP or LLM client unavailable",
+        )
+
+    if body.model and body.model in _AVAILABLE_MODELS:
+        deployment = body.model
+    else:
+        deployment = get_session_model(session_id)
+        if deployment not in _AVAILABLE_MODELS and _AVAILABLE_MODELS:
+            deployment = _AVAILABLE_MODELS[0]
+
+    async def event_stream():
+        answer_parts: list[str] = []
+        tools_called: list[str] = []
+
+        async for evt in run_agent_stream(
+            query=body.query,
+            session_id=session_id,
+            mcp_client=_mcp_client,
+            deployment=deployment,
+            rum_session_id=x_dd_rum_session_id,
+        ):
+            event_name = evt["event"]
+
+            if event_name == "text_chunk":
+                answer_parts.append(evt["chunk"])
+            elif event_name == "done":
+                tools_called = evt["tools_called"]
+                evt = {
+                    **evt,
+                    "trace_id": current_trace_id(),
+                    "span_id": current_span_id(),
+                }
+            elif event_name == "error":
+                evt = {**evt, "trace_id": current_trace_id()}
+
+            payload = json.dumps({k: v for k, v in evt.items() if k != "event"})
+            yield f"event: {event_name}\ndata: {payload}\n\n"
+
+        full_answer = "".join(answer_parts)
+        append_exchange(session_id, body.query, full_answer)
+        set_session_model(session_id, deployment)
+
+        if x_conversation_id and x_user_id:
+            try:
+                save_messages(
+                    conv_id=x_conversation_id,
+                    user_query=body.query,
+                    ai_answer=full_answer,
+                    sources=tools_called,
+                    trace_id=current_trace_id(),
+                    span_id=current_span_id(),
+                )
+            except Exception as exc:
+                logger.warning("save_messages failed (non-fatal): %s", exc)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
     )
 
 

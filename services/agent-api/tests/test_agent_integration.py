@@ -17,6 +17,7 @@ Coverage
 * 503 returned when agent not ready
 """
 
+import json
 import os
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -91,6 +92,50 @@ CANNED_RESULT = {
     "query_domain": "transportation",
 }
 
+# Canned run_agent_stream() — an async generator, not a coroutine, so it's
+# patched in directly (new=_canned_stream) rather than via AsyncMock.
+CANNED_STREAM_EVENTS = [
+    {"event": "step", "step": "classify_domain", "status": "done", "detail": "transportation"},
+    {"event": "step", "step": "route_query", "status": "done", "detail": "engineering"},
+    {"event": "tool_call_start", "id": "1", "name": "get_bridge_condition", "args_json": "{}"},
+    {
+        "event": "tool_call_end",
+        "id": "1",
+        "name": "get_bridge_condition",
+        "status": "ok",
+        "result_summary": "1 records",
+        "sources": ["FHWA NBI"],
+        "duration_ms": 12.3,
+    },
+    {"event": "text_chunk", "chunk": "Bridge 1100200000B0042 has a sufficiency rating of 42.7."},
+    {
+        "event": "done",
+        "session_id": "test-session",
+        "model": "gpt-4.1-mini",
+        "sources": ["FHWA NBI"],
+        "tools_called": ["get_bridge_condition"],
+        "query_domain": "transportation",
+    },
+]
+
+
+async def _canned_stream(*args, **kwargs):
+    for evt in CANNED_STREAM_EVENTS:
+        yield evt
+
+
+def _parse_sse_blocks(body: str) -> list[tuple[str, dict]]:
+    """Split a raw SSE response body into (event_name, parsed_data) pairs."""
+    parsed = []
+    for block in body.split("\n\n"):
+        if not block.strip():
+            continue
+        lines = block.splitlines()
+        event_name = next(l for l in lines if l.startswith("event:"))[len("event:"):].strip()
+        data_line = next(l for l in lines if l.startswith("data:"))[len("data:"):].strip()
+        parsed.append((event_name, json.loads(data_line)))
+    return parsed
+
 
 # ---------------------------------------------------------------------------
 # App fixture with all external I/O patched
@@ -112,6 +157,17 @@ def client():
         patch("main.append_exchange"),
         patch("main.enable_llm_obs"),
         patch("main.start_consumer_thread"),
+        # Lifespan unconditionally spawns a background suggestion-pool
+        # maintenance loop whenever _llm is truthy (main.py ~105). Left
+        # unpatched it makes real blocking Redis calls to localhost:6379 —
+        # nothing is listening in the test env, and since those redis-py
+        # calls are synchronous, the resulting retry/backoff loop monopolizes
+        # the single event loop TestClient/anyio shares across tests. Every
+        # test tolerated this by accident (no other test needed the loop to
+        # stay responsive after fixture setup) until the /query/stream tests
+        # arrived, which must keep pumping the loop to drain the SSE
+        # generator — patch it out the same way start_consumer_thread is.
+        patch("main._pool_maintenance_loop", new=AsyncMock(return_value=None)),
         patch("main._mcp_connected", True, create=True),
         patch("main._llm_connected", True, create=True),
     ):
@@ -186,6 +242,66 @@ def test_query_answer_is_non_empty(client):
     resp = client.post("/query", json={"query": "What are the top bridges in Texas?"})
     assert resp.status_code == 200
     assert resp.json()["answer"] != ""
+
+
+# ---------------------------------------------------------------------------
+# Tests — POST /query/stream
+# ---------------------------------------------------------------------------
+
+
+def test_query_stream_returns_event_stream_content_type(client):
+    with patch("main.run_agent_stream", new=_canned_stream):
+        resp = client.post("/query/stream", json={"query": "Tell me about Texas bridges."})
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+
+
+def test_query_stream_emits_expected_event_sequence(client):
+    with patch("main.run_agent_stream", new=_canned_stream):
+        resp = client.post("/query/stream", json={"query": "Tell me about Texas bridges."})
+
+    events = _parse_sse_blocks(resp.text)
+    names = [name for name, _ in events]
+    assert names == ["step", "step", "tool_call_start", "tool_call_end", "text_chunk", "done"]
+
+    by_name = dict(events)
+    assert by_name["tool_call_start"]["name"] == "get_bridge_condition"
+    assert by_name["tool_call_end"]["sources"] == ["FHWA NBI"]
+    assert by_name["tool_call_end"]["status"] == "ok"
+    assert by_name["text_chunk"]["chunk"] != ""
+    assert by_name["done"]["tools_called"] == ["get_bridge_condition"]
+    assert by_name["done"]["query_domain"] == "transportation"
+    # trace_id/span_id are injected by the /query/stream handler itself
+    # (not present in the canned run_agent_stream events) — just confirm
+    # the keys exist, since DD tracing is disabled in this test env.
+    assert "trace_id" in by_name["done"]
+    assert "span_id" in by_name["done"]
+
+
+def test_query_stream_503_when_mcp_not_ready():
+    """POST /query/stream must return a plain 503, not a broken stream, when not ready."""
+    with (
+        patch("main.build_mcp_client", side_effect=Exception("MCP unavailable")),
+        patch("main.build_llm", return_value=MagicMock()),
+        patch("main.enable_llm_obs"),
+        patch("main.start_consumer_thread"),
+        patch("main._pool_maintenance_loop", new=AsyncMock(return_value=None)),
+    ):
+        if "main" in sys.modules:
+            del sys.modules["main"]
+        from main import app
+
+        with TestClient(
+            app,
+            raise_server_exceptions=False,
+            headers=_TEST_AUTH_HEADER,
+        ) as c:
+            import main as _main
+
+            _main._mcp_client = None
+            _main._llm = None
+            resp = c.post("/query/stream", json={"query": "test"})
+        assert resp.status_code == 503
 
 
 # ---------------------------------------------------------------------------

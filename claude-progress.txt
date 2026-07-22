@@ -1,3 +1,125 @@
+[2026-07-21] Python /query/stream — full streaming parity with .NET
+
+  Triggered by user hitting a bare 404 calling POST /api/query/stream against
+  the Python backend — services/agent-api only ever implemented non-streaming
+  /query; there was no /query/stream route, and nginx had no SSE-safe proxy
+  block for it either. Full plan at
+  /Users/kyle.taylor/.claude/plans/idempotent-exploring-allen.md.
+
+  Python's agent is a router → domain-specialist LangGraph pipeline
+  (create_react_agent), architecturally different from .NET's single
+  persistent MAF agent — this is a new implementation using LangGraph's
+  astream_events(version="v2") API (confirmed available: langgraph==1.2.0,
+  langchain-core==1.4.0), not a port of .NET's streaming code. No Python
+  equivalent of .NET's retrieve_best_practices step exists (no
+  RetrievalService in this backend — search_project_knowledge is just a
+  regular MCP tool call here), so that StepEvent is skipped entirely. No MCP
+  session-expiry retry logic was added either — run_agent() already calls
+  mcp_client.get_tools() fresh every request (unlike .NET's previously-cached
+  client), so there's no matching stale-session failure mode to guard against.
+
+  services/agent-api/src/agent.py
+    New run_agent_stream() async generator alongside the existing run_agent()
+    (non-streaming /query keeps using run_agent unchanged). Reuses
+    _classify_domain, _run_router, _TOOL_PARTITIONS, _SPECIALIST_SYSTEM_PROMPTS,
+    the same LLMObs.workflow/agent/task span structure. Event mapping:
+      - classify_domain: step "done" immediately (query_domain).
+      - route_query: new step (Python's moral equivalent of .NET's routing
+        visibility) — step "running" before _run_router, "done" with the
+        chosen specialist after.
+      - on_chat_model_stream → text_chunk (skips tool-call-only chunks with
+        empty content).
+      - on_tool_start → tool_call_start (id=run_id, name, args_json).
+      - on_tool_end / on_tool_error (defensive) → tool_call_end, extracting
+        sources via a new shared _extract_sources_from_tool_content() helper
+        (factored out of run_agent's existing inline extract-sources block,
+        agent.py — same parsing logic, now used by both paths) and a new
+        _summarize_tool_result() helper mirroring .NET's SummarizeToolResult
+        (array → "N records", dict w/ error key → "error", dict → "N fields",
+        else char/KB count).
+      - done: session_id, model, deduped sources/tools_called, query_domain.
+        trace_id/span_id intentionally omitted here — main.py's handler fills
+        those in from its own current_trace_id()/current_span_id(), same as
+        the non-streaming path; agent.py has no reason to import
+        observability.tracing.
+      - Any exception → single error event, category "unknown" (no
+        fine-grained categorization needed, unlike .NET's MCP-retry-driven
+        categories).
+
+  services/agent-api/src/main.py
+    New POST /query/stream — mirrors /query's auth/rate-limit/session/model
+    resolution verbatim (@limiter.limit("20/minute"), Depends(require_auth),
+    same header params, 503 readiness guard raised BEFORE the
+    StreamingResponse is constructed so it's a normal HTTP error, not a
+    mid-stream one). Inner event_stream() generator iterates
+    run_agent_stream(), serializes each event as
+    "event: {name}\ndata: {json}\n\n", and after the loop performs the same
+    post-call side effects /query does: append_exchange, set_session_model,
+    and conditional save_messages(sources=tools_called, ...) — replicating
+    the existing (if oddly-named) sources=result["tools_called"] argument
+    shape from the non-streaming handler verbatim, not "fixing" it.
+    StreamingResponse headers match .NET's: Cache-Control: no-cache,
+    X-Accel-Buffering: no, Connection: keep-alive.
+
+  services/ui/nginx.conf
+    New location /api/query/stream block (SSE-safe: proxy_buffering off,
+    proxy_read/send_timeout 300s, chunked_transfer_encoding on, session/RUM/
+    conversation/user/trace-propagation headers forwarded), placed BEFORE the
+    generic /api/ block so nginx's longest-prefix match picks it — same
+    precedence pattern as /api-dotnet/query/stream vs /api-dotnet/. Verified
+    with `docker run nginx:alpine nginx -t` (no local nginx binary available).
+
+  services/ui/src/lib/api.ts
+    StreamEvent's error variant gains optional category?: string — type-only
+    completeness fix, no behavior change; the UI doesn't render it yet.
+
+  services/agent-api/tests/test_agent_integration.py
+    3 new tests: content-type check, full event-sequence assertion (step x2 →
+    tool_call_start → tool_call_end → text_chunk → done, via a canned
+    run_agent_stream patch + a small _parse_sse_blocks helper), and a 503
+    check mirroring the existing non-streaming one.
+
+    Bug found + fixed along the way (test-infra only, not a production bug):
+    the shared `client` fixture's app lifespan unconditionally spawns a
+    background suggestion-pool-maintenance asyncio task whenever _llm is
+    truthy (main.py, existing code) that makes REAL blocking Redis calls to
+    localhost:6379 — nothing is listening in the test env. Every existing
+    test tolerated this by accident (none needed the event loop to stay
+    responsive after fixture setup), but it hung indefinitely once a
+    streaming test needed to keep pumping the loop to drain an SSE async
+    generator. Root-caused via faulthandler.dump_traceback_later (temporary
+    debug conftest.py, removed after diagnosis) showing the redis-retry call
+    stack parked in an asyncio-portal thread. Fixed by patching
+    main._pool_maintenance_loop to a no-op in the client fixture, the same
+    way main.start_consumer_thread is already mocked out for the same class
+    of reason.
+
+  Verified:
+  [x] uv run pytest services/agent-api/tests/: 26 passed (23 existing + 3 new),
+      118s — includes the new /query/stream coverage
+  [x] npx tsc --noEmit (services/ui): 0 errors
+  [x] docker run nginx:alpine nginx -t against the modified nginx.conf:
+      syntax ok
+  [x] git diff --stat: change scope matches the plan exactly (agent.py,
+      main.py, nginx.conf, api.ts, test_agent_integration.py) — no unrelated
+      files touched
+
+  [~] Live-deployment verification (operator actions required):
+      (a) Run the UI against the Python backend (selectedBackend = "python"),
+          submit a query, confirm step chips / tool chips / streamed text
+          appear live instead of a 404, and the final message matches what
+          non-streaming /query returns for the same query.
+      (b) curl -N .../api/query/stream --data-raw '{"query": "..."}' (valid
+          auth header) post-deploy — confirm SSE blocks arrive incrementally,
+          not all buffered at the end, now that the nginx block is live.
+      (c) Confirm current_trace_id()/current_span_id() return non-null values
+          on the final done event in a real (non-test, ddtrace-enabled) run —
+          the event is emitted from inside an async generator draining across
+          the whole StreamingResponse body iteration, not just the
+          synchronous part of the request coroutine, so this is worth an
+          explicit smoke check rather than assuming parity with the
+          non-streaming handler's behavior.
+
 [2026-07-21] MCP streaming reliability + "still working" UX + bounded LLM retry
 
   Triggered by user report: MCP API calls constantly failing, no UI feedback
