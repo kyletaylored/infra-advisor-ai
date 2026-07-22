@@ -769,6 +769,14 @@ export function Chat() {
             if (evt.model && evt.model !== selectedModel) setSelectedModel(evt.model);
             break;
           case "error":
+            // Resolve any step still shown as "running" — an error mid-stream
+            // means the pipeline aborted, so nothing will ever send its "done".
+            // Without this, e.g. an AI Guard block on the raw query would leave
+            // the "route_query" chip spinning forever alongside the error banner.
+            patchAssistant((m) => ({
+              ...m,
+              steps: m.steps.map((s) => (s.status === "running" ? { ...s, status: "error" } : s)),
+            }));
             setError({ message: evt.message, traceId: evt.trace_id });
             break;
         }

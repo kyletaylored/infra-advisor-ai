@@ -15,6 +15,7 @@ from langgraph.prebuilt import create_react_agent
 from pydantic import BaseModel
 
 from memory import load_history
+from observability.ai_guard import check_query
 from observability.llm_obs import schedule_faithfulness_score, tag_agent_run
 
 logger = logging.getLogger(__name__)
@@ -370,6 +371,18 @@ async def run_agent(
     Specialists: transportation | water_energy | business_development | document | general
     Each specialist receives only the tools relevant to its domain.
     """
+    # 0. AI Guard pre-flight check on the raw user query. Runs before
+    #    anything else touches the LLM/tool loop — see observability/ai_guard.py.
+    block_reason = check_query(query)
+    if block_reason:
+        logger.warning("AI Guard blocked query for session=%s: %s", session_id, block_reason)
+        return {
+            "answer": block_reason,
+            "sources": [],
+            "tools_called": [],
+            "query_domain": "blocked",
+        }
+
     llm = build_llm(deployment)
     query_domain = _classify_domain(query)
     all_tools = await mcp_client.get_tools()
@@ -574,6 +587,17 @@ async def run_agent_stream(
     /query handler does after run_agent() returns; agent.py has no other
     reason to depend on observability.tracing.
     """
+    # 0. AI Guard pre-flight check on the raw user query — must run before
+    #    the first "step" event goes out. Streaming can't rewind a step
+    #    already shown as "running" in the UI, so a blocked query yields
+    #    only "error" and returns, same as agent-api-dotnet's
+    #    RunAgentStreamingAsync (AgentService.cs).
+    block_reason = check_query(query)
+    if block_reason:
+        logger.warning("AI Guard blocked streaming query for session=%s: %s", session_id, block_reason)
+        yield {"event": "error", "message": block_reason, "category": "blocked"}
+        return
+
     llm = build_llm(deployment)
     query_domain = _classify_domain(query)
     obs_session_id = rum_session_id or session_id
