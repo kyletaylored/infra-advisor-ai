@@ -10,6 +10,7 @@ import httpx
 from pydantic import BaseModel
 
 from observability.metrics import emit_external_api, emit_tool_call
+from observability.tracing import log_external_api_failure
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +191,13 @@ async def search_web_procurement(
                     "web_procurement Azure OpenAI HTTP %d: %s",
                     resp.status_code, body[:300],
                 )
+                log_external_api_failure(
+                    logger,
+                    source="azure_openai",
+                    tool_name="search_web_procurement",
+                    status_code=resp.status_code,
+                    body=body,
+                )
                 emit_tool_call("search_web_procurement", (time.monotonic() - tool_start) * 1000, "error")
                 return {
                     "error": f"Azure OpenAI Responses API error: HTTP {resp.status_code}",
@@ -198,18 +206,27 @@ async def search_web_procurement(
                 }
             emit_external_api("azure_openai", latency_ms)
             response_data = resp.json()
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as exc:
         emit_external_api("azure_openai", (time.monotonic() - api_start) * 1000, error_type="timeout")
         emit_tool_call("search_web_procurement", (time.monotonic() - tool_start) * 1000, "error")
+        log_external_api_failure(
+            logger, source="azure_openai", tool_name="search_web_procurement", error=str(exc)
+        )
         return {"error": "Azure OpenAI Responses API request timed out.", "retriable": True, "source": "azure_openai"}
     except httpx.RequestError as exc:
         emit_external_api("azure_openai", (time.monotonic() - api_start) * 1000, error_type="request_error")
         emit_tool_call("search_web_procurement", (time.monotonic() - tool_start) * 1000, "error")
+        log_external_api_failure(
+            logger, source="azure_openai", tool_name="search_web_procurement", error=str(exc)
+        )
         return {"error": f"Azure OpenAI Responses API request failed: {exc}", "retriable": True, "source": "azure_openai"}
-    except Exception:
+    except Exception as exc:
         emit_external_api("azure_openai", (time.monotonic() - api_start) * 1000, error_type="unexpected")
         emit_tool_call("search_web_procurement", (time.monotonic() - tool_start) * 1000, "error")
         logger.exception("Unexpected error calling Azure OpenAI Responses API")
+        log_external_api_failure(
+            logger, source="azure_openai", tool_name="search_web_procurement", error=str(exc)
+        )
         return {"error": "Unexpected error calling Azure OpenAI.", "retriable": False, "source": "azure_openai"}
 
     # Responses API shape: { "output": [{type:"message", content:[{type:"output_text", text:"..."}]}] }
@@ -229,8 +246,15 @@ async def search_web_procurement(
     try:
         parsed = json.loads(output_text)
         results = parsed.get("results", []) if isinstance(parsed, dict) else []
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
         logger.warning("web_procurement: failed to parse model JSON")
+        log_external_api_failure(
+            logger,
+            source="azure_openai",
+            tool_name="search_web_procurement",
+            error=str(exc),
+            body=output_text,
+        )
         emit_tool_call("search_web_procurement", (time.monotonic() - tool_start) * 1000, "error")
         return {"error": "Model returned malformed JSON", "retriable": True, "source": "azure_openai"}
 

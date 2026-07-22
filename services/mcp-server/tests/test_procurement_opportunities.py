@@ -6,6 +6,7 @@ or network access are required.
 
 import os
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -260,6 +261,44 @@ async def test_samgov_403(monkeypatch):
     assert isinstance(result, dict)
     assert "error" in result
     assert "24 hours" in result["error"]
+
+
+# ---------------------------------------------------------------------------
+# Test 7b: SAM.gov 401 — the exact gap from the user's bug report. Falls into
+# the generic >=400 branch (no special case existed for 401), which
+# previously logged nothing beyond a bare status code.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_samgov_401_logs_response_body(monkeypatch):
+    """SAM.gov returning 401 (expired/invalid api_key) must log the actual
+    response body via log_external_api_failure, with the api_key redacted
+    from any URL passed alongside it — not just a bare 'HTTP 401'."""
+    monkeypatch.setenv("SAMGOV_API_KEY", "SAM-test-key-should-never-appear-in-logs")
+
+    with (
+        patch("tools.procurement_opportunities.log_external_api_failure") as mock_log,
+        respx.mock() as mock,
+    ):
+        mock.get(SAMGOV_API_URL).mock(
+            return_value=Response(401, text="Invalid or expired API key")
+        )
+
+        inp = ProcurementOpportunitiesInput(
+            query="pipeline inspection",
+            opportunity_types=["contract"],
+        )
+        result = await get_procurement_opportunities(inp)
+
+    assert isinstance(result, dict)
+    assert "error" in result
+
+    mock_log.assert_called_once()
+    kwargs = mock_log.call_args.kwargs
+    assert kwargs["source"] == "samgov"
+    assert kwargs["status_code"] == 401
+    assert "Invalid or expired API key" in kwargs["body"]
 
 
 # ---------------------------------------------------------------------------

@@ -10,6 +10,7 @@ import httpx
 from pydantic import BaseModel, Field, field_validator
 
 from observability.metrics import emit_external_api, emit_tool_call
+from observability.tracing import log_external_api_failure
 
 logger = logging.getLogger(__name__)
 
@@ -246,6 +247,13 @@ async def get_bridge_condition(inp: BridgeConditionInput) -> list[dict[str, Any]
                         api_latency_ms,
                         error_type=f"http_{status_code}",
                     )
+                    log_external_api_failure(
+                        logger,
+                        source="bts_arcgis",
+                        tool_name="get_bridge_condition",
+                        status_code=status_code,
+                        body=exc.response.text,
+                    )
                     tool_latency_ms = (time.monotonic() - tool_start) * 1000
                     emit_tool_call("get_bridge_condition", tool_latency_ms, "error")
                     return {
@@ -256,6 +264,9 @@ async def get_bridge_condition(inp: BridgeConditionInput) -> list[dict[str, Any]
                 except httpx.RequestError as exc:
                     api_latency_ms = (time.monotonic() - api_start) * 1000
                     emit_external_api("bts_arcgis", api_latency_ms, error_type="request_error")
+                    log_external_api_failure(
+                        logger, source="bts_arcgis", tool_name="get_bridge_condition", error=str(exc)
+                    )
                     tool_latency_ms = (time.monotonic() - tool_start) * 1000
                     emit_tool_call("get_bridge_condition", tool_latency_ms, "error")
                     return {
@@ -271,6 +282,13 @@ async def get_bridge_condition(inp: BridgeConditionInput) -> list[dict[str, Any]
                         "bts_arcgis",
                         (time.monotonic() - api_start) * 1000,
                         error_type="arcgis_error",
+                    )
+                    log_external_api_failure(
+                        logger,
+                        source="bts_arcgis",
+                        tool_name="get_bridge_condition",
+                        error=f"{arc_err.get('code')}: {arc_err.get('message')}",
+                        body=str(page),
                     )
                     tool_latency_ms = (time.monotonic() - tool_start) * 1000
                     emit_tool_call("get_bridge_condition", tool_latency_ms, "error")
@@ -297,6 +315,9 @@ async def get_bridge_condition(inp: BridgeConditionInput) -> list[dict[str, Any]
         tool_latency_ms = (time.monotonic() - tool_start) * 1000
         emit_tool_call("get_bridge_condition", tool_latency_ms, "error")
         logger.exception("Unexpected error in get_bridge_condition")
+        log_external_api_failure(
+            logger, source="bts_arcgis", tool_name="get_bridge_condition", error=str(exc)
+        )
         return {
             "error": f"Unexpected error: {exc}",
             "source": "bts_arcgis",

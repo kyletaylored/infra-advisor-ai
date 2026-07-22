@@ -10,6 +10,7 @@ import httpx
 from pydantic import BaseModel
 
 from observability.metrics import emit_external_api, emit_tool_call
+from observability.tracing import log_external_api_failure
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,13 @@ async def search_txdot_open_data(
 
             if resp.status_code >= 400:
                 emit_external_api("txdot", api_latency_ms, error_type=f"http_{resp.status_code}")
+                log_external_api_failure(
+                    logger,
+                    source="txdot",
+                    tool_name="search_txdot_open_data",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
                 emit_tool_call("search_txdot_open_data", (time.monotonic() - tool_start) * 1000, "error")
                 return {
                     "error": f"TxDOT Hub API error: HTTP {resp.status_code}",
@@ -124,23 +132,32 @@ async def search_txdot_open_data(
             emit_external_api("txdot", api_latency_ms)
             body = resp.json()
 
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("txdot", api_latency_ms, error_type="timeout")
+        log_external_api_failure(
+            logger, source="txdot", tool_name="search_txdot_open_data", error=str(exc)
+        )
         emit_tool_call("search_txdot_open_data", (time.monotonic() - tool_start) * 1000, "error")
         return {"error": "TxDOT Hub API request timed out.", "source": "txdot", "retriable": True}
 
     except httpx.RequestError as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("txdot", api_latency_ms, error_type="request_error")
+        log_external_api_failure(
+            logger, source="txdot", tool_name="search_txdot_open_data", error=str(exc)
+        )
         emit_tool_call("search_txdot_open_data", (time.monotonic() - tool_start) * 1000, "error")
         return {"error": f"TxDOT Hub API request failed: {exc}", "source": "txdot", "retriable": True}
 
-    except Exception:
+    except Exception as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("txdot", api_latency_ms, error_type="unexpected")
         emit_tool_call("search_txdot_open_data", (time.monotonic() - tool_start) * 1000, "error")
         logger.exception("Unexpected error in search_txdot_open_data")
+        log_external_api_failure(
+            logger, source="txdot", tool_name="search_txdot_open_data", error=str(exc)
+        )
         return {"error": "Unexpected error querying TxDOT Open Data.", "source": "txdot", "retriable": False}
 
     # Hub API response shape varies by version — handle both list and wrapped

@@ -20,6 +20,8 @@ _SRC = os.path.join(os.path.dirname(__file__), "..", "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
+from unittest.mock import patch
+
 import respx
 from httpx import Response
 
@@ -166,3 +168,26 @@ async def test_api_error_returns_structured_error():
     assert "error" in result, "Error dict must contain 'error' key"
     assert "USASpending API error: HTTP 500" in result["error"]
     assert result["retriable"] is True
+
+
+async def test_api_error_logs_response_body_for_debugging():
+    """Regression test: a non-2xx response must be logged with the actual
+    response body (via log_external_api_failure), not just a bare status
+    code — this was the exact gap that made the USASpending 422 the user
+    saw unrecoverable from Datadog."""
+    with (
+        patch("tools.contract_awards.log_external_api_failure") as mock_log,
+        respx.mock as mock,
+    ):
+        mock.post(USASPENDING_URL).mock(
+            return_value=Response(422, text="Unprocessable Entity: invalid naics_codes")
+        )
+
+        inp = ContractAwardsInput(query="water infrastructure")
+        await get_contract_awards(inp)
+
+    mock_log.assert_called_once()
+    kwargs = mock_log.call_args.kwargs
+    assert kwargs["source"] == "usaspending"
+    assert kwargs["status_code"] == 422
+    assert "invalid naics_codes" in kwargs["body"]

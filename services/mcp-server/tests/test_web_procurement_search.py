@@ -7,6 +7,7 @@ to return the schema-constrained JSON the production model would emit.
 
 import os
 import sys
+from unittest.mock import patch
 
 import pytest
 
@@ -292,6 +293,38 @@ async def test_malformed_json_returns_structured_error(monkeypatch):
     assert isinstance(result, dict)
     assert "error" in result
     assert "malformed" in result["error"].lower()
+
+
+@pytest.mark.asyncio
+async def test_malformed_json_logs_the_actual_text_that_failed_to_parse(monkeypatch):
+    """Regression test: the exact gap from the user's bug report — malformed
+    JSON from the model previously logged only 'failed to parse model JSON',
+    never the actual text that failed json.loads(). Must now log it via
+    log_external_api_failure so it's recoverable from Datadog."""
+    _env_vars(monkeypatch)
+
+    bad_payload = {
+        "output": [{
+            "type": "message",
+            "content": [{"type": "output_text", "text": "not valid json {broken"}],
+        }]
+    }
+
+    with (
+        patch("tools.web_procurement_search.log_external_api_failure") as mock_log,
+        respx.mock() as mock,
+    ):
+        mock.post(url__startswith=_RESPONSES_URL).mock(
+            return_value=Response(200, json=bad_payload)
+        )
+
+        inp = WebProcurementSearchInput(query="anything")
+        await search_web_procurement(inp)
+
+    mock_log.assert_called_once()
+    kwargs = mock_log.call_args.kwargs
+    assert kwargs["source"] == "azure_openai"
+    assert kwargs["body"] == "not valid json {broken"
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ import httpx
 from pydantic import BaseModel
 
 from observability.metrics import emit_external_api, emit_tool_call
+from observability.tracing import log_external_api_failure
 
 logger = logging.getLogger(__name__)
 
@@ -191,6 +192,13 @@ async def get_contract_awards(input_data: ContractAwardsInput) -> list | dict:
             if resp.status_code >= 400:
                 emit_external_api("usaspending", api_latency_ms, error_type=f"http_{resp.status_code}")
                 emit_tool_call("get_contract_awards", (time.monotonic() - tool_start) * 1000, "error")
+                log_external_api_failure(
+                    logger,
+                    source="usaspending",
+                    tool_name="get_contract_awards",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
                 return {
                     "error": f"USASpending API error: HTTP {resp.status_code}",
                     "retriable": resp.status_code >= 500,
@@ -203,13 +211,19 @@ async def get_contract_awards(input_data: ContractAwardsInput) -> list | dict:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("usaspending", api_latency_ms, error_type="timeout")
         emit_tool_call("get_contract_awards", (time.monotonic() - tool_start) * 1000, "error")
+        log_external_api_failure(
+            logger, source="usaspending", tool_name="get_contract_awards", error="timeout"
+        )
         return {"error": "USASpending API request timed out.", "retriable": True}
 
-    except Exception:
+    except Exception as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("usaspending", api_latency_ms, error_type="unexpected")
         emit_tool_call("get_contract_awards", (time.monotonic() - tool_start) * 1000, "error")
         logger.exception("Unexpected error in get_contract_awards")
+        log_external_api_failure(
+            logger, source="usaspending", tool_name="get_contract_awards", error=str(exc)
+        )
         return {"error": "Unexpected error querying USASpending.gov", "retriable": False}
 
     raw_results: list = body.get("results", [])

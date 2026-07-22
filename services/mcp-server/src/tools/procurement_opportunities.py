@@ -11,6 +11,7 @@ import httpx
 from pydantic import BaseModel
 
 from observability.metrics import emit_external_api, emit_tool_call
+from observability.tracing import log_external_api_failure
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +160,14 @@ async def _fetch_samgov(
                 except Exception:
                     error_message = resp.text
 
+                log_external_api_failure(
+                    logger,
+                    source="samgov",
+                    tool_name="get_procurement_opportunities",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
+
                 if "Date range" in str(error_message):
                     return {
                         "error": (
@@ -176,6 +185,13 @@ async def _fetch_samgov(
 
             if resp.status_code == 403:
                 emit_external_api("samgov", api_latency_ms, error_type="http_403")
+                log_external_api_failure(
+                    logger,
+                    source="samgov",
+                    tool_name="get_procurement_opportunities",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
                 return {
                     "error": (
                         "SAM.gov API returned 403 — API key may need up to 24 hours to activate "
@@ -186,7 +202,17 @@ async def _fetch_samgov(
                 }
 
             if resp.status_code >= 400:
+                # Covers 401 (bad/expired api_key) and any other 4xx/5xx not
+                # special-cased above — this is the branch that previously
+                # swallowed the SAM.gov 401 with zero body visibility.
                 emit_external_api("samgov", api_latency_ms, error_type=f"http_{resp.status_code}")
+                log_external_api_failure(
+                    logger,
+                    source="samgov",
+                    tool_name="get_procurement_opportunities",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
                 return {
                     "error": f"SAM.gov API error: HTTP {resp.status_code}",
                     "source": "samgov",
@@ -196,27 +222,43 @@ async def _fetch_samgov(
             emit_external_api("samgov", api_latency_ms)
             body = resp.json()
 
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("samgov", api_latency_ms, error_type="timeout")
+        log_external_api_failure(
+            logger, source="samgov", tool_name="get_procurement_opportunities", error=str(exc)
+        )
         raise  # re-raise so caller can handle partial results
 
     except httpx.RequestError as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("samgov", api_latency_ms, error_type="request_error")
         logger.warning("SAM.gov request error: %s", exc)
+        log_external_api_failure(
+            logger, source="samgov", tool_name="get_procurement_opportunities", error=str(exc)
+        )
         return {"error": f"SAM.gov request failed: {exc}", "source": "samgov", "retriable": True}
 
-    except Exception:
+    except Exception as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("samgov", api_latency_ms, error_type="unexpected")
         logger.exception("Unexpected error in _fetch_samgov")
+        log_external_api_failure(
+            logger, source="samgov", tool_name="get_procurement_opportunities", error=str(exc)
+        )
         return {"error": "Unexpected error querying SAM.gov", "source": "samgov", "retriable": False}
 
     if "opportunitiesData" not in body:
         logger.warning(
             "SAM.gov response missing 'opportunitiesData' key. Top-level keys: %s",
             list(body.keys()),
+        )
+        log_external_api_failure(
+            logger,
+            source="samgov",
+            tool_name="get_procurement_opportunities",
+            status_code=resp.status_code,
+            body=resp.text,
         )
         return {
             "error": "SAM.gov response format unexpected — 'opportunitiesData' key missing",
@@ -286,6 +328,13 @@ async def _fetch_grantsgov(
 
             if resp.status_code >= 400:
                 logger.warning("grants.gov API returned %s", resp.status_code)
+                log_external_api_failure(
+                    logger,
+                    source="grantsgov",
+                    tool_name="get_procurement_opportunities",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
                 return []
 
             body = resp.json()
@@ -294,6 +343,9 @@ async def _fetch_grantsgov(
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("grantsgov", api_latency_ms, error_type="error")
         logger.warning("grants.gov fetch error: %s", exc)
+        log_external_api_failure(
+            logger, source="grantsgov", tool_name="get_procurement_opportunities", error=str(exc)
+        )
         return []
 
     raw_opportunities = body.get("opportunities") or body.get("data") or []

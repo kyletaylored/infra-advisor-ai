@@ -10,6 +10,7 @@ import httpx
 from pydantic import BaseModel
 
 from observability.metrics import emit_external_api, emit_tool_call
+from observability.tracing import log_external_api_failure
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +166,14 @@ async def get_energy_infrastructure(
 
             if response.status_code == 429:
                 emit_external_api("eia", api_latency_ms, error_type="rate_limit")
+                log_external_api_failure(
+                    logger,
+                    source="eia",
+                    tool_name="get_energy_infrastructure",
+                    status_code=response.status_code,
+                    body=response.text,
+                    url=str(response.url),
+                )
                 emit_tool_call(
                     "get_energy_infrastructure",
                     (time.monotonic() - tool_start) * 1000,
@@ -174,6 +183,14 @@ async def get_energy_infrastructure(
 
             if response.status_code >= 500:
                 emit_external_api("eia", api_latency_ms, error_type=f"http_{response.status_code}")
+                log_external_api_failure(
+                    logger,
+                    source="eia",
+                    tool_name="get_energy_infrastructure",
+                    status_code=response.status_code,
+                    body=response.text,
+                    url=str(response.url),
+                )
                 emit_tool_call(
                     "get_energy_infrastructure",
                     (time.monotonic() - tool_start) * 1000,
@@ -187,6 +204,14 @@ async def get_energy_infrastructure(
 
             if response.status_code >= 400:
                 emit_external_api("eia", api_latency_ms, error_type=f"http_{response.status_code}")
+                log_external_api_failure(
+                    logger,
+                    source="eia",
+                    tool_name="get_energy_infrastructure",
+                    status_code=response.status_code,
+                    body=response.text,
+                    url=str(response.url),
+                )
                 emit_tool_call(
                     "get_energy_infrastructure",
                     (time.monotonic() - tool_start) * 1000,
@@ -204,9 +229,12 @@ async def get_energy_infrastructure(
             emit_external_api("eia", api_latency_ms)
             body = response.json()
 
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("eia", api_latency_ms, error_type="timeout")
+        log_external_api_failure(
+            logger, source="eia", tool_name="get_energy_infrastructure", error=str(exc)
+        )
         emit_tool_call(
             "get_energy_infrastructure", (time.monotonic() - tool_start) * 1000, "error"
         )
@@ -215,6 +243,9 @@ async def get_energy_infrastructure(
     except httpx.RequestError as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("eia", api_latency_ms, error_type="request_error")
+        log_external_api_failure(
+            logger, source="eia", tool_name="get_energy_infrastructure", error=str(exc)
+        )
         emit_tool_call(
             "get_energy_infrastructure", (time.monotonic() - tool_start) * 1000, "error"
         )
@@ -231,6 +262,9 @@ async def get_energy_infrastructure(
             "get_energy_infrastructure", (time.monotonic() - tool_start) * 1000, "error"
         )
         logger.exception("Unexpected error in get_energy_infrastructure")
+        log_external_api_failure(
+            logger, source="eia", tool_name="get_energy_infrastructure", error=str(exc)
+        )
         return {
             "error": f"Unexpected error: {exc}",
             "source": "eia",

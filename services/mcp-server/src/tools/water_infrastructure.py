@@ -10,6 +10,7 @@ import httpx
 from pydantic import BaseModel
 
 from observability.metrics import emit_external_api, emit_tool_call
+from observability.tracing import log_external_api_failure
 
 try:
     from azure.core.credentials import AzureKeyCredential  # type: ignore
@@ -141,10 +142,13 @@ async def _fetch_epa_water_systems(
 
                         results.append(normalised)
 
-                except httpx.TimeoutException:
+                except httpx.TimeoutException as exc:
                     api_latency_ms = (time.monotonic() - api_start) * 1000
                     emit_external_api("epa_sdwis", api_latency_ms, error_type="timeout")
                     logger.error("Timeout querying EPA SDWIS for state=%s", state)
+                    log_external_api_failure(
+                        logger, source="epa_sdwis", tool_name="get_water_infrastructure", error=str(exc)
+                    )
                 except httpx.HTTPStatusError as exc:
                     api_latency_ms = (time.monotonic() - api_start) * 1000
                     emit_external_api(
@@ -152,10 +156,20 @@ async def _fetch_epa_water_systems(
                         error_type=f"http_{exc.response.status_code}",
                     )
                     logger.error("HTTP error from EPA SDWIS: %s", exc)
+                    log_external_api_failure(
+                        logger,
+                        source="epa_sdwis",
+                        tool_name="get_water_infrastructure",
+                        status_code=exc.response.status_code,
+                        body=exc.response.text,
+                    )
                 except Exception as exc:
                     api_latency_ms = (time.monotonic() - api_start) * 1000
                     emit_external_api("epa_sdwis", api_latency_ms, error_type="unexpected")
                     logger.error("Unexpected error from EPA SDWIS: %s", exc)
+                    log_external_api_failure(
+                        logger, source="epa_sdwis", tool_name="get_water_infrastructure", error=str(exc)
+                    )
 
     # Attach violation counts if caller wants violation filtering
     if has_violations is not None:
@@ -209,9 +223,13 @@ async def _attach_violation_counts(systems: list[dict[str, Any]]) -> list[dict[s
                 )
                 system["open_violation_count"] = open_count
 
-            except Exception:
+            except Exception as exc:
                 api_latency_ms = (time.monotonic() - api_start) * 1000
                 emit_external_api("epa_sdwis", api_latency_ms, error_type="violation_fetch_error")
+                logger.warning("EPA SDWIS violation fetch failed for pwsid=%s: %s", pwsid, exc)
+                log_external_api_failure(
+                    logger, source="epa_sdwis", tool_name="get_water_infrastructure", error=str(exc)
+                )
                 system["open_violation_count"] = None
 
     return systems
@@ -343,6 +361,9 @@ async def _fetch_twdb_projects(
         error_type = "index_not_found" if is_index_missing else "search_error"
         emit_external_api("twdb", api_latency_ms, error_type=error_type)
         logger.error("Azure AI Search error for TWDB query: %s", exc)
+        log_external_api_failure(
+            logger, source="twdb", tool_name="get_water_infrastructure", error=exc_str
+        )
         if is_index_missing:
             return [
                 {

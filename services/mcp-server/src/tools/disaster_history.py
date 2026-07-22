@@ -9,6 +9,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from observability.metrics import emit_external_api, emit_tool_call
+from observability.tracing import log_external_api_failure
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,13 @@ async def get_disaster_history(
                         api_latency_ms,
                         error_type=f"http_{status_code}",
                     )
+                    log_external_api_failure(
+                        logger,
+                        source="openfema",
+                        tool_name="get_disaster_history",
+                        status_code=status_code,
+                        body=exc.response.text,
+                    )
                     tool_latency_ms = (time.monotonic() - tool_start) * 1000
                     emit_tool_call("get_disaster_history", tool_latency_ms, "error")
                     return {
@@ -195,6 +203,9 @@ async def get_disaster_history(
                 except httpx.RequestError as exc:
                     api_latency_ms = (time.monotonic() - api_start) * 1000
                     emit_external_api("openfema", api_latency_ms, error_type="request_error")
+                    log_external_api_failure(
+                        logger, source="openfema", tool_name="get_disaster_history", error=str(exc)
+                    )
                     tool_latency_ms = (time.monotonic() - tool_start) * 1000
                     emit_tool_call("get_disaster_history", tool_latency_ms, "error")
                     return {
@@ -229,6 +240,9 @@ async def get_disaster_history(
         tool_latency_ms = (time.monotonic() - tool_start) * 1000
         emit_tool_call("get_disaster_history", tool_latency_ms, "error")
         logger.exception("Unexpected error in get_disaster_history")
+        log_external_api_failure(
+            logger, source="openfema", tool_name="get_disaster_history", error=str(exc)
+        )
         return {
             "error": f"Unexpected error: {exc}",
             "source": "openfema",

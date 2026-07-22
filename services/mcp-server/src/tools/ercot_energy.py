@@ -10,6 +10,7 @@ import httpx
 from pydantic import BaseModel
 
 from observability.metrics import emit_external_api, emit_tool_call
+from observability.tracing import log_external_api_failure
 
 logger = logging.getLogger(__name__)
 
@@ -108,23 +109,46 @@ async def _list_products(api_key_val: str, tool_start: float) -> list | dict:
 
             if resp.status_code >= 400:
                 emit_external_api("ercot", api_latency_ms, error_type=f"http_{resp.status_code}")
+                log_external_api_failure(
+                    logger,
+                    source="ercot",
+                    tool_name="get_ercot_energy_storage",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
                 emit_tool_call("get_ercot_energy_storage", (time.monotonic() - tool_start) * 1000, "error")
                 return {"error": f"ERCOT API error: HTTP {resp.status_code}", "source": "ercot", "retriable": resp.status_code >= 500}
 
             emit_external_api("ercot", api_latency_ms)
             body = resp.json()
 
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("ercot", api_latency_ms, error_type="timeout")
+        log_external_api_failure(
+            logger, source="ercot", tool_name="get_ercot_energy_storage", error=str(exc)
+        )
         emit_tool_call("get_ercot_energy_storage", (time.monotonic() - tool_start) * 1000, "error")
         return {"error": "ERCOT API request timed out.", "source": "ercot", "retriable": True}
 
     except httpx.RequestError as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("ercot", api_latency_ms, error_type="request_error")
+        log_external_api_failure(
+            logger, source="ercot", tool_name="get_ercot_energy_storage", error=str(exc)
+        )
         emit_tool_call("get_ercot_energy_storage", (time.monotonic() - tool_start) * 1000, "error")
         return {"error": f"ERCOT API request failed: {exc}", "source": "ercot", "retriable": True}
+
+    except Exception as exc:
+        api_latency_ms = (time.monotonic() - api_start) * 1000
+        emit_external_api("ercot", api_latency_ms, error_type="unexpected")
+        emit_tool_call("get_ercot_energy_storage", (time.monotonic() - tool_start) * 1000, "error")
+        logger.exception("Unexpected error in _list_products")
+        log_external_api_failure(
+            logger, source="ercot", tool_name="get_ercot_energy_storage", error=str(exc)
+        )
+        return {"error": "Unexpected error listing ERCOT products.", "source": "ercot", "retriable": False}
 
     products = body if isinstance(body, list) else body.get("data", body.get("products", []))
     emit_tool_call("get_ercot_energy_storage", (time.monotonic() - tool_start) * 1000, "success", result_count=len(products))
@@ -163,11 +187,25 @@ async def _query_charging_data(
 
             if resp.status_code == 429:
                 emit_external_api("ercot", api_latency_ms, error_type="rate_limit")
+                log_external_api_failure(
+                    logger,
+                    source="ercot",
+                    tool_name="get_ercot_energy_storage",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
                 emit_tool_call("get_ercot_energy_storage", (time.monotonic() - tool_start) * 1000, "error")
                 return {"error": "ERCOT API rate limit exceeded.", "source": "ercot", "retriable": True}
 
             if resp.status_code >= 400:
                 emit_external_api("ercot", api_latency_ms, error_type=f"http_{resp.status_code}")
+                log_external_api_failure(
+                    logger,
+                    source="ercot",
+                    tool_name="get_ercot_energy_storage",
+                    status_code=resp.status_code,
+                    body=resp.text,
+                )
                 emit_tool_call("get_ercot_energy_storage", (time.monotonic() - tool_start) * 1000, "error")
                 return {
                     "error": f"ERCOT API error: HTTP {resp.status_code} — {resp.text[:200]}",
@@ -178,23 +216,32 @@ async def _query_charging_data(
             emit_external_api("ercot", api_latency_ms)
             body = resp.json()
 
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("ercot", api_latency_ms, error_type="timeout")
+        log_external_api_failure(
+            logger, source="ercot", tool_name="get_ercot_energy_storage", error=str(exc)
+        )
         emit_tool_call("get_ercot_energy_storage", (time.monotonic() - tool_start) * 1000, "error")
         return {"error": "ERCOT API request timed out.", "source": "ercot", "retriable": True}
 
     except httpx.RequestError as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("ercot", api_latency_ms, error_type="request_error")
+        log_external_api_failure(
+            logger, source="ercot", tool_name="get_ercot_energy_storage", error=str(exc)
+        )
         emit_tool_call("get_ercot_energy_storage", (time.monotonic() - tool_start) * 1000, "error")
         return {"error": f"ERCOT API request failed: {exc}", "source": "ercot", "retriable": True}
 
-    except Exception:
+    except Exception as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("ercot", api_latency_ms, error_type="unexpected")
         emit_tool_call("get_ercot_energy_storage", (time.monotonic() - tool_start) * 1000, "error")
         logger.exception("Unexpected error in get_ercot_energy_storage")
+        log_external_api_failure(
+            logger, source="ercot", tool_name="get_ercot_energy_storage", error=str(exc)
+        )
         return {"error": "Unexpected error querying ERCOT API.", "source": "ercot", "retriable": False}
 
     # Response shape varies by ERCOT API version — handle both list and wrapped

@@ -9,6 +9,7 @@ from typing import Any, List, Optional
 from pydantic import BaseModel, Field
 
 from observability.metrics import emit_external_api, emit_tool_call
+from observability.tracing import log_external_api_failure
 
 try:
     from azure.core.credentials import AzureKeyCredential  # type: ignore
@@ -105,6 +106,9 @@ async def _embed_query(query: str) -> list[float]:
     except Exception as exc:
         api_latency_ms = (time.monotonic() - api_start) * 1000
         emit_external_api("azure_openai_embedding", api_latency_ms, error_type="embedding_error")
+        log_external_api_failure(
+            logger, source="azure_openai_embedding", tool_name="search_project_knowledge", error=str(exc)
+        )
         raise RuntimeError(f"Failed to embed query: {exc}") from exc
 
 
@@ -262,6 +266,9 @@ async def search_project_knowledge(
         error_type = "index_not_found" if is_index_missing else "search_error"
         emit_external_api("azure_ai_search", api_latency_ms, error_type=error_type)
         logger.error("Azure AI Search hybrid search failed: %s", exc)
+        log_external_api_failure(
+            logger, source="azure_ai_search", tool_name="search_project_knowledge", error=exc_str
+        )
         emit_tool_call(
             "search_project_knowledge",
             (time.monotonic() - tool_start) * 1000,

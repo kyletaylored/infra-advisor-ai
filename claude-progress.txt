@@ -1,3 +1,103 @@
+[2026-07-22] MCP tools — log external-API failure payloads, correlated to the trace
+
+  Triggered by user report: a procurement query returned a plausible LLM
+  answer explaining "USASpending.gov: HTTP 422", "SAM.gov/grants.gov: HTTP
+  401", "Web procurement search: malformed JSON" — but none of that was
+  recoverable from Datadog. The in-UI reasoning trace that showed this
+  doesn't persist across a page refresh, and no log line or trace tag
+  anywhere carried the actual response body. Full plan at
+  /Users/kyle.taylor/.claude/plans/idempotent-exploring-allen.md.
+
+  Root cause, confirmed by reading all 9 external-API-calling tool files in
+  services/mcp-server/src/tools/: every failure branch already called
+  emit_external_api(source, latency_ms, error_type=...) for DogStatsD metrics
+  only — none logged or trace-tagged the response body, so a failure like
+  "HTTP 422" was unrecoverable beyond the bare status code. Two ready-made,
+  previously-unused primitives already existed for exactly this:
+  observability/tracing.py's tag_span(key, value) (zero call sites before
+  this change) and current_trace_id(); separately DD_LOGS_INJECTION=true is
+  already set for mcp-server (k8s/mcp-server/configmap.yaml:15), so any
+  logger.warning(...) call is already trace-correlated in Datadog Logs for
+  free — logging the body was the whole fix, no new infra needed.
+
+  services/mcp-server/src/observability/tracing.py
+    New log_external_api_failure(log, *, source, tool_name, status_code=None,
+    body=None, url=None, error=None) — logs (trace-correlated via
+    DD_LOGS_INJECTION) AND tag_spans (error.source/tool/status_code/url/
+    response_body, visible directly on the trace in APM with no Logs pivot)
+    the actual (redacted, truncated to 2000 chars) response payload. New
+    _redact() strips api_key=.../apikey=... values via regex — applied to
+    both URLs and body text defensively — since EIA and SAM.gov both pass
+    their key as a query param of that exact name (ERCOT's key is a header,
+    never logged, so no redaction needed there).
+
+  Applied across all 9 tool files, two patterns:
+    Pattern A (raw httpx — contract_awards.py, procurement_opportunities.py,
+    web_procurement_search.py, bridge_condition.py, energy_infrastructure.py,
+    disaster_history.py, txdot_open_data.py, ercot_energy.py): added
+    log_external_api_failure(...) alongside the existing emit_external_api(...)
+    call at every non-2xx/timeout/request-error/JSON-decode branch. Exact
+    gaps from the user's report:
+      - contract_awards.py: USASpending's >=400 branch had zero body logging.
+      - procurement_opportunities.py: SAM.gov 401 fell into the generic
+        >=400 branch (only 400/403 were special-cased) — now logged with
+        full body. Also augmented the "opportunitiesData key missing" and
+        grants.gov branches.
+      - web_procurement_search.py: the malformed-JSON branch (json.loads
+        failing on the model's output_text) previously logged only
+        "failed to parse model JSON" — now logs the actual text that failed
+        to parse.
+    Also fixed ercot_energy.py's _list_products, which had no outer
+    except Exception at all (an unhandled exception could escape the tool
+    uncaught) — added one, mirroring _query_charging_data's existing pattern.
+
+    Pattern B (SDK-mediated — project_knowledge.py, water_infrastructure.py's
+    TWDB half): Azure OpenAI/Azure AI Search SDK calls have no raw HTTP
+    response to read, only an exception string — augmented the existing
+    logger.error(...) calls (and added one to project_knowledge.py's
+    previously-silent _embed_query exception branch) to also call
+    log_external_api_failure(..., error=str(exc)). water_infrastructure.py's
+    EPA SDWIS path is a hybrid: augmented its two existing logger.error
+    calls with the response body, and added logging to
+    _attach_violation_counts's exception branch, which previously logged
+    nothing at all (silently set open_violation_count=None).
+
+  services/mcp-server/tests/test_tracing.py [NEW]
+    Unit tests for _redact() (api_key/apikey stripped from both URLs and
+    body text, case-insensitive, no-op when no secret present) and
+    log_external_api_failure() (body present + truncated to 2000 chars in
+    the log call, secret redacted before logging, error= accepted for
+    SDK-mediated failures, tag_span called with the expected keys, no-op
+    span tagging doesn't raise when no active trace).
+
+  services/mcp-server/tests/test_contract_awards.py,
+  test_procurement_opportunities.py, test_web_procurement_search.py
+    Added regression tests for the exact 3 failure modes from the user's
+    report — patches log_external_api_failure and asserts it's called with
+    source/status_code/body matching the mocked response (422 USASpending,
+    401 SAM.gov, malformed web-procurement JSON with the actual failing text).
+
+  Verified:
+  [x] uv run pytest services/mcp-server/tests/: 96 passed (was ~88 before —
+      8 new tests: 7 in test_tracing.py + 1 in test_procurement_opportunities.py,
+      plus 2 assertions added to existing tests)
+  [x] python3 -m py_compile on all 10 modified/new source + test files
+  [x] git diff --stat: change scope matches the plan exactly (tracing.py +
+      all 9 tools/*.py + 4 test files) — no unrelated files touched
+
+  [~] Live-deployment verification (operator actions required):
+      (a) Force a real failure (e.g. temporarily invalidate SAMGOV_API_KEY,
+          or replay the query that produced the user's original 401/422/
+          malformed-JSON) and confirm in Datadog: a log line appears with
+          source=samgov status=401 body=... correlated to the trace
+          (Trace > Logs tab in APM).
+      (b) Confirm the same trace's span for that tool call shows
+          error.response_body / error.status_code / error.source tags
+          directly in APM (no Logs pivot needed).
+      (c) Confirm no api_key/apikey value ever appears in a Datadog log or
+          span tag — test against EIA and SAM.gov specifically, the two
+          APIs whose key is a URL query param.
+
 [2026-07-21] Python /query/stream — full streaming parity with .NET
 
   Triggered by user hitting a bare 404 calling POST /api/query/stream against
