@@ -9,6 +9,7 @@ data:
   DD_ENV: "dev"
   DD_SERVICE: "infra-advisor-agent-api"
   DD_VERSION: "latest"
+  DD_SITE: "us3.datadoghq.com"
   DD_AGENT_HOST: "datadog-agent.datadog.svc.cluster.local"
   DD_TRACE_AGENT_PORT: "8126"
   DD_DOGSTATSD_PORT: "8125"

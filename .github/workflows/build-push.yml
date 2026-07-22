@@ -40,18 +40,24 @@ jobs:
           filters: |
             mcp-server:
               - 'services/mcp-server/**'
+              - 'k8s/mcp-server/**'
             mcp-server-dotnet:
               - 'services/mcp-server-dotnet/**'
+              - 'k8s/mcp-server-dotnet/**'
             agent-api:
               - 'services/agent-api/**'
+              - 'k8s/agent-api/**'
             agent-api-dotnet:
               - 'services/agent-api-dotnet/**'
+              - 'k8s/agent-api-dotnet/**'
             auth-api:
               - 'services/auth-api/**'
+              - 'k8s/auth-api/**'
             load-generator:
               - 'services/load-generator/**'
             ui:
               - 'services/ui/**'
+              - 'k8s/ui/**'
             airflow:
               - 'k8s/airflow/**'
               - 'services/ingestion/**'
@@ -204,6 +210,24 @@ jobs:
           cluster-name: ${{ vars.AKS_CLUSTER_NAME }}
           admin: 'false'
           use-kubelogin: 'true'
+
+      - name: Apply k8s manifests for changed services
+        # Picks up ConfigMap/Deployment-spec/Service/HPA edits under k8s/<service>/.
+        # Previously nothing in CI ever ran this — only a manual `make deploy-k8s`
+        # did — so manifest changes (e.g. new ConfigMap keys) could sit committed
+        # but never actually reach the cluster until someone remembered to run it
+        # by hand. Secrets live under k8s/secrets/ and are never touched here;
+        # they're provisioned separately via `make create-*-secret`. Image tags
+        # in these manifests are :latest — the next step immediately overrides
+        # to the SHA-pinned tag, so this apply never causes an unpinned rollout.
+        run: |
+          [ "${{ needs.changes.outputs.mcp-server }}" == "true" ]        && kubectl apply -f k8s/mcp-server/
+          [ "${{ needs.changes.outputs.mcp-server-dotnet }}" == "true" ] && kubectl apply -f k8s/mcp-server-dotnet/
+          [ "${{ needs.changes.outputs.agent-api }}" == "true" ]          && kubectl apply -f k8s/agent-api/
+          [ "${{ needs.changes.outputs.agent-api-dotnet }}" == "true" ]   && kubectl apply -f k8s/agent-api-dotnet/
+          [ "${{ needs.changes.outputs.auth-api }}" == "true" ]           && kubectl apply -f k8s/auth-api/
+          [ "${{ needs.changes.outputs.ui }}" == "true" ]                 && kubectl apply -f k8s/ui/
+          true  # ensure step always exits 0
 
       - name: Pin each changed deployment to the just-built image SHA
         # SHA-pinning instead of `kubectl rollout restart` against :latest.
