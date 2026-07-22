@@ -43,6 +43,43 @@ _ALL_NAICS = list({code for codes in _NAICS_MAP.values() for code in codes})
 # CFDA programs relevant to infrastructure domains
 _CFDA_ALLOWLIST = {"66.458", "66.468", "97.047", "20.933", "14.228", "12.106", "11.300"}
 
+# Full state name -> USPS 2-letter abbreviation. SAM.gov's `state` param
+# expects a 2-letter code; this tool previously passed `geography` through
+# unmodified, so a query with geography="Texas" silently sent an invalid
+# state filter (same root-cause class as contract_awards.py's 422 — see
+# that file's comment for the incident this was found from).
+_STATE_NAME_TO_ABBREV = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+    "california": "CA", "colorado": "CO", "connecticut": "CT", "delaware": "DE",
+    "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID",
+    "illinois": "IL", "indiana": "IN", "iowa": "IA", "kansas": "KS",
+    "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD",
+    "massachusetts": "MA", "michigan": "MI", "minnesota": "MN", "mississippi": "MS",
+    "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV",
+    "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+    "north carolina": "NC", "north dakota": "ND", "ohio": "OH", "oklahoma": "OK",
+    "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT",
+    "vermont": "VT", "virginia": "VA", "washington": "WA", "west virginia": "WV",
+    "wisconsin": "WI", "wyoming": "WY", "district of columbia": "DC",
+}
+
+
+def _extract_state(geography: str) -> str | None:
+    """Return a 2-letter state abbreviation from a geography string, or None
+    if it can't be resolved (caller should omit the state filter rather than
+    send SAM.gov something it can't use)."""
+    g = geography.strip()
+    if len(g) == 2 and g.isalpha():
+        return g.upper()
+    by_name = _STATE_NAME_TO_ABBREV.get(g.lower())
+    if by_name:
+        return by_name
+    for token in g.split():
+        if len(token) == 2 and token.isalpha():
+            return token.upper()
+    return None
+
 
 # ---------------------------------------------------------------------------
 # Input schema
@@ -144,7 +181,9 @@ async def _fetch_samgov(
         params.append(("ncode", code))
 
     if input_data.geography:
-        params.append(("state", input_data.geography))
+        state_abbrev = _extract_state(input_data.geography)
+        if state_abbrev:
+            params.append(("state", state_abbrev))
 
     api_start = time.monotonic()
     try:

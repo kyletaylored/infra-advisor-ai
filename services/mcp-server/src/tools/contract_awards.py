@@ -37,6 +37,28 @@ _AWARD_TYPE_LABELS = {
     "D": "Definitive Contract",
 }
 
+# Full state name -> USPS 2-letter abbreviation. _extract_state() only
+# recognized 2-letter tokens (e.g. "Austin TX") until this was added — a
+# geography like "Texas" fell through to None, which made get_contract_awards
+# send an EMPTY place_of_performance_locations filter to USASpending, which
+# rejects it with HTTP 422 ("value '[]' is below min '1' items"). This was
+# the root cause behind the recurring 422s reported against this tool.
+_STATE_NAME_TO_ABBREV = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR",
+    "california": "CA", "colorado": "CO", "connecticut": "CT", "delaware": "DE",
+    "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID",
+    "illinois": "IL", "indiana": "IN", "iowa": "IA", "kansas": "KS",
+    "kentucky": "KY", "louisiana": "LA", "maine": "ME", "maryland": "MD",
+    "massachusetts": "MA", "michigan": "MI", "minnesota": "MN", "mississippi": "MS",
+    "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV",
+    "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+    "north carolina": "NC", "north dakota": "ND", "ohio": "OH", "oklahoma": "OK",
+    "oregon": "OR", "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC",
+    "south dakota": "SD", "tennessee": "TN", "texas": "TX", "utah": "UT",
+    "vermont": "VT", "virginia": "VA", "washington": "WA", "west virginia": "WV",
+    "wisconsin": "WI", "wyoming": "WY", "district of columbia": "DC",
+}
+
 
 # ---------------------------------------------------------------------------
 # Input schema
@@ -77,6 +99,11 @@ def _extract_state(geography: str) -> str | None:
     g = geography.strip()
     if len(g) == 2 and g.isalpha():
         return g.upper()
+    # Full state name, e.g. "Texas" — check before the token scan below, since
+    # a name like "New York" would otherwise never match a 2-char token.
+    by_name = _STATE_NAME_TO_ABBREV.get(g.lower())
+    if by_name:
+        return by_name
     # Try to extract first 2-char alpha token from a city/state string like "Austin TX"
     for token in g.split():
         if len(token) == 2 and token.isalpha():
