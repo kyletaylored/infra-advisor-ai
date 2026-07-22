@@ -769,19 +769,36 @@ app.MapPost("/tools/{name}", async (
         var text = string.Join("\n", callResult.Content
             .OfType<TextContentBlock>()
             .Select(c => c.Text));
+        var traceId = GetDdTraceId(httpContext, Activity.Current);
+        var spanId = GetDdSpanId(Activity.Current);
         if (callResult.IsError == true)
-            return Results.Ok(new { tool_name = name, error = text, duration_ms = sw.Elapsed.TotalMilliseconds });
+            return Results.Ok(new { tool_name = name, error = text, duration_ms = sw.Elapsed.TotalMilliseconds, trace_id = traceId, span_id = spanId });
         return Results.Ok(new
         {
             tool_name = name,
             result = (object?)callResult.StructuredContent ?? text,
             duration_ms = sw.Elapsed.TotalMilliseconds,
+            // Lets the Sandbox UI link straight to this call's trace in
+            // Datadog APM. Note: unlike the Python MCP server, mcp-server-dotnet's
+            // tool implementations don't yet log downstream API response
+            // bodies on failure (log_external_api_failure only exists on the
+            // Python side) — the trace will show latency/status but not the
+            // raw response text for now.
+            trace_id = traceId,
+            span_id = spanId,
         });
     }
     catch (McpException ex)
     {
         sw.Stop();
-        return Results.Ok(new { tool_name = name, error = ex.Message, duration_ms = sw.Elapsed.TotalMilliseconds });
+        return Results.Ok(new
+        {
+            tool_name = name,
+            error = ex.Message,
+            duration_ms = sw.Elapsed.TotalMilliseconds,
+            trace_id = GetDdTraceId(httpContext, Activity.Current),
+            span_id = GetDdSpanId(Activity.Current),
+        });
     }
 }).RequireAuthorization();
 

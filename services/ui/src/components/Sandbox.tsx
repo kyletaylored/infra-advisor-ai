@@ -5,6 +5,7 @@ import {
   Button,
   Flex,
   HStack,
+  Link,
   Spinner,
   Text,
   Textarea,
@@ -191,6 +192,20 @@ function formatJson(value: unknown): string {
 
 function methodColor(method: "GET" | "POST") {
   return method === "GET" ? "green" : "blue";
+}
+
+// Both /tools/{name} endpoints (Python + .NET) echo trace_id/span_id on
+// every response — lets this panel link straight to the call's trace in
+// Datadog APM, where the actual downstream API response body (e.g.
+// USASpending's HTTP 422 detail) is logged via log_external_api_failure
+// (services/mcp-server/src/observability/tracing.py) on the Python side,
+// correlated via DD_LOGS_INJECTION.
+function extractTraceInfo(body: unknown): { traceId: string | null; spanId: string | null } {
+  if (typeof body !== "object" || body === null) return { traceId: null, spanId: null };
+  const b = body as Record<string, unknown>;
+  const traceId = typeof b.trace_id === "string" ? b.trace_id : null;
+  const spanId = typeof b.span_id === "string" ? b.span_id : null;
+  return { traceId, spanId };
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -550,6 +565,22 @@ export function Sandbox({ prefill }: { prefill?: SandboxPrefill | null }) {
                     {result.status === 0 ? "Error" : result.status}
                   </Badge>
                   <Text fontSize="xs" color="gray.400">{result.durationMs}ms</Text>
+                  {(() => {
+                    const { traceId, spanId } = extractTraceInfo(result.body);
+                    return traceId ? (
+                      <Link
+                        href={`https://${import.meta.env.VITE_DD_RUM_SITE || "us3.datadoghq.com"}/apm/trace/${traceId}${spanId ? `?spanID=${spanId}` : ""}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        fontSize="xs"
+                        color="purple.500"
+                        fontWeight="medium"
+                        textDecoration="underline"
+                      >
+                        View trace →
+                      </Link>
+                    ) : null;
+                  })()}
                 </HStack>
               )}
             </HStack>

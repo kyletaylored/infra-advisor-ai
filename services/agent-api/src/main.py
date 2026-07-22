@@ -736,12 +736,21 @@ async def invoke_tool(
             "tool_name": tool_name,
             "error": str(exc),
             "duration_ms": round((time.monotonic() - start) * 1000, 2),
+            "trace_id": current_trace_id(),
+            "span_id": current_span_id(),
         }
 
     return {
         "tool_name": tool_name,
         "result": result,
         "duration_ms": round((time.monotonic() - start) * 1000, 2),
+        # Lets the Sandbox UI link straight to this call's trace in Datadog
+        # APM — the actual downstream API response body (e.g. USASpending's
+        # HTTP 422 detail) is logged there via log_external_api_failure
+        # (services/mcp-server/src/observability/tracing.py), correlated to
+        # this trace/span via DD_LOGS_INJECTION.
+        "trace_id": current_trace_id(),
+        "span_id": current_span_id(),
     }
 
 

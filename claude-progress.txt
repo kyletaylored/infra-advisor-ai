@@ -136,6 +136,47 @@
           POST /tools/{name} against a real .NET-backed tool returns a
           result matching what the same call returns via Python's endpoint.
 
+  Follow-up fix (commit fea214f) — found while starting manual verification
+  (c) above: user tried get_contract_awards / get_procurement_opportunities
+  in the Sandbox tab and got {"detail": "Authorization header missing"} on
+  every call. Root cause: services/ui/src/components/Sandbox.tsx builds its
+  fetch() calls directly instead of going through lib/api.ts's request
+  helpers, so it never attached the JWT bearer token at all — a pre-existing
+  gap (not introduced by this session's Sandbox changes) that affected every
+  protected endpoint the sandbox calls, not just the new /tools/{name}
+  route. Fixed by adding the same authHeader() pattern already duplicated
+  in lib/api.ts and lib/auth.ts to both of Sandbox's fetch call sites
+  (/suggestions and the main tool-call runner). npx tsc --noEmit clean.
+  This unblocks verification item (c) above but doesn't itself confirm the
+  .NET POST /tools/{name} path end-to-end — that still needs a live run.
+
+  Follow-up #2 — trace_id/span_id on tool-invoke response + Sandbox "View
+  trace" link: after the auth fix above, user successfully ran
+  get_contract_awards through the Sandbox and got back a real (mocked-out)
+  USASpending HTTP 422 in the tool result — then asked how to inspect the
+  actual downstream response body. Answer: it was already logged by the
+  prior session's log_external_api_failure fix (services/mcp-server/src/
+  tools/contract_awards.py), trace-correlated via DD_LOGS_INJECTION — but
+  there was no way to get FROM the Sandbox result TO that trace, since
+  POST /tools/{name} never returned a trace_id. Closed that gap:
+    services/agent-api/src/main.py — invoke_tool now includes
+      trace_id/span_id (current_trace_id()/current_span_id(), already
+      imported) on both the success and error response branches.
+    services/agent-api-dotnet/Program.cs — POST /tools/{name} now includes
+      trace_id/span_id (GetDdTraceId/GetDdSpanId, same helpers /query
+      already uses) on all three response branches (success, IsError,
+      McpException). Noted in-code that mcp-server-dotnet's tool
+      implementations don't yet have the Python side's response-body
+      logging, so .NET traces will show latency/status but not the raw
+      downstream body yet — a known follow-up, not fixed here.
+    services/ui/src/components/Sandbox.tsx — new extractTraceInfo() helper
+      + a "View trace →" link next to the status badge/duration in the
+      result panel (same Datadog APM URL pattern Chat.tsx's MessageActions
+      already uses), shown whenever the response includes a trace_id.
+
+  Verified: dotnet build clean; uv run pytest services/agent-api/tests/ —
+  26 passed, no regressions; npx tsc --noEmit clean.
+
 [2026-07-22] MCP tools — log external-API failure payloads, correlated to the trace
 
   Triggered by user report: a procurement query returned a plausible LLM
