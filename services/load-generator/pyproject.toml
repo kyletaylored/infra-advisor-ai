@@ -4,7 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     # ddtrace 4.x bundles all integrations — no separate extras needed
-    "ddtrace>=4.7.1",
+    "ddtrace>=4.11.1",
     "confluent-kafka>=2.14.0",
     "httpx>=0.28.1",
     "pydantic>=2.13.0",

@@ -14,7 +14,7 @@ dependencies = [
     "azure-identity>=1.25.3",
     "jinja2>=3.1.6",
     # ddtrace 4.x bundles all integrations including mcp — no separate extras needed
-    "ddtrace>=4.7.1",
+    "ddtrace>=4.11.1",
     "datadog-api-client>=2.53.0",
     "openai>=2.32.0",
 ]
