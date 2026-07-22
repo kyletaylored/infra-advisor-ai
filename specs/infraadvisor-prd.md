@@ -16,8 +16,7 @@ This PRD is the authoritative source of truth. Claude Code agents implementing t
 1. Read this entire document before writing any code
 2. Treat every decision documented here as final — do not re-open design questions
 3. Implement phases in order; do not begin Phase N+1 until Phase N acceptance criteria pass
-4. Emit a `claude-progress.txt` update after completing each task
-5. Refer to `docs/agent-guides/` for build/test/verify commands, coding conventions, and the project map
+4. Refer to `docs/agent-guides/` for build/test/verify commands, coding conventions, and the project map
 
 ---
 
@@ -1378,7 +1377,6 @@ Global infrastructure consulting firm AI assistant. See @docs/agent-guides/proje
 
 ## Phase order
 Implement phases sequentially. Check @specs/ for current phase task list.
-Current progress: @claude-progress.txt
 ```
 
 ### 6.2 Subagent definitions
@@ -1507,14 +1505,6 @@ Report findings as a numbered list. Do not make code changes.
           "command": "if [[ '$TOOL_INPUT_path' == *.py ]]; then uv run ruff check --fix '$TOOL_INPUT_path' 2>/dev/null || true; fi"
         }]
       }
-    ],
-    "Stop": [
-      {
-        "hooks": [{
-          "type": "prompt",
-          "prompt": "Review claude-progress.txt. Has the agent completed all tasks for the current phase and verified all acceptance criteria? Answer only: YES or NO followed by one sentence."
-        }]
-      }
     ]
   }
 }
@@ -1538,7 +1528,6 @@ The orchestrator agent (you, the root Claude Code session) must follow this exec
                implementation-agent: write generate_synthetic_docs.py (80 documents, water domain expanded)
 8. [serial]   test-agent: write tests for DAGs (mock external APIs)
 9. [serial]   reviewer: review Phase 1 deliverables against PRD
-10. [serial]  Update claude-progress.txt: "Phase 1 complete — [date] — [summary]"
 ```
 
 **Phase 2 execution:**
@@ -1555,7 +1544,6 @@ The orchestrator agent (you, the root Claude Code session) must follow this exec
 6. [serial]   infra-agent: write k8s/mcp-server/ manifests
 7. [serial]   test-agent: run all tests; fix failures
 8. [serial]   reviewer: review Phase 2 deliverables
-9. [serial]   Update claude-progress.txt
 ```
 
 **Phase 3 execution:**
@@ -1567,7 +1555,6 @@ The orchestrator agent (you, the root Claude Code session) must follow this exec
 5. [serial]   infra-agent: write k8s/agent-api/ manifests including HPA
 6. [serial]   test-agent: write integration tests (mock MCP server + mock Azure OpenAI)
 7. [serial]   reviewer: review Phase 3 deliverables
-8. [serial]   Update claude-progress.txt
 ```
 
 **Phase 4 execution:**
@@ -1579,7 +1566,6 @@ The orchestrator agent (you, the root Claude Code session) must follow this exec
 4. [serial]   datadog-agent: write all 3 monitor JSON files
 5. [serial]   datadog-agent: write synthetics browser test JSON
 6. [serial]   reviewer: review Phase 4 deliverables
-7. [serial]   Update claude-progress.txt
 ```
 
 **Phase 5 execution:**
@@ -1591,24 +1577,6 @@ The orchestrator agent (you, the root Claude Code session) must follow this exec
 4. [serial]   infra-agent: write k8s/ui/ deployment + ingress
 5. [serial]   infra-agent: write services/ui/Dockerfile
 6. [serial]   reviewer: review Phase 5 deliverables
-7. [serial]   Update claude-progress.txt: "ALL PHASES COMPLETE"
-```
-
-### 6.5 claude-progress.txt format
-
-The root agent must maintain this file. Append, never overwrite.
-
-```
-[2025-04-17 10:00] Phase 1 started
-[2025-04-17 10:00] Task: Writing CLAUDE.md and agent definitions
-[2025-04-17 10:05] Task complete: CLAUDE.md, .claude/settings.json, 4 agent definitions
-[2025-04-17 10:05] Task: Writing Bicep IaC modules
-...
-[2025-04-17 14:30] Phase 1 complete. Acceptance criteria: 8/8 passed.
-  Deliverables: infra/bicep/* (6 modules), k8s/* (5 directories), services/ingestion/* (5 files)
-  Notes: Strimzi operator requires manual CRD install before applying KafkaCluster CR
-[2025-04-17 14:30] Phase 2 started
-...
 ```
 
 ---

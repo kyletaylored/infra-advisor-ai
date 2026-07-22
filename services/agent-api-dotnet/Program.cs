@@ -809,8 +809,7 @@ app.MapPost("/tools/{name}", async (
 // rate?" without grepping pod logs or hitting DD's UI.
 //
 // Read-only by design — mutating sample rate / toggling evaluators at runtime
-// would require an audit story we haven't designed yet. See claude-progress.txt
-// entry for the "Option A diagnostic panel" decision rationale.
+// would require an audit story we haven't designed yet.
 app.MapGet("/eval/status", (
     IEnumerable<InfraAdvisor.AgentApi.Services.Evaluators.IResponseEvaluator> evaluators,
     DatadogEvalsClient ddEvals,

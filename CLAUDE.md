@@ -49,8 +49,7 @@ Global infrastructure consulting firm AI assistant. Refer to `@docs/agent-guides
 
 ### Execution Phase
 
-Implement phases sequentially. Check `@specs/` for the current phase task list.  
-**Current Progress:** Refer to `@claude-progress.txt`.
+Implement phases sequentially. Check `@specs/` for the current phase task list.
 
 > **Core Principles:** > \* **Simplicity First:** Impact minimal code.
 >

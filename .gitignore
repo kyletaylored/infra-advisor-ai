@@ -58,9 +58,6 @@ publish/
 # macOS
 .DS_Store
 
-# Claude Code development artifacts
-claude-progress.txt
-
 # Terraform / Bicep state
 *.tfstate
 *.tfstate.backup
