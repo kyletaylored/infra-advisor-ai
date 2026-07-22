@@ -1,3 +1,141 @@
+[2026-07-22] Persist tool-call reasoning + Copy/Open-in-Sandbox buttons + Sandbox .NET parity
+
+  Triggered by continued opaque tool failures in chat — user wanted the
+  reasoning trace (tool name/args/result) to survive a page refresh, a way
+  to copy it for debugging, and a button on each tool-call chip to jump
+  straight into the Sandbox tab pre-populated for re-testing. Research
+  confirmed zero per-tool-call persistence existed on either backend (only
+  a flattened `sources: string[]` list was ever saved) and that the Sandbox
+  tab's .NET support was fully broken (no invoke endpoint at all, and the
+  tab hardcoded the Python API base regardless of the selected backend).
+  User confirmed: do full persistence now, and fix the .NET Sandbox gap as
+  part of this work. Full plan at
+  /Users/kyle.taylor/.claude/plans/idempotent-exploring-allen.md.
+
+  DB schema (both backends): new `messages.steps` JSONB column, added via
+  idempotent `ALTER TABLE messages ADD COLUMN IF NOT EXISTS steps JSONB NOT
+  NULL DEFAULT '[]'` in each backend's startup init (no migration framework
+  exists in this repo — matches the existing `CREATE TABLE IF NOT EXISTS`
+  convention). Unified stored-step shape covers both tool calls and internal
+  pipeline steps (classify_domain/route_query) so a reloaded conversation
+  renders identical chips to the ones seen live: {kind: "tool"|"internal",
+  id, name, status, args_json, result_summary, sources, duration_ms, detail}.
+
+  services/agent-api-dotnet/Services/ConversationService.cs
+    New StoredStep record. StoredMessage gains Steps. SaveMessagesAsync
+    gains steps: IReadOnlyList<StoredStep>? = null (serialized via
+    System.Text.Json, same pattern as the existing sources column).
+    GetConversationAsync SELECTs + deserializes the new column (empty list
+    for pre-migration rows). Note: steps round-trips through the DB in
+    PascalCase (plain JsonSerializer.Serialize/Deserialize, no naming
+    policy) — this is fine and intentional, since the DB representation is
+    an internal .NET-only implementation detail; the actual wire format to
+    the UI goes through the app's global ConfigureHttpJsonOptions
+    (SnakeCaseLower), so the HTTP response is correctly snake_case
+    (verified by tracing both serialization boundaries).
+
+  services/agent-api-dotnet/Program.cs
+    /query/stream handler: new UpsertStep(...) helper (dictionary-by-id +
+    ordered list, mirroring Chat.tsx's own upsertStep merge pattern) called
+    from the existing event switch on StepEvent/ToolCallStartEvent/
+    ToolCallEndEvent — ToolCallEndEvent preserves the ArgsJson captured at
+    ToolCallStartEvent since the end event doesn't carry args. Passed to
+    SaveMessagesAsync(..., stepRecords).
+
+    GET /tools: added `parameters = (t as AIFunctionDeclaration)?.JsonSchema`
+    — parity with Python's existing `parameters` field (was previously
+    {name, description} only on .NET).
+
+    New POST /tools/{name} — .NET had NO tool-invocation endpoint at all
+    before this (only Python's POST /tools/{tool_name} existed). Uses
+    McpClientTool.CallAsync(Dictionary<string,object?>) (confirmed via
+    package research: ModelContextProtocol.Core 1.3.0's McpClientTool.CallAsync
+    is the SDK's own recommended direct-invocation entrypoint, distinct from
+    the AIFunction.InvokeAsync path the chat loop uses internally). Branches
+    on CallToolResult.IsError for the error-shaped response, catches
+    McpException for protocol-level failures (unknown tool, malformed
+    request) — response shape ({tool_name, result, duration_ms} /
+    {tool_name, error, duration_ms}) matches Python's endpoint exactly so
+    the UI needs no backend-specific handling.
+
+  services/agent-api/src/conversations.py, main.py
+    Mirrors .NET: MessageRow gains steps = Column(JSON, default=list);
+    init_db() gets the matching ALTER TABLE; _msg_to_dict includes steps;
+    save_messages gains steps: list[dict] | None = None. main.py's
+    /query/stream event_stream() generator accumulates the same
+    dict-keyed-by-id ordered step list as it iterates run_agent_stream(),
+    passed to save_messages(..., steps=steps). Python's GET /tools already
+    had a parameters field (args_schema.model_json_schema()) — no change
+    needed there.
+
+  services/ui/src/lib/api.ts
+    New StoredStepDto type; ConversationMessage gains steps?: StoredStepDto[].
+    getApiBase() changed from private to exported (needed by Sandbox.tsx's
+    fix below).
+
+  services/ui/src/components/Chat.tsx
+    New toStreamStep()/toStepsFromMessage() — real per-tool-call chips
+    (args/result/duration/status) hydrate from m.steps when present; falls
+    back to the old toStepsFromSources() lightweight reconstruction (name
+    only) for rows saved before this migration, so old conversations don't
+    lose their chip strip entirely.
+
+    Copy tool-calls button: MessageActions (defined inline in this file)
+    gains a steps/toolMeta prop pair and a new icon button (Bug icon,
+    matches the existing actionBtnProps template), visible only when the
+    message has tool-kind steps, copying a plain-text block per call (name,
+    args, status, result summary, sources, duration) via the same
+    navigator.clipboard.writeText already used for "Copy markdown".
+
+    Open-in-Sandbox wiring: new sandboxPrefill state lifted next to the
+    existing activeView state. Each tool chip's new onOpenInSandbox callback
+    pretty-prints the call's argsJson and calls
+    setSandboxPrefill({toolId, paramsText}) + setActiveView("sandbox").
+
+  services/ui/src/components/ToolStepChip.tsx
+    New optional onOpenInSandbox?: () => void prop, rendered as a
+    FlaskConical icon button next to the existing expand chevron, only for
+    tool-kind steps, with e.stopPropagation() so it doesn't also toggle the
+    chip's expand/collapse.
+
+  services/ui/src/components/Sandbox.tsx
+    New prefill?: {toolId, paramsText} | null prop + useEffect that sets
+    selectedId/paramsText when it changes (fires fresh each time the
+    conditionally-mounted Sandbox tab opens with a new prefill). Replaced
+    the hardcoded AGENT_API_BASE module constant (always Python's /api,
+    ignoring the user's backend selector) with a local apiBase =
+    getApiBase() read at render time — Sandbox now correctly targets
+    whichever backend (.NET or Python) is selected in Chat's toolbar.
+
+  Verified:
+  [x] dotnet build (agent-api-dotnet): 0 warnings, 0 errors
+  [x] uv run pytest services/agent-api/tests/: 26 passed, no regressions
+      from conversations.py/main.py changes
+  [x] npx tsc --noEmit (services/ui): 0 errors
+  [x] git diff --stat: change scope matches the plan exactly (2 .NET files,
+      2 Python files, 4 UI files) — no unrelated files touched
+  [x] Traced both .NET JSON serialization boundaries (DB-internal PascalCase
+      round-trip vs HTTP-external SnakeCaseLower via ConfigureHttpJsonOptions)
+      to confirm no naming-mismatch bug reaches the UI
+
+  [~] Live-deployment / manual verification (no .NET test harness exists in
+      this repo to unit-test Program.cs/ConversationService.cs against, so
+      this is build-verified + code-reviewed but not exercised end-to-end
+      yet):
+      (a) Run a query with tool calls on both backends, refresh the page,
+          reload the conversation — confirm chips show real args/results
+          (not just names), matching what was seen live.
+      (b) Click "Copy tool calls" — confirm clipboard content includes
+          name/args/result per call.
+      (c) Click a tool chip's "open in sandbox" button on BOTH backends —
+          confirm the Sandbox tab opens with that tool selected and args
+          pre-filled, and that running it actually executes (especially the
+          new .NET POST /tools/{name} path, never exercised against a live
+          MCP server yet).
+      (d) Confirm GET /tools on .NET now includes a parameters field and
+          POST /tools/{name} against a real .NET-backed tool returns a
+          result matching what the same call returns via Python's endpoint.
+
 [2026-07-22] MCP tools — log external-API failure payloads, correlated to the trace
 
   Triggered by user report: a procurement query returned a plausible LLM

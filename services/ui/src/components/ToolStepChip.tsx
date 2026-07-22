@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Box, Collapsible, HStack, Icon, Spinner, Text, VStack } from "@chakra-ui/react";
-import { Check, ChevronDown, ChevronRight, Search, AlertCircle, BookOpen, Filter } from "lucide-react";
+import { Box, Collapsible, HStack, Icon, IconButton, Spinner, Text, VStack } from "@chakra-ui/react";
+import { Check, ChevronDown, ChevronRight, Search, AlertCircle, BookOpen, Filter, FlaskConical } from "lucide-react";
 
 // Maps tool name → display label + glyph. The label here is the short user-
 // facing name shown in the chip; the optional `data_notes` is rendered in
@@ -33,6 +33,10 @@ export interface ToolStepChipProps {
   // Tool name → display metadata; supplied by Chat.tsx so this component
   // doesn't need its own copy of TOOL_META.
   toolMeta: Record<string, ToolDisplayMeta>;
+  // Opens the Sandbox tab pre-populated with this tool + its args, for
+  // re-testing a failed/interesting call. Only rendered for tool-kind steps
+  // (internal pipeline steps have no tool to open).
+  onOpenInSandbox?: () => void;
 }
 
 const INTERNAL_LABELS: Record<string, string> = {
@@ -107,14 +111,29 @@ export function ToolStepChip(props: ToolStepChipProps) {
           <Text color="gray.400">· {formatDuration(props.durationMs)}</Text>
         )}
 
-        {hasDetail && (
-          <Icon
-            as={expanded ? ChevronDown : ChevronRight}
-            boxSize={3.5}
-            color="gray.400"
-            ml="auto"
-          />
-        )}
+        {(props.kind.kind === "tool" && props.onOpenInSandbox) || hasDetail ? (
+          <HStack gap={1} ml="auto">
+            {props.kind.kind === "tool" && props.onOpenInSandbox && (
+              <IconButton
+                aria-label="Open in Sandbox"
+                title="Open in Sandbox with these inputs"
+                size="2xs"
+                variant="ghost"
+                colorPalette="gray"
+                color="gray.400"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  props.onOpenInSandbox?.();
+                }}
+              >
+                <FlaskConical size={12} />
+              </IconButton>
+            )}
+            {hasDetail && (
+              <Icon as={expanded ? ChevronDown : ChevronRight} boxSize={3.5} color="gray.400" />
+            )}
+          </HStack>
+        ) : null}
       </HStack>
 
       <Collapsible.Root open={expanded}>

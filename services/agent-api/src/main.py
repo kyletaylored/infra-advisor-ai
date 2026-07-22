@@ -520,6 +520,22 @@ async def query_stream(
         answer_parts: list[str] = []
         tools_called: list[str] = []
 
+        # Tool-call / pipeline-step reasoning, accumulated as step/
+        # tool_call_start/tool_call_end events arrive so it can be persisted
+        # alongside the answer — mirrors agent-api-dotnet's Program.cs
+        # UpsertStep pattern so a reloaded conversation renders identical
+        # chips to the ones the user saw live.
+        steps: list[dict] = []
+        step_index_by_id: dict[str, int] = {}
+
+        def upsert_step(step: dict) -> None:
+            step_id = step["id"]
+            if step_id in step_index_by_id:
+                steps[step_index_by_id[step_id]] = step
+            else:
+                step_index_by_id[step_id] = len(steps)
+                steps.append(step)
+
         async for evt in run_agent_stream(
             query=body.query,
             session_id=session_id,
@@ -531,6 +547,46 @@ async def query_stream(
 
             if event_name == "text_chunk":
                 answer_parts.append(evt["chunk"])
+            elif event_name == "step":
+                upsert_step({
+                    "kind": "internal",
+                    "id": f"internal:{evt['step']}",
+                    "name": evt["step"],
+                    "status": evt["status"],
+                    "args_json": None,
+                    "result_summary": None,
+                    "sources": None,
+                    "duration_ms": None,
+                    "detail": evt.get("detail"),
+                })
+            elif event_name == "tool_call_start":
+                upsert_step({
+                    "kind": "tool",
+                    "id": evt["id"],
+                    "name": evt["name"],
+                    "status": "running",
+                    "args_json": evt.get("args_json"),
+                    "result_summary": None,
+                    "sources": None,
+                    "duration_ms": None,
+                    "detail": None,
+                })
+            elif event_name == "tool_call_end":
+                # Preserve args_json captured at tool_call_start — the end
+                # event doesn't carry args.
+                prior_idx = step_index_by_id.get(evt["id"])
+                prior_args_json = steps[prior_idx]["args_json"] if prior_idx is not None else None
+                upsert_step({
+                    "kind": "tool",
+                    "id": evt["id"],
+                    "name": evt["name"],
+                    "status": evt["status"],
+                    "args_json": prior_args_json,
+                    "result_summary": evt.get("result_summary"),
+                    "sources": evt.get("sources"),
+                    "duration_ms": evt.get("duration_ms"),
+                    "detail": None,
+                })
             elif event_name == "done":
                 tools_called = evt["tools_called"]
                 evt = {
@@ -557,6 +613,7 @@ async def query_stream(
                     sources=tools_called,
                     trace_id=current_trace_id(),
                     span_id=current_span_id(),
+                    steps=steps,
                 )
             except Exception as exc:
                 logger.warning("save_messages failed (non-fatal): %s", exc)

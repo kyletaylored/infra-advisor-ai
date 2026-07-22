@@ -20,7 +20,7 @@ export function setBackend(backend: BackendType): void {
   localStorage.setItem(BACKEND_KEY, backend);
 }
 
-function getApiBase(): string {
+export function getApiBase(): string {
   return getBackend() === "dotnet" ? "/api-dotnet" : (import.meta.env.VITE_AGENT_API_URL || "/api");
 }
 
@@ -405,12 +405,27 @@ export async function submitFeedback(
 
 // ── Conversation history ──────────────────────────────────────────────────────
 
+// Persisted tool-call / pipeline-step reasoning for an assistant message —
+// mirrors StoredStep (agent-api-dotnet) / the steps dict shape (agent-api).
+export interface StoredStepDto {
+  kind: "tool" | "internal";
+  id: string;
+  name: string;
+  status: string;
+  args_json?: string | null;
+  result_summary?: string | null;
+  sources?: string[] | null;
+  duration_ms?: number | null;
+  detail?: string | null;
+}
+
 export interface ConversationMessage {
   id: string;
   conversation_id: string;
   role: "user" | "assistant";
   content: string;
   sources: string[];
+  steps?: StoredStepDto[];
   trace_id: string | null;
   span_id: string | null;
   created_at: string;

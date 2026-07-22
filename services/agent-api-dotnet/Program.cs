@@ -15,6 +15,9 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.AI;
 using Microsoft.IdentityModel.Tokens;
+using ModelContextProtocol;
+using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -593,6 +596,19 @@ app.MapPost("/query/stream", async (
     string? finalTraceId = null;
     string? finalSpanId = null;
 
+    // Tool-call / pipeline-step reasoning, accumulated as StepEvent/
+    // ToolCallStartEvent/ToolCallEndEvent arrive so it can be persisted
+    // alongside the answer — mirrors the UI's own upsertStep merge pattern
+    // (Chat.tsx) so a reloaded conversation renders identical chips to the
+    // ones the user saw live.
+    var stepRecords = new List<StoredStep>();
+    var stepIndexById = new Dictionary<string, int>();
+    void UpsertStep(StoredStep step)
+    {
+        if (stepIndexById.TryGetValue(step.Id, out var idx)) stepRecords[idx] = step;
+        else { stepIndexById[step.Id] = stepRecords.Count; stepRecords.Add(step); }
+    }
+
     await foreach (var evt in agentService.RunAgentStreamingAsync(
         body.Query, agentSessionKey, deployment, httpContext.RequestAborted))
     {
@@ -600,6 +616,27 @@ app.MapPost("/query/stream", async (
         switch (evt)
         {
             case TextChunkEvent t: fullAnswer.Append(t.Chunk); break;
+            case StepEvent se:
+                UpsertStep(new StoredStep(
+                    Kind: "internal", Id: $"internal:{se.Step}", Name: se.Step, Status: se.Status,
+                    ArgsJson: null, ResultSummary: null, Sources: null, DurationMs: null, Detail: se.Detail));
+                break;
+            case ToolCallStartEvent tcs:
+                UpsertStep(new StoredStep(
+                    Kind: "tool", Id: tcs.Id, Name: tcs.Name, Status: "running",
+                    ArgsJson: tcs.ArgsJson, ResultSummary: null, Sources: null, DurationMs: null, Detail: null));
+                break;
+            case ToolCallEndEvent tce:
+                // Preserve ArgsJson captured at tool_call_start rather than
+                // dropping it — the end event doesn't carry args.
+                var priorArgsJson = stepIndexById.TryGetValue(tce.Id, out var priorIdx)
+                    ? stepRecords[priorIdx].ArgsJson
+                    : null;
+                UpsertStep(new StoredStep(
+                    Kind: "tool", Id: tce.Id, Name: tce.Name, Status: tce.Status,
+                    ArgsJson: priorArgsJson, ResultSummary: tce.ResultSummary, Sources: tce.Sources,
+                    DurationMs: tce.DurationMs, Detail: null));
+                break;
             case DoneEvent d:
                 doneSources.AddRange(d.Sources);
                 finalTraceId = d.TraceId;
@@ -622,7 +659,7 @@ app.MapPost("/query/stream", async (
     {
         await conversationSvc.SaveMessagesAsync(
             conversationId, body.Query, fullAnswer.ToString(),
-            doneSources, finalTraceId, finalSpanId);
+            doneSources, finalTraceId, finalSpanId, stepRecords);
     }
 
     return Results.Empty;
@@ -684,8 +721,68 @@ app.MapGet("/tools", async (McpClientHolder holder, AppState state, HttpContext 
     {
         name = t.Name,
         description = t.Description,
+        // JSON Schema for the tool's input — parity with Python agent-api's
+        // GET /tools `parameters` field (main.py), used by the Sandbox tab
+        // to show real per-tool schemas instead of hand-maintained examples.
+        parameters = (t as AIFunctionDeclaration)?.JsonSchema,
     });
     return Results.Ok(result);
+}).RequireAuthorization();
+
+// ── /tools/{name} — invoke a single MCP tool directly, outside the normal
+// agent tool-calling loop. Backs the Sandbox tab's "run this tool" button;
+// mirrors Python agent-api's POST /tools/{tool_name} (main.py) response
+// shape ({tool_name, result, duration_ms} / {tool_name, error, duration_ms})
+// so the UI doesn't need backend-specific handling.
+app.MapPost("/tools/{name}", async (
+    string name,
+    HttpContext httpContext,
+    McpClientHolder holder,
+    AppState state) =>
+{
+    if (!state.McpConnected)
+        return Results.Problem(detail: "MCP client not available", statusCode: 503);
+
+    var tools = await holder.GetToolsAsync(httpContext.RequestAborted);
+    var tool = tools.OfType<McpClientTool>().FirstOrDefault(t => t.Name == name);
+    if (tool is null)
+        return Results.NotFound(new { error = $"Tool '{name}' not found" });
+
+    Dictionary<string, object?> args;
+    try
+    {
+        using var doc = await JsonDocument.ParseAsync(httpContext.Request.Body, cancellationToken: httpContext.RequestAborted);
+        args = doc.RootElement.ValueKind == JsonValueKind.Object
+            ? doc.RootElement.EnumerateObject().ToDictionary(p => p.Name, p => (object?)p.Value.Clone())
+            : new Dictionary<string, object?>();
+    }
+    catch (JsonException)
+    {
+        args = new Dictionary<string, object?>();
+    }
+
+    var sw = Stopwatch.StartNew();
+    try
+    {
+        var callResult = await tool.CallAsync(args, cancellationToken: httpContext.RequestAborted);
+        sw.Stop();
+        var text = string.Join("\n", callResult.Content
+            .OfType<TextContentBlock>()
+            .Select(c => c.Text));
+        if (callResult.IsError == true)
+            return Results.Ok(new { tool_name = name, error = text, duration_ms = sw.Elapsed.TotalMilliseconds });
+        return Results.Ok(new
+        {
+            tool_name = name,
+            result = (object?)callResult.StructuredContent ?? text,
+            duration_ms = sw.Elapsed.TotalMilliseconds,
+        });
+    }
+    catch (McpException ex)
+    {
+        sw.Stop();
+        return Results.Ok(new { tool_name = name, error = ex.Message, duration_ms = sw.Elapsed.TotalMilliseconds });
+    }
 }).RequireAuthorization();
 
 // ── /eval/status — read-only diagnostics for the admin UI ─────────────────────

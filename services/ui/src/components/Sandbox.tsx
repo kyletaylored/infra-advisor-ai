@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
   Badge,
   Box,
@@ -11,8 +11,7 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import { Sparkles } from "lucide-react";
-
-const AGENT_API_BASE = (import.meta.env.VITE_AGENT_API_URL as string | undefined) || "/api";
+import { getApiBase } from "../lib/api";
 
 // ── Endpoint definitions ─────────────────────────────────────────────────────
 
@@ -193,13 +192,23 @@ interface RunResult {
   requestBody: string | null;
 }
 
-export function Sandbox() {
+export interface SandboxPrefill {
+  toolId: string;
+  paramsText: string;
+}
+
+export function Sandbox({ prefill }: { prefill?: SandboxPrefill | null }) {
   const [selectedId, setSelectedId] = useState<string>("health");
   const [paramsText, setParamsText] = useState<string>("");
   const [running, setRunning] = useState(false);
   const [suggesting, setSuggesting] = useState(false);
   const [result, setResult] = useState<RunResult | null>(null);
   const [responseTab, setResponseTab] = useState<"response" | "request">("response");
+
+  // Respects the user's currently-selected backend (Chat.tsx's toolbar) —
+  // previously hardcoded to Python's /api regardless of selection, which
+  // silently broke MCP tool calls when the .NET backend was selected.
+  const apiBase = getApiBase();
 
   const endpoint = ENDPOINTS.find((e) => e.id === selectedId) ?? ENDPOINTS[0];
 
@@ -209,10 +218,23 @@ export function Sandbox() {
     setResult(null);
   }
 
+  // Pre-select + pre-populate when opened from a chat tool-call chip's
+  // "open in sandbox" button (Chat.tsx). Sandbox is conditionally mounted
+  // per tab switch, so this effect fires fresh each time it's opened with
+  // a new prefill.
+  useEffect(() => {
+    if (prefill) {
+      setSelectedId(prefill.toolId);
+      setParamsText(prefill.paramsText);
+      setResult(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill]);
+
   async function handleSuggest() {
     setSuggesting(true);
     try {
-      const resp = await fetch(`${AGENT_API_BASE}/suggestions`, {
+      const resp = await fetch(`${apiBase}/suggestions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -248,7 +270,7 @@ export function Sandbox() {
     setResult(null);
 
     const isGet = endpoint.method === "GET";
-    const url = `${AGENT_API_BASE}${endpoint.path}`;
+    const url = `${apiBase}${endpoint.path}`;
     let body: string | null = null;
     let parsedParams: unknown = null;
 
@@ -385,7 +407,7 @@ export function Sandbox() {
               {endpoint.method}
             </Badge>
             <Text fontSize="sm" fontFamily="mono" color="gray.700">
-              {AGENT_API_BASE}{endpoint.path}
+              {apiBase}{endpoint.path}
             </Text>
           </HStack>
           <Text
@@ -558,7 +580,7 @@ export function Sandbox() {
                 {responseTab === "response"
                   ? formatJson(result.body)
                   : [
-                      `${endpoint.method} ${AGENT_API_BASE}${endpoint.path}`,
+                      `${endpoint.method} ${apiBase}${endpoint.path}`,
                       "Content-Type: application/json",
                       "",
                       result.requestBody ? formatJson(JSON.parse(result.requestBody)) : "(no body)",

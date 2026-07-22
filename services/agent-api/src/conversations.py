@@ -63,6 +63,12 @@ class MessageRow(Base):
     role = Column(Text, nullable=False)
     content = Column(Text, nullable=False)
     sources = Column(JSON, nullable=False, default=list)
+    # Persisted tool-call / pipeline-step reasoning — unifies the streamed
+    # step/tool_call_start/tool_call_end SSE events into one row per call so
+    # a reloaded conversation renders identical chips to the ones the user
+    # saw live. Shape: {kind: "tool"|"internal", id, name, status, args_json,
+    # result_summary, sources, duration_ms, detail}.
+    steps = Column(JSON, nullable=False, default=list)
     trace_id = Column(Text, nullable=True)
     span_id = Column(Text, nullable=True)
     created_at = Column(
@@ -103,6 +109,9 @@ def init_db() -> None:
             )
         """))
         conn.execute(text(
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]'"
+        ))
+        conn.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id)"
         ))
         conn.execute(text(
@@ -138,6 +147,7 @@ def _msg_to_dict(row: MessageRow) -> dict:
         "role": row.role,
         "content": row.content,
         "sources": row.sources or [],
+        "steps": row.steps or [],
         "trace_id": row.trace_id,
         "span_id": row.span_id,
         "created_at": row.created_at.isoformat() if row.created_at else None,
@@ -232,6 +242,7 @@ def save_messages(
     sources: list[str],
     trace_id: str | None,
     span_id: str | None,
+    steps: list[dict] | None = None,
 ) -> None:
     """Save a user+assistant exchange to the messages table (non-fatal)."""
     db = _get_db()
@@ -243,12 +254,14 @@ def save_messages(
             role="user",
             content=user_query,
             sources=[],
+            steps=[],
         ))
         db.add(MessageRow(
             conversation_id=uuid.UUID(conv_id),
             role="assistant",
             content=ai_answer,
             sources=sources,
+            steps=steps or [],
             trace_id=trace_id,
             span_id=span_id,
         ))

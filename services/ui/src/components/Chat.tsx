@@ -17,9 +17,9 @@ import {
   VStack,
 } from "@chakra-ui/react";
 import ReactMarkdown from "react-markdown";
-import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Gauge, HardHat, ShieldCheck, Briefcase, Compass, ExternalLink, ChartNoAxesGantt, ChevronLeft } from "lucide-react";
+import { ThumbsUp, ThumbsDown, Copy, Flag, SendHorizontal, Gauge, HardHat, ShieldCheck, Briefcase, Compass, ExternalLink, ChartNoAxesGantt, ChevronLeft, Bug } from "lucide-react";
 import { hasSeenTour, startTour } from "../lib/tour";
-import { ApiError, BackendType, BridgeData, ConversationDetail, ConversationSummary, FeedbackRating, StreamEvent, SuggestionItem, createConversation, deleteConversation, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, getBackend, getConversation, getModel, newConversation, sendQueryStream, setBackend, setModel, setSessionId, submitFeedback } from "../lib/api";
+import { ApiError, BackendType, BridgeData, ConversationDetail, ConversationSummary, FeedbackRating, StoredStepDto, StreamEvent, SuggestionItem, createConversation, deleteConversation, extractBridgeData, fetchInitialSuggestions, fetchModels, fetchSuggestions, getBackend, getConversation, getModel, newConversation, sendQueryStream, setBackend, setModel, setSessionId, submitFeedback } from "../lib/api";
 import {
   trackBridgeCardRendered,
   trackMessageCopied,
@@ -30,7 +30,7 @@ import {
 import { AboutModal } from "./AboutModal";
 import { AdminTab } from "./AdminTab";
 import { BridgeCard } from "./BridgeCard";
-import { StepKind, StepStatus, ToolStepChip } from "./ToolStepChip";
+import { StepKind, StepStatus, ToolDisplayMeta, ToolStepChip } from "./ToolStepChip";
 import { ConversationSidebar } from "./ConversationSidebar";
 import { QuerySuggestions } from "./QuerySuggestions";
 import { Sandbox } from "./Sandbox";
@@ -231,6 +231,36 @@ function toStepsFromSources(sources: string[]): StreamStep[] {
   }));
 }
 
+// Real per-tool-call reasoning persisted on the message, once the backend
+// has it (steps column) — preserves args/result/duration/sources, unlike
+// the lightweight toStepsFromSources reconstruction above (kept as a
+// fallback for rows saved before this persistence existed).
+function toStreamStep(s: StoredStepDto): StreamStep {
+  const kind: StepKind = s.kind === "tool"
+    ? { kind: "tool", toolName: s.name }
+    : { kind: "internal", stepName: s.name };
+  const status: StepStatus =
+    s.status === "running" ? "running"
+      : (s.status === "ok" || s.status === "done" || s.status === "skipped") ? "ok"
+        : "error";
+  return {
+    id: s.id,
+    kind,
+    status,
+    resultSummary: s.result_summary ?? undefined,
+    durationMs: s.duration_ms ?? undefined,
+    argsJson: s.args_json ?? undefined,
+    sources: s.sources ?? undefined,
+  };
+}
+
+function toStepsFromMessage(m: { role: string; sources: string[]; steps?: StoredStepDto[] }): StreamStep[] {
+  if (m.role !== "assistant") return [];
+  return m.steps && m.steps.length > 0
+    ? m.steps.map(toStreamStep)
+    : toStepsFromSources(m.sources);
+}
+
 // ── Domain tiles shown in the empty state ────────────────────────────────────
 
 const DOMAINS = [
@@ -327,20 +357,54 @@ function AIAvatar() {
 
 interface MessageActionsProps {
   content: string;
+  steps?: StreamStep[];
+  toolMeta?: Record<string, ToolDisplayMeta>;
   domain?: string;
   traceId?: string | null;
   spanId?: string | null;
 }
 
-function MessageActions({ content, domain, traceId, spanId }: MessageActionsProps) {
+// Plain-text debugging dump of every tool call in a message: name, args,
+// status, result summary, sources, duration. Internal pipeline steps
+// (classify_domain, route_query) are excluded — no "inputs" to debug there.
+function formatStepsForCopy(steps: StreamStep[], toolMeta: Record<string, ToolDisplayMeta>): string {
+  return steps
+    .filter((s): s is StreamStep & { kind: { kind: "tool"; toolName: string } } => s.kind.kind === "tool")
+    .map((s) => {
+      const label = toolMeta[s.kind.toolName]?.label ?? s.kind.toolName;
+      const lines = [
+        `### ${s.kind.toolName} (${label})`,
+        `Status: ${s.status}`,
+        `Args: ${s.argsJson ?? "(not available)"}`,
+      ];
+      if (s.resultSummary) lines.push(`Result: ${s.resultSummary}`);
+      if (s.sources && s.sources.length > 0) lines.push(`Sources: ${s.sources.join(", ")}`);
+      if (s.durationMs !== undefined) lines.push(`Duration: ${Math.round(s.durationMs)}ms`);
+      return lines.join("\n");
+    })
+    .join("\n\n");
+}
+
+function MessageActions({ content, steps, toolMeta, domain, traceId, spanId }: MessageActionsProps) {
   const [copied, setCopied] = useState(false);
+  const [copiedReasoning, setCopiedReasoning] = useState(false);
   const [feedback, setFeedback] = useState<"up" | "down" | null>(null);
+
+  const toolSteps = (steps ?? []).filter((s) => s.kind.kind === "tool");
 
   function handleCopy() {
     navigator.clipboard.writeText(content).then(() => {
       setCopied(true);
       trackMessageCopied(domain);
       setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  function handleCopyReasoning() {
+    const text = formatStepsForCopy(steps ?? [], toolMeta ?? {});
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedReasoning(true);
+      setTimeout(() => setCopiedReasoning(false), 1500);
     });
   }
 
@@ -401,6 +465,17 @@ function MessageActions({ content, domain, traceId, spanId }: MessageActionsProp
       >
         <Copy size={13} />
       </IconButton>
+      {toolSteps.length > 0 && (
+        <IconButton
+          {...actionBtnProps}
+          aria-label={copiedReasoning ? "Copied!" : "Copy tool calls"}
+          title={copiedReasoning ? "Copied!" : "Copy tool calls (name, args, result) for debugging"}
+          color={copiedReasoning ? "blue.500" : "gray.400"}
+          onClick={handleCopyReasoning}
+        >
+          <Bug size={13} />
+        </IconButton>
+      )}
       <IconButton
         {...actionBtnProps}
         aria-label="Report issue"
@@ -483,6 +558,10 @@ function MarkdownContent({ content }: { content: string }) {
 export function Chat() {
   const { user, logout } = useAuth();
   const [activeView, setActiveView] = useState<"chat" | "sandbox" | "admin">("chat");
+  // Set when a tool-call chip's "open in sandbox" button is clicked — read
+  // once by Sandbox on mount/change to pre-select the tool and fill its
+  // params textarea with the exact args that call used.
+  const [sandboxPrefill, setSandboxPrefill] = useState<{ toolId: string; paramsText: string } | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -546,11 +625,10 @@ export function Chat() {
       role: m.role as "user" | "assistant",
       content: m.content,
       sources: m.sources,
-      // Reconstruct lightweight step chips from persisted sources — one
-      // chip per tool, no live status. Gives loaded conversations the
-      // same chip-strip look as fresh ones without persisting the full
-      // step history on the backend.
-      steps: m.role === "assistant" ? toStepsFromSources(m.sources) : [],
+      // Real step/tool-call chips when the backend has them (steps column);
+      // falls back to a lightweight name-only reconstruction for messages
+      // saved before this persistence existed.
+      steps: toStepsFromMessage(m),
       bridges: [],
       traceId: m.trace_id,
       spanId: m.span_id,
@@ -749,7 +827,7 @@ export function Chat() {
       role: m.role as "user" | "assistant",
       content: m.content,
       sources: m.sources,
-      steps: m.role === "assistant" ? toStepsFromSources(m.sources) : [],
+      steps: toStepsFromMessage(m),
       bridges: [],
       traceId: m.trace_id,
       spanId: m.span_id,
@@ -939,7 +1017,7 @@ export function Chat() {
       </Flex>
 
       {/* ── Body ───────────────────────────────────────────────────────────── */}
-      {activeView === "sandbox" && <Sandbox />}
+      {activeView === "sandbox" && <Sandbox prefill={sandboxPrefill} />}
       {activeView === "admin" && <AdminTab />}
       <Flex flex={1} minH={0} overflow="hidden" display={activeView === "chat" ? "flex" : "none"}>
         {/* LEFT: conversation history sidebar */}
@@ -996,18 +1074,37 @@ export function Chat() {
                             never invoked a tool. */}
                         {msg.role === "assistant" && msg.steps.length > 0 && (
                           <VStack align="stretch" gap={1.5} mb={2}>
-                            {msg.steps.map((step) => (
-                              <ToolStepChip
-                                key={step.id}
-                                kind={step.kind}
-                                status={step.status}
-                                resultSummary={step.resultSummary}
-                                durationMs={step.durationMs}
-                                argsJson={step.argsJson}
-                                sources={step.sources}
-                                toolMeta={TOOL_META}
-                              />
-                            ))}
+                            {msg.steps.map((step) => {
+                              const toolName = step.kind.kind === "tool" ? step.kind.toolName : null;
+                              return (
+                                <ToolStepChip
+                                  key={step.id}
+                                  kind={step.kind}
+                                  status={step.status}
+                                  resultSummary={step.resultSummary}
+                                  durationMs={step.durationMs}
+                                  argsJson={step.argsJson}
+                                  sources={step.sources}
+                                  toolMeta={TOOL_META}
+                                  onOpenInSandbox={
+                                    toolName
+                                      ? () => {
+                                          let paramsText = "";
+                                          if (step.argsJson) {
+                                            try {
+                                              paramsText = JSON.stringify(JSON.parse(step.argsJson), null, 2);
+                                            } catch {
+                                              paramsText = step.argsJson;
+                                            }
+                                          }
+                                          setSandboxPrefill({ toolId: toolName, paramsText });
+                                          setActiveView("sandbox");
+                                        }
+                                      : undefined
+                                  }
+                                />
+                              );
+                            })}
                           </VStack>
                         )}
 
@@ -1035,6 +1132,8 @@ export function Chat() {
                       {msg.role === "assistant" && (
                         <MessageActions
                           content={msg.content}
+                          steps={msg.steps}
+                          toolMeta={TOOL_META}
                           traceId={msg.traceId}
                           spanId={msg.spanId}
                         />

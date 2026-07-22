@@ -34,7 +34,25 @@ public record StoredMessage(
     IReadOnlyList<string> Sources,
     string? TraceId,
     string? SpanId,
-    string? CreatedAt
+    string? CreatedAt,
+    IReadOnlyList<StoredStep> Steps
+);
+
+// Persisted tool-call / pipeline-step reasoning for an assistant message —
+// unifies StreamEvent.cs's StepEvent + ToolCallStartEvent + ToolCallEndEvent
+// into one row per call so a reloaded conversation renders identical chips
+// to the ones the user saw live. Kind distinguishes MCP tool calls ("tool")
+// from internal pipeline steps like classify_domain ("internal").
+public record StoredStep(
+    string Kind,
+    string Id,
+    string Name,
+    string Status,
+    string? ArgsJson,
+    string? ResultSummary,
+    IReadOnlyList<string>? Sources,
+    double? DurationMs,
+    string? Detail
 );
 
 public sealed class ConversationService
@@ -97,6 +115,7 @@ public sealed class ConversationService
                     span_id TEXT,
                     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                 );
+                ALTER TABLE messages ADD COLUMN IF NOT EXISTS steps JSONB NOT NULL DEFAULT '[]';
                 CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
                 CREATE INDEX IF NOT EXISTS idx_messages_conversation_id ON messages(conversation_id);
                 """);
@@ -203,7 +222,7 @@ public sealed class ConversationService
 
         var messages = new List<StoredMessage>();
         await using (var cmd = conn.CreateCommand("""
-            SELECT id, conversation_id, role, content, sources, trace_id, span_id, created_at
+            SELECT id, conversation_id, role, content, sources, trace_id, span_id, created_at, steps
             FROM messages
             WHERE conversation_id = $1
             ORDER BY created_at ASC
@@ -215,6 +234,8 @@ public sealed class ConversationService
             {
                 var sourcesJson = reader.IsDBNull(4) ? "[]" : reader.GetString(4);
                 var sources = System.Text.Json.JsonSerializer.Deserialize<List<string>>(sourcesJson) ?? [];
+                var stepsJson = reader.IsDBNull(8) ? "[]" : reader.GetString(8);
+                var steps = System.Text.Json.JsonSerializer.Deserialize<List<StoredStep>>(stepsJson) ?? [];
                 messages.Add(new StoredMessage(
                     Id: reader.GetGuid(0).ToString(),
                     ConversationId: reader.GetGuid(1).ToString(),
@@ -223,7 +244,8 @@ public sealed class ConversationService
                     Sources: sources,
                     TraceId: reader.IsDBNull(5) ? null : reader.GetString(5),
                     SpanId: reader.IsDBNull(6) ? null : reader.GetString(6),
-                    CreatedAt: reader.GetDateTime(7).ToString("o")
+                    CreatedAt: reader.GetDateTime(7).ToString("o"),
+                    Steps: steps
                 ));
             }
         }
@@ -254,12 +276,14 @@ public sealed class ConversationService
 
     public async Task SaveMessagesAsync(
         string convId, string userQuery, string aiAnswer,
-        IReadOnlyList<string> sources, string? traceId, string? spanId)
+        IReadOnlyList<string> sources, string? traceId, string? spanId,
+        IReadOnlyList<StoredStep>? steps = null)
     {
         if (_ds is null) return;
         try
         {
             var sourcesJson = System.Text.Json.JsonSerializer.Serialize(sources);
+            var stepsJson = System.Text.Json.JsonSerializer.Serialize(steps ?? []);
             var convGuid = Guid.Parse(convId);
             await using var conn = await _ds.OpenDbmConnectionAsync();
 
@@ -274,12 +298,13 @@ public sealed class ConversationService
             batch.BatchCommands.Add(insertUser);
 
             var insertAssistant = conn.CreateBatchCommand(
-                "INSERT INTO messages (conversation_id, role, content, sources, trace_id, span_id) VALUES ($1, 'assistant', $2, $3::jsonb, $4, $5)");
+                "INSERT INTO messages (conversation_id, role, content, sources, trace_id, span_id, steps) VALUES ($1, 'assistant', $2, $3::jsonb, $4, $5, $6::jsonb)");
             insertAssistant.Parameters.AddWithValue(convGuid);
             insertAssistant.Parameters.AddWithValue(aiAnswer);
             insertAssistant.Parameters.AddWithValue(sourcesJson);
             insertAssistant.Parameters.AddWithValue(traceId is null ? DBNull.Value : (object)traceId);
             insertAssistant.Parameters.AddWithValue(spanId is null ? DBNull.Value : (object)spanId);
+            insertAssistant.Parameters.AddWithValue(stepsJson);
             batch.BatchCommands.Add(insertAssistant);
 
             var updateConv = conn.CreateBatchCommand(
