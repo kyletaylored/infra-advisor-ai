@@ -55,6 +55,13 @@ spec:
                 name: agent-api-dotnet-secret
           securityContext:
             runAsNonRoot: true
+            # Pinned explicitly (aspnet base image's built-in 'app' user, UID
+            # 1654) so the kubelet never has to resolve a non-numeric USER
+            # from the image's /etc/passwd to verify runAsNonRoot — that
+            # resolution silently started failing with CreateContainerConfigError
+            # ("cannot verify user is non-root") on a base-image/containerd
+            # change, even though the Dockerfile's USER app was unchanged.
+            runAsUser: 1654
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
