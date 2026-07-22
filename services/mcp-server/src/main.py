@@ -42,7 +42,7 @@ logging.basicConfig(
     # missing while debugging why log_external_api_failure's log lines
     # showed up in Datadog Logs with no "View trace" correlation at all.
     format=(
-        "%(asctime)s %(levelname)s [%(name)s] "
+        "%(asctime)s %(levelname)s [%(name)s] [%(filename)s:%(lineno)d] "
         "[dd.service=%(dd.service)s dd.env=%(dd.env)s dd.version=%(dd.version)s "
         "dd.trace_id=%(dd.trace_id)s dd.span_id=%(dd.span_id)s] - %(message)s"
     ),

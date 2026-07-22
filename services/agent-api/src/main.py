@@ -42,7 +42,7 @@ logging.basicConfig(
     # reach the rendered output (and so are invisible to Datadog's log
     # pipeline) unless the format string references them explicitly.
     format=(
-        "%(asctime)s %(levelname)s [%(name)s] "
+        "%(asctime)s %(levelname)s [%(name)s] [%(filename)s:%(lineno)d] "
         "[dd.service=%(dd.service)s dd.env=%(dd.env)s dd.version=%(dd.version)s "
         "dd.trace_id=%(dd.trace_id)s dd.span_id=%(dd.span_id)s] - %(message)s"
     ),
